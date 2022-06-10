@@ -6,7 +6,7 @@ version = "0.1.0"
 #
 licences = ["Apache-2.0"]
 description = "A simple webservice designed with an intuative API to try and take away a lot of the boilerplate in using a web server with Gleam"
-# repository = { type = "github", user = "username", repo = "project" }
+repository = { type = "github", user = "mikeyjones", repo = "howdy" }
 # links = [{ title = "Website", href = "https://gleam.run" }]
 
 [dependencies]

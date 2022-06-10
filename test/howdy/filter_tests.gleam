@@ -1,9 +1,8 @@
-import gleeunit/should
-// import howdy/filter.{Continue, ContinueOrStop, Stop, combine}
-import howdy/response
-import howdy/helpers.{get_http_request}
-import howdy/context.{Context}
-import gleam/io
+
+// import gleeunit/should
+// import howdy/response
+// import howdy/helpers.{get_http_request}
+// import howdy/context.{Context}
 // pub fn something_test() {
 //   let req = Context([], get_http_request())
 //   let filters = [sample_bad, sample]

@@ -28,3 +28,5 @@ pub fn main() {
     erlang.sleep_forever()
 }
 ```
+
+See router documentation for more details [here](https://github.com/mikeyjones/howdy/blob/main/manual/routes.md)
