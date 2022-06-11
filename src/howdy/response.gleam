@@ -36,7 +36,7 @@ pub fn of_not_found(text: String) {
 
 /// Returns an internal error (status 500)
 /// with string content for the body
-pub fn of_interal_error(text: String) {
+pub fn of_internal_error(text: String) {
   of_string(text)
   |> with_status(500)
 }
