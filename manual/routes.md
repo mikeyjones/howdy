@@ -106,6 +106,7 @@ We support multiple primitive types:
 | String | ```Get("/{Value:String}", fn(ctx) {  url.get_string(ctx, "Value") })```
 | Int | ```Get("/{Value:Int}", fn(ctx) { url.get_int(ctx, "Value") })```
 | Float | ```Get("/{Value:Float}", fn(ctx) { url.get_float(ctx, "Value") })```
+| Uuid | ```Get("/{Value:Uuid}", fn(ctx) { url.get_uuid(ctx, "Value") })```
 
 We plan on adding more as Howdy grows, so watch this space! All functions that return values will return a ```Result(type,Nil)``` if there is not match found you will get an ```Error(Nil)``` returned.
 

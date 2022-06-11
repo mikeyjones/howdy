@@ -2,15 +2,16 @@
 # You typically do not need to edit this file
 
 packages = [
-  { name = "cowboy", version = "2.9.0", build_tools = ["make", "rebar3"], requirements = ["cowlib", "ranch"], otp_app = "cowboy", source = "hex", outer_checksum = "2C729F934B4E1AA149AFF882F57C6372C15399A20D54F65C8D67BEF583021BDE" },
+  { name = "cowboy", version = "2.9.0", build_tools = ["make", "rebar3"], requirements = ["ranch", "cowlib"], otp_app = "cowboy", source = "hex", outer_checksum = "2C729F934B4E1AA149AFF882F57C6372C15399A20D54F65C8D67BEF583021BDE" },
   { name = "cowlib", version = "2.11.0", build_tools = ["make", "rebar3"], requirements = [], otp_app = "cowlib", source = "hex", outer_checksum = "2B3E9DA0B21C4565751A6D4901C20D1B4CC25CBB7FD50D91D2AB6DD287BC86A9" },
-  { name = "gleam_cowboy", version = "0.4.0", build_tools = ["gleam"], requirements = ["gleam_http", "cowboy", "gleam_otp", "gleam_stdlib"], otp_app = "gleam_cowboy", source = "hex", outer_checksum = "A8D5F142FF06765E8CEDD757BCE173A9FED1C844802ACAF90976D85D572676B0" },
+  { name = "gleam_cowboy", version = "0.4.0", build_tools = ["gleam"], requirements = ["gleam_otp", "cowboy", "gleam_http", "gleam_stdlib"], otp_app = "gleam_cowboy", source = "hex", outer_checksum = "A8D5F142FF06765E8CEDD757BCE173A9FED1C844802ACAF90976D85D572676B0" },
   { name = "gleam_erlang", version = "0.9.3", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleam_erlang", source = "hex", outer_checksum = "0430CFF5DAFAB54C97D6F19AA98BDDAD5E7AA245AC240547F4C0DBC26CDAE85E" },
   { name = "gleam_http", version = "3.0.1", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleam_http", source = "hex", outer_checksum = "02043655C5EEBBF533CC36BD95F881C94EE1B5959EA474CA3F597672716DB443" },
   { name = "gleam_json", version = "0.4.0", build_tools = ["gleam"], requirements = ["thoas", "gleam_stdlib"], otp_app = "gleam_json", source = "hex", outer_checksum = "116B182F6AE852622C9D634270D8E71F9D7D3AAAFD7CB9311DD0338D7C24D086" },
-  { name = "gleam_otp", version = "0.4.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "gleam_erlang"], otp_app = "gleam_otp", source = "hex", outer_checksum = "3F05090CEDFBA5B6DE2AEE20868F92E815D287E71807DAD5663DAA1B566953C2" },
+  { name = "gleam_otp", version = "0.4.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib"], otp_app = "gleam_otp", source = "hex", outer_checksum = "3F05090CEDFBA5B6DE2AEE20868F92E815D287E71807DAD5663DAA1B566953C2" },
   { name = "gleam_stdlib", version = "0.21.0", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "FB03CD50B477867DA65B1318252ABA02F76175754762D15BF6C792CF5B85BCC4" },
   { name = "gleeunit", version = "0.6.1", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "5BF486C3E135B7F5ED8C054925FC48E5B2C79016A39F416FD8CF2E860520EE55" },
+  { name = "howdy_uuid", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "howdy_uuid", source = "hex", outer_checksum = "E26D8224953DDB7ABA59A2A4C61103001549D18CB0944E9C0EBE33DB822C328B" },
   { name = "mimerl", version = "1.2.0", build_tools = ["rebar3"], requirements = [], otp_app = "mimerl", source = "hex", outer_checksum = "F278585650AA581986264638EBF698F8BB19DF297F66AD91B18910DFC6E19323" },
   { name = "ranch", version = "1.8.0", build_tools = ["make", "rebar3"], requirements = [], otp_app = "ranch", source = "hex", outer_checksum = "49FBCFD3682FAB1F5D109351B61257676DA1A2FDBE295904176D5E521A2DDFE5" },
   { name = "thoas", version = "0.2.0", build_tools = ["rebar3"], requirements = [], otp_app = "thoas", source = "hex", outer_checksum = "630AAEE57FB3FDE201578E787259E15E788A27733D49DE8DCCE1354DB1885B8D" },
@@ -25,4 +26,5 @@ gleam_json = "~> 0.4"
 gleam_otp = "~> 0.4"
 gleam_stdlib = "~> 0.21"
 gleeunit = "~> 0.6"
+howdy_uuid = "~> 0.1"
 mimerl = "~> 1.2"

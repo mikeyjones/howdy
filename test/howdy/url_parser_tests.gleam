@@ -131,3 +131,10 @@ pub fn parse_should_match_wildcard_with_different_case_route_test() {
 
   should.be_ok(result)
 }
+
+pub fn parse_should_match_uuid_should_successed_test() {
+  let result =
+    parse("/test/{id:uuid}", "/test/f7e321c7-4a4b-4287-a8b8-1ae35b5538ce")
+
+  should.be_ok(result)
+}

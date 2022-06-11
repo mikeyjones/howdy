@@ -8,6 +8,7 @@ import gleam/dynamic.{Dynamic}
 import gleam/string
 import gleam/int
 import gleam/float
+import howdy/uuid
 
 /// Error return types for parsing URL segments
 pub type SegmentError {
@@ -156,6 +157,7 @@ fn process_template(
     "string" -> process_string(input)
     "int" -> process_int(input)
     "float" -> process_float(input)
+    "uuid" -> process_uuid(input)
     _ -> None
   }
   #(result, name)
@@ -189,6 +191,12 @@ fn process_float(value: String) -> Option(Dynamic) {
   float.parse(value)
   |> from_result()
   |> option.map(fn(num) { dynamic.from(num) })
+}
+
+fn process_uuid(value: String) -> Option(Dynamic) {
+  uuid.from_string(value)
+  |> from_result()
+  |> option.map(fn(_id) { dynamic.from(value) })
 }
 
 fn has_nonmatching_segments(segments: List(UrlSegment)) {

@@ -7,6 +7,7 @@ import gleam/option.{None, Some}
 import gleam/dynamic
 import howdy/context.{Context}
 import howdy/url_parser.{MatchingTemplateTypedSegment, UrlSegment}
+import howdy/uuid.{UUID}
 
 /// Gets a dynamic segment for the URL of type String.
 /// Returns Error(Nil) if no matching string is found for the given key
@@ -70,6 +71,31 @@ pub fn get_float(context: Context, key: String) -> Result(Float, Nil) {
     |> option.map(fn(dynamic_value) {
       dynamic.float(dynamic_value)
       |> result.replace_error(Nil)
+    })
+    |> option.to_result(Nil)
+    |> result.flatten()
+  })
+  |> result.flatten()
+}
+
+/// Gets a dynamic segment for the URL of type Uuid.
+/// Returns Error(Nil) if no matching float is found for the given key
+///
+/// ## Example
+///
+/// ```gleam
+/// get_uuid(context, "name")
+/// ```
+pub fn get_uuid(context: Context, key: String) -> Result(UUID, Nil) {
+  context.url
+  |> list.find(fn(segment) { has_matching_template_key(segment, key) })
+  |> result.map(fn(segment) {
+    get_value_from_template_segment(segment)
+    |> option.map(fn(dynamic_value) {
+      dynamic.string(dynamic_value)
+      |> result.map(fn(str) { uuid.from_string(str) })
+      |> result.replace_error(Nil)
+      |> result.flatten
     })
     |> option.to_result(Nil)
     |> result.flatten()

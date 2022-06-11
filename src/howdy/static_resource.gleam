@@ -22,7 +22,7 @@ pub fn get_file_contents(file_path: String) {
               Ok(file_contents) ->
                 response.of_bit_string(file_contents)
                 |> response.with_content_type(mime.from_path(full_path))
-              Error(_error) -> response.of_interal_error("Fatal error")
+              Error(_error) -> response.of_internal_error("Fatal error")
             }
           False -> response.of_not_found("File not found")
         }
@@ -41,7 +41,7 @@ pub fn get_spa_file_contents(file_path: String) {
           Ok(file_contents) ->
             response.of_bit_string(file_contents)
             |> response.with_content_type(mime.from_path(file_path))
-          Error(_error) -> response.of_interal_error("Fatal error")
+          Error(_error) -> response.of_internal_error("Fatal error")
         }
       False -> response.of_not_found("File not found")
     }
