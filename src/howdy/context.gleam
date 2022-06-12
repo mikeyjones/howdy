@@ -2,7 +2,7 @@
 //// the router or the filter
 
 import gleam/http/request.{Request}
-import gleam/option.{None, Option}
+import gleam/option.{None, Option, Some}
 import howdy/url_parser.{UrlSegment}
 import howdy/context/user.{User}
 
@@ -17,4 +17,11 @@ pub type Context {
 /// Creates a new instance of the Context, filling in the default parameters
 pub fn new(url: List(UrlSegment), request: Request(BitString)) {
   Context(url, request, None)
+}
+
+pub fn is_authenticated(context: Context) {
+  case context.user {
+    Some(_) -> True
+    None -> False
+  }
 }

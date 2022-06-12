@@ -2,8 +2,10 @@
 
 import gleam/http/response.{Response}
 import gleam/bit_builder.{BitBuilder}
+import gleam/option.{Some}
 import howdy/context.{Context}
 import howdy/context/header
+import howdy/context/user.{User}
 import howdy/response
 import howdy/mime
 
@@ -45,4 +47,17 @@ pub fn accepts_json(filter: Filter) {
 /// ```
 pub fn accepts_html(filter: Filter) {
   must_accept(filter, mime.from_extention("html"))
+}
+
+pub fn authenticate(filter: Filter, auth: fn(Context) -> Result(User, Nil)) {
+  fn(context) {
+    case auth(context) {
+      Ok(user) ->
+        Context(..context, user: Some(user))
+        |> filter
+      Error(_) ->
+        response.of_string("")
+        |> response.with_status(401)
+    }
+  }
 }
