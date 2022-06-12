@@ -3,7 +3,6 @@ import howdy/url_parser.{MatchingTemplateTypedSegment}
 import howdy/helpers.{get_http_request}
 import howdy/context
 import howdy/context/url.{get_float, get_int, get_string, get_uuid}
-import howdy/uuid
 import gleam/dynamic
 import gleam/result
 import gleam/int
