@@ -13,7 +13,7 @@ pub fn get_form_should_return_map_if_vaild_string_test() {
     |> request.set_body(bit_string.from_string("key=value"))
 
   let sut =
-    get_form(context.new([], req))
+    get_form(context.new([], req, Nil))
     |> result.unwrap(map.new())
     |> map.get("key")
 
@@ -31,7 +31,7 @@ pub fn get_form_should_return_map_if_vaild_strings_test() {
     ))
 
   let sut =
-    get_form(context.new([], req))
+    get_form(context.new([], req, Nil))
     |> result.unwrap(map.new())
     |> map.get("key2")
 
@@ -47,7 +47,7 @@ pub fn get_form_should_return_error_if_invaild_string_test() {
     |> request.set_body(bit_string.from_string("keyvalue"))
 
   let sut =
-    get_form(context.new([], req))
+    get_form(context.new([], req, Nil))
     |> result.unwrap(map.new())
     |> map.get("key")
 

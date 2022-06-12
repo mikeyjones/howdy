@@ -12,7 +12,7 @@ import howdy/mime
 
 ///Searchs the file path for matching files from a wildcard segment
 pub fn get_file_contents(file_path: String) {
-  fn(context: Context) -> Response(BitBuilder) {
+  fn(context: Context(a)) -> Response(BitBuilder) {
     let full_path_result = get_wildcard_segment_url(context.url, file_path)
     case full_path_result {
       Ok(full_path) ->
@@ -34,7 +34,7 @@ pub fn get_file_contents(file_path: String) {
 /// Matches a single file to a route, allowing the server
 /// to serve Single Page Applications 
 pub fn get_spa_file_contents(file_path: String) {
-  fn(_context: Context) -> Response(BitBuilder) {
+  fn(_context: Context(a)) -> Response(BitBuilder) {
     case is_file(file_path) {
       True ->
         case read_bits(file_path) {

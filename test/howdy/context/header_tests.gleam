@@ -7,7 +7,11 @@ import gleam/result
 
 pub fn get_value_should_return_value_when_found_test() {
   let ctx =
-    context.new([], request.prepend_header(get_http_request(), "test", "info"))
+    context.new(
+      [],
+      request.prepend_header(get_http_request(), "test", "info"),
+      Nil,
+    )
 
   let sut = get_value(ctx, "test")
 
@@ -17,7 +21,11 @@ pub fn get_value_should_return_value_when_found_test() {
 
 pub fn get_value_should_return_error_when_value_is_not_present_test() {
   let ctx =
-    context.new([], request.prepend_header(get_http_request(), "test", "info"))
+    context.new(
+      [],
+      request.prepend_header(get_http_request(), "test", "info"),
+      Nil,
+    )
 
   let sut = get_value(ctx, "bad")
 
@@ -25,7 +33,7 @@ pub fn get_value_should_return_error_when_value_is_not_present_test() {
 }
 
 pub fn get_value_should_return_error_when_query_empty_test() {
-  let ctx = context.new([], get_http_request())
+  let ctx = context.new([], get_http_request(), Nil)
 
   let sut = get_value(ctx, "bad")
 

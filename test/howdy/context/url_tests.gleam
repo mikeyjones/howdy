@@ -21,6 +21,7 @@ pub fn get_string_should_find_string_value_from_key_test() {
         ),
       ],
       get_http_request(),
+      Nil,
     )
 
   let sut = get_string(request_data, "Name")
@@ -42,6 +43,7 @@ pub fn get_string_should_find_error_from_invalid_key_test() {
         ),
       ],
       get_http_request(),
+      Nil,
     )
 
   let sut = get_string(request_data, "Bad")
@@ -50,7 +52,7 @@ pub fn get_string_should_find_error_from_invalid_key_test() {
 }
 
 pub fn get_string_should_find_error_with_empty_url_test() {
-  let request_data = context.new([], get_http_request())
+  let request_data = context.new([], get_http_request(), Nil)
 
   let sut = get_string(request_data, "Bad")
 
@@ -70,6 +72,7 @@ pub fn get_int_should_find_int_value_from_key_test() {
         ),
       ],
       get_http_request(),
+      Nil,
     )
 
   let sut = get_int(request_data, "Id")
@@ -91,6 +94,7 @@ pub fn get_uuid_should_find_uuid_value_from_key_test() {
         ),
       ],
       get_http_request(),
+      Nil,
     )
 
   let sut = get_uuid(request_data, "Id")
@@ -111,6 +115,7 @@ pub fn get_uuid_should_error_with_an_invalid_uuid_value_from_key_test() {
         ),
       ],
       get_http_request(),
+      Nil,
     )
 
   let sut = get_uuid(request_data, "Id")
@@ -119,7 +124,7 @@ pub fn get_uuid_should_error_with_an_invalid_uuid_value_from_key_test() {
 }
 
 pub fn get_int_should_find_error_with_empty_url_test() {
-  let request_data = context.new([], get_http_request())
+  let request_data = context.new([], get_http_request(), Nil)
 
   let sut = get_int(request_data, "Bad")
 
@@ -139,6 +144,7 @@ pub fn get_float_should_find_int_value_from_key_test() {
         ),
       ],
       get_http_request(),
+      Nil,
     )
 
   let sut = get_float(request_data, "Id")
@@ -148,7 +154,7 @@ pub fn get_float_should_find_int_value_from_key_test() {
 }
 
 pub fn get_float_should_find_error_with_empty_url_test() {
-  let request_data = context.new([], get_http_request())
+  let request_data = context.new([], get_http_request(), Nil)
 
   let sut = get_float(request_data, "Bad")
 

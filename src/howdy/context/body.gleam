@@ -27,7 +27,7 @@ import howdy/context.{Context}
 ///            ))
 /// ```
 pub fn get_json(
-  context in: Context,
+  context in: Context(a),
   decoder: dynamic.Decoder(t),
 ) -> Result(t, json.DecodeError) {
   let result = bit_string.to_string(in.request.body)
@@ -47,7 +47,7 @@ pub fn get_json(
 /// ```gleam
 /// get_form(context)
 /// ```
-pub fn get_form(context in: Context) -> Result(Map(String, String), Nil) {
+pub fn get_form(context in: Context(a)) -> Result(Map(String, String), Nil) {
   try body = bit_string.to_string(in.request.body)
 
   body

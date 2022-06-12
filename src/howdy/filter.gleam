@@ -9,8 +9,8 @@ import howdy/context/user.{User}
 import howdy/response
 import howdy/mime
 
-pub type Filter =
-  fn(Context) -> Response(BitBuilder)
+pub type Filter(a) =
+  fn(Context(a)) -> Response(BitBuilder)
 
 /// Filters on the mime type in the request headers of
 /// the 'Accept' key
@@ -20,8 +20,8 @@ pub type Filter =
 /// ```gleam
 ///  filters: [ must_accept(_,"application/json")] 
 /// ```
-pub fn must_accept(filter: Filter, mime_type: String) {
-  fn(context: Context) {
+pub fn must_accept(filter: Filter(a), mime_type: String) {
+  fn(context: Context(a)) {
     case header.get_value(context, "Accept") {
       Ok(value) if value == mime_type -> filter(context)
       _ -> response.of_not_found("")
@@ -29,13 +29,13 @@ pub fn must_accept(filter: Filter, mime_type: String) {
   }
 }
 
-/// filters on the the Accept value equalling
+// filters on the the Accept value equalling
 /// 'application/json' 
 ///
 /// ```gleam
 /// filters: [accepts_json]
 /// ```
-pub fn accepts_json(filter: Filter) {
+pub fn accepts_json(filter: Filter(a)) {
   must_accept(filter, mime.from_extention("json"))
 }
 
@@ -45,11 +45,14 @@ pub fn accepts_json(filter: Filter) {
 /// ```gleam
 /// filters: [accepts_html]
 /// ```
-pub fn accepts_html(filter: Filter) {
+pub fn accepts_html(filter: Filter(a)) {
   must_accept(filter, mime.from_extention("html"))
 }
 
-pub fn authenticate(filter: Filter, auth: fn(Context) -> Result(User, Nil)) {
+pub fn authenticate(
+  filter: Filter(a),
+  auth: fn(Context(a)) -> Result(User, Nil),
+) {
   fn(context) {
     case auth(context) {
       Ok(user) ->

@@ -8,9 +8,9 @@ import howdy/context.{Context}
 ///
 /// ## Example:
 /// ```gleam
-/// get(context,"key")
+/// get_value(context,"key")
 /// ```
-pub fn get_value(context: Context, key: String) -> Result(List(String), Nil) {
+pub fn get_value(context: Context(a), key: String) -> Result(List(String), Nil) {
   case request.get_query(context.request) {
     Ok(query_list) ->
       query_list

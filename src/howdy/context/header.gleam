@@ -6,6 +6,6 @@ import howdy/context.{Context}
 
 /// Finds the value from the request header using 
 /// the Context
-pub fn get_value(context: Context, key: String) {
+pub fn get_value(context: Context(a), key: String) {
   request.get_header(context.request, key)
 }

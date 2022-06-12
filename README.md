@@ -3,7 +3,7 @@
 [![Package Version](https://img.shields.io/hexpm/v/howdy)](https://hex.pm/packages/howdy)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/howdy/)
 
-A simple but powerful webserver build on top of Cowboy. Howdy's goal is to make create web servers using Gleam as easy as it can be.
+A simple API on top of the [Mist](https://hex.pm/packages/mist) webserver 
 
 ## Installation
 

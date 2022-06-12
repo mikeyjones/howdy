@@ -8,7 +8,11 @@ import gleam/list
 
 pub fn get_value_should_return_value_when_found_test() {
   let ctx =
-    context.new([], request.set_query(get_http_request(), [#("test", "info")]))
+    context.new(
+      [],
+      request.set_query(get_http_request(), [#("test", "info")]),
+      Nil,
+    )
 
   let sut =
     result.unwrap(get_value(ctx, "test"), [])
@@ -26,6 +30,7 @@ pub fn get_value_should_return_multiple_values_when_found_test() {
         get_http_request(),
         [#("test", "info"), #("test", "hello"), #("hello", "bad")],
       ),
+      Nil,
     )
 
   let sut = result.unwrap(get_value(ctx, "test"), [])
@@ -35,7 +40,11 @@ pub fn get_value_should_return_multiple_values_when_found_test() {
 
 pub fn get_value_should_return_error_when_value_is_not_present_test() {
   let ctx =
-    context.new([], request.set_query(get_http_request(), [#("test", "info")]))
+    context.new(
+      [],
+      request.set_query(get_http_request(), [#("test", "info")]),
+      Nil,
+    )
 
   let sut = result.unwrap(get_value(ctx, "bad"), ["bad"])
 
@@ -43,7 +52,7 @@ pub fn get_value_should_return_error_when_value_is_not_present_test() {
 }
 
 pub fn get_value_should_return_error_when_query_empty_test() {
-  let ctx = context.new([], get_http_request())
+  let ctx = context.new([], get_http_request(), Nil)
 
   let sut = result.unwrap(get_value(ctx, "bad"), ["bad"])
 

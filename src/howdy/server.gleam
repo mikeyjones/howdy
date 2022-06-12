@@ -24,13 +24,17 @@ import howdy/static_resource
 
 /// starts a new instance of Howdy setting the port 
 /// number to 3000
-pub fn start(router: router.Route) {
-  start_with_port(3000, router)
+pub fn start(router: router.Route(Nil)) {
+  start_with_port(3000, router, Nil)
+}
+
+pub fn start_with_config(router: router.Route(a), config: a) {
+  start_with_port(3000, router, config)
 }
 
 /// starts a new instance of Howdy and sets the port number 
-pub fn start_with_port(port: Int, router: router.Route) {
-  let actor = actor.start(State([], None), handle_message)
+pub fn start_with_port(port: Int, router: router.Route(a), config: a) {
+  let actor = actor.start(State([], None, config), handle_message)
   case actor {
     Ok(pid) ->
       case mist.serve(port, mist_http.handler(my_service(pid, _))) {
@@ -60,8 +64,8 @@ fn my_service(pid, req: Request(BitString)) -> Response(BitBuilder) {
     let match = match_route(pid, request.path, request.method)
 
     case match {
-      SuccessfulRequest(route, url) -> {
-        let context = context.new(url, request)
+      SuccessfulRequest(route, url, config) -> {
+        let context = context.new(url, request, config)
         add_filters_to_response(route.filters, route.function)(context)
       }
       NonRoutableRequest -> not_found()
@@ -75,9 +79,9 @@ fn my_service(pid, req: Request(BitString)) -> Response(BitBuilder) {
 }
 
 fn add_filters_to_response(
-  filters: List(fn(Filter) -> Filter),
-  fun: fn(Context) -> Response(BitBuilder),
-) -> fn(Context) -> Response(BitBuilder) {
+  filters: List(fn(Filter(a)) -> Filter(a)),
+  fun: fn(Context(a)) -> Response(BitBuilder),
+) -> fn(Context(a)) -> Response(BitBuilder) {
   case list.length(filters) {
     0 -> fun
     _ ->
@@ -103,9 +107,9 @@ fn add_filters_to_response(
 fn process_map(
   pid,
   url: String,
-  func: fn(Context) -> Response(BitBuilder),
+  func: fn(Context(a)) -> Response(BitBuilder),
   method: Method,
-  filters: List(fn(Filter) -> Filter),
+  filters: List(fn(Filter(a)) -> Filter(a)),
 ) {
   process.call(pid, AddRoute(Route(method, url, func, filters), _), 100)
   pid
@@ -121,7 +125,7 @@ pub fn get_routes(pid) {
 
 // registered. This may not be needed in future
 /// registers additional routes after the inital routes have been
-pub fn register_routes(pid, route: router.Route) {
+pub fn register_routes(pid, route: router.Route(a)) {
   register_routes_with_root(pid, route, "", [])
   pid
 }
@@ -145,7 +149,7 @@ pub fn register_routes(pid, route: router.Route) {
 ///    Error(_) -> io.println("Server failed to start")
 ///  }
 ///}
-pub fn add_middleware(
+pub fn register_middleware(
   pid,
   middleware: fn(Service(BitString, BitBuilder)) ->
     Service(BitString, BitBuilder),
@@ -156,9 +160,9 @@ pub fn add_middleware(
 
 fn register_routes_with_root(
   pid,
-  routes: router.Route,
+  routes: router.Route(a),
   root: String,
-  filters: List(fn(Filter) -> Filter),
+  filters: List(fn(Filter(a)) -> Filter(a)),
 ) {
   case routes {
     router.Get(route, func) -> {
@@ -258,7 +262,7 @@ fn join_urls(lhs: String, rhs: String) {
   }
 }
 
-fn match_route(pid, path, method) -> RequestType {
+fn match_route(pid, path, method) -> RequestType(a) {
   process.call(pid, MatchRoute(path, method, _), 100)
 }
 
@@ -270,7 +274,7 @@ fn get_middleware(
   process.call(pid, GetMiddleware, 100)
 }
 
-fn handle_message(msg: Message, state: State) {
+fn handle_message(msg: Message(a), state: State(a)) -> actor.Next(State(a)) {
   // io.println("The actor got a message")
   case msg {
     AddRoute(route, reply_channel) -> {
@@ -284,7 +288,7 @@ fn handle_message(msg: Message, state: State) {
       actor.Continue(state)
     }
     MatchRoute(path, method, reply_channel) -> {
-      let result = find_route(state.routes, path, method)
+      let result = find_route(state.routes, path, method, state.config)
       process.send(reply_channel, result)
       actor.Continue(state)
     }
@@ -300,7 +304,7 @@ fn handle_message(msg: Message, state: State) {
   }
 }
 
-fn print_route(routes: List(Route)) {
+fn print_route(routes: List(Route(a))) {
   case routes {
     [] -> io.println("No more routes")
     [head, ..tail] -> {
@@ -310,7 +314,12 @@ fn print_route(routes: List(Route)) {
   }
 }
 
-fn find_route(routes: List(Route), path: String, method: Method) -> RequestType {
+fn find_route(
+  routes: List(Route(a)),
+  path: String,
+  method: Method,
+  config: a,
+) -> RequestType(a) {
   routes
   //|> list.reverse
   |> list.fold_until(
@@ -318,7 +327,8 @@ fn find_route(routes: List(Route), path: String, method: Method) -> RequestType 
     fn(acc, route) {
       let url = url_parser.parse(route.url, path)
       case url, route.method == method {
-        Ok(segments), True -> list.Stop(SuccessfulRequest(route, segments))
+        Ok(segments), True ->
+          list.Stop(SuccessfulRequest(route, segments, config))
         _, _ -> list.Continue(acc)
       }
     },
@@ -326,10 +336,14 @@ fn find_route(routes: List(Route), path: String, method: Method) -> RequestType 
 }
 
 /// Messages that are sent the OTP
-pub opaque type Message {
-  AddRoute(route: Route, reply_channel: Sender(String))
+pub opaque type Message(a) {
+  AddRoute(route: Route(a), reply_channel: Sender(String))
   GetRoutes(reply_channel: Sender(String))
-  MatchRoute(path: String, method: Method, reply_channel: Sender(RequestType))
+  MatchRoute(
+    path: String,
+    method: Method,
+    reply_channel: Sender(RequestType(a)),
+  )
   RegisterMiddleware(
     middleware: fn(Service(BitString, BitBuilder)) ->
       Service(BitString, BitBuilder),
@@ -344,28 +358,30 @@ pub opaque type Message {
   )
 }
 
-type State {
+//RegisterConfig(config: a, reply_channel: Sender(Bool))
+type State(a) {
   State(
-    routes: List(Route),
+    routes: List(Route(a)),
     middleware: Option(
       fn(Service(BitString, BitBuilder)) -> Service(BitString, BitBuilder),
     ),
+    config: a,
   )
 }
 
 /// Compiled route stored within the state
-pub opaque type Route {
+pub opaque type Route(a) {
   Route(
     method: Method,
     url: String,
-    function: fn(Context) -> Response(BitBuilder),
-    filters: List(fn(Filter) -> Filter),
+    function: fn(Context(a)) -> Response(BitBuilder),
+    filters: List(fn(Filter(a)) -> Filter(a)),
   )
 }
 
 /// Returned to the server if the route has a matching template
-pub opaque type RequestType {
+pub opaque type RequestType(a) {
   NonRoutableRequest
   //InternalErrorRequest(error: String)
-  SuccessfulRequest(route: Route, url: List(UrlSegment))
+  SuccessfulRequest(route: Route(a), url: List(UrlSegment), config: a)
 }

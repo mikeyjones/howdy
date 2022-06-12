@@ -179,13 +179,14 @@ import gleam/erlang
 import howdy/server
 import howdy/router.{RouterMap, RouterMapWithFilters, Get, Post}
 import howdy/response
+import howdy/filter
 
 pub fn main() {
     let routes = RouterMap("/", routes: [
         Get("/", fn(_) { response.of_string("hello from root") }),
         Get("/helloworld", fn(_) { response.of_string("hello, world!")}),
         RouterMapWithFilters("/api", 
-            filters:[accepts_json]
+            filters:[filter.accepts_json],
             routes: [
             Get("/", fn(_) { response.of_string("hello from API")}),
             Post("/", fn(_) { response.of_string("you posted to the API.")})
@@ -216,7 +217,7 @@ pub fn main() {
         Get("/", fn(_) { response.of_string("hello from root") }),
         Get("/helloworld", fn(_) { response.of_string("hello, world!")}),
         RouterMapWithFilters("/api", 
-            filters:[append_custom_response_header(_, "api-version","v1.0")]
+            filters:[append_custom_response_header(_, "api-version","v1.0")],
             routes: [
             Get("/", fn(_) { response.of_string("hello from API")}),
             Post("/", fn(_) { response.of_string("you posted to the API.")})
@@ -228,14 +229,14 @@ pub fn main() {
     erlang.sleep_forever()
 }
 
-fn stop_all_requests_filter(_filter: Filter) {
+fn stop_all_requests_filter(_filter) {
     fn(_context) {
         response.of_internal_error("Boom!) // status 500
     }
 }
 
-fn append_custom_response_header(filter: Filter,key: String, value: String)
-) -> Filter {
+fn append_custom_response_header(filter: Filter(a),key: String, value: String)
+ -> Filter(a) {
   fn(context) {
     context
     |> filter

@@ -17,7 +17,7 @@ import howdy/uuid.{UUID}
 /// ```gleam
 /// get_string(context, "name")
 /// ```
-pub fn get_string(context: Context, key: String) -> Result(String, Nil) {
+pub fn get_string(context: Context(a), key: String) -> Result(String, Nil) {
   context.url
   |> list.find(fn(segment) { has_matching_template_key(segment, key) })
   |> result.map(fn(segment) {
@@ -40,7 +40,7 @@ pub fn get_string(context: Context, key: String) -> Result(String, Nil) {
 /// ```gleam
 /// get_int(context, "name")
 /// ```
-pub fn get_int(context: Context, key: String) -> Result(Int, Nil) {
+pub fn get_int(context: Context(a), key: String) -> Result(Int, Nil) {
   context.url
   |> list.find(fn(segment) { has_matching_template_key(segment, key) })
   |> result.map(fn(segment) {
@@ -63,7 +63,7 @@ pub fn get_int(context: Context, key: String) -> Result(Int, Nil) {
 /// ```gleam
 /// get_float(context, "name")
 /// ```
-pub fn get_float(context: Context, key: String) -> Result(Float, Nil) {
+pub fn get_float(context: Context(a), key: String) -> Result(Float, Nil) {
   context.url
   |> list.find(fn(segment) { has_matching_template_key(segment, key) })
   |> result.map(fn(segment) {
@@ -86,7 +86,7 @@ pub fn get_float(context: Context, key: String) -> Result(Float, Nil) {
 /// ```gleam
 /// get_uuid(context, "name")
 /// ```
-pub fn get_uuid(context: Context, key: String) -> Result(UUID, Nil) {
+pub fn get_uuid(context: Context(a), key: String) -> Result(UUID, Nil) {
   context.url
   |> list.find(fn(segment) { has_matching_template_key(segment, key) })
   |> result.map(fn(segment) {
