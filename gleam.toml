@@ -11,14 +11,14 @@ repository = { type = "github", user = "mikeyjones", repo = "howdy" }
 
 [dependencies]
 gleam_stdlib = "~> 0.21"
-cowboy = "~> 2.9"
-gleam_cowboy = "~> 0.4"
 gleam_erlang = "~> 0.9"
 gleam_otp = "~> 0.4"
 gleam_http = "~> 3.0"
 gleam_json = "~> 0.4"
 mimerl = "~> 1.2"
 howdy_uuid = "~> 0.1"
+mist = "~> 0.4"
+gleam_hackney = "~> 0.2"
 
 [dev-dependencies]
 gleeunit = "~> 0.6"

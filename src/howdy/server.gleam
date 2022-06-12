@@ -1,16 +1,19 @@
 //// Howdy server, using cowboy as the base server
 
-import gleam/http/cowboy
+import mist
+import mist/http as mist_http
+import glisten
 import gleam/http.{Method}
 import gleam/http/response.{Response}
 import gleam/http/request.{Request}
 import gleam/http/service.{Service}
 import gleam/otp/actor
-import gleam/otp/process.{Sender}
+import gleam/otp/process.{Abnormal, Sender}
 import gleam/bit_builder.{BitBuilder}
 import gleam/string
 import gleam/io
 import gleam/list
+import gleam/dynamic
 import gleam/function.{compose}
 import gleam/option.{None, Option, Some}
 import howdy/url_parser.{UrlSegment}
@@ -30,14 +33,17 @@ pub fn start_with_port(port: Int, router: router.Route) {
   let actor = actor.start(State([], None), handle_message)
   case actor {
     Ok(pid) ->
-      case cowboy.start(my_service(pid, _), on_port: port) {
+      case mist.serve(port, mist_http.handler(my_service(pid, _))) {
         Ok(_) -> {
           register_routes(pid, router)
           Ok(pid)
         }
         Error(error) -> Error(error)
       }
-    Error(error) -> Error(error)
+    Error(_) ->
+      Error(glisten.AcceptorFailed(Abnormal(dynamic.from(
+        "Howby OTP service failed to start",
+      ))))
   }
 }
 
@@ -53,35 +59,19 @@ fn my_service(pid, req: Request(BitString)) -> Response(BitBuilder) {
   let service = fn(request: Request(BitString)) {
     let match = match_route(pid, request.path, request.method)
 
-    // let _ =
-    //   bit_string.to_string(request.body)
-    //   |> result.map(fn(x) { io.println(x) })
     case match {
       SuccessfulRequest(route, url) -> {
         let context = context.new(url, request)
-        // let filters_result =
-        //   list.reduce(route.filters, fn(filter, next) { compose(filter, next) })
-        // case filters_result {
-        //   Ok(filters) ->
-        //     compose(filters, fn(ctx) { route.function(ctx) })(context)
-        //   Error(_) -> route.function(new_context)
-        // }
         add_filters_to_response(route.filters, route.function)(context)
       }
-      // case filter.combine(Context(url, request), route.filters) {
-      //   Continue(new_context) -> route.function(new_context)
-      //   Stop(stop_response) -> stop_response
-      // }
       NonRoutableRequest -> not_found()
     }
   }
 
   case get_middleware(pid) {
     Some(middleware) -> middleware(service)(req)
-    //middleware(service(req))
     None -> service(req)
   }
-  // service(req)
 }
 
 fn add_filters_to_response(
