@@ -5,7 +5,7 @@ version = "0.1.3"
 # your project to the Hex package manager.
 #
 licences = ["Apache-2.0"]
-description = "A simple and easy to use API created on top of the (Mist)[https://hex.pm/packages/mist] web server"
+description = "A simple and easy to use API created on top of the Mist web server"
 repository = { type = "github", user = "mikeyjones", repo = "howdy" }
 links = [{ title = "Server", href = "https://github.com/mikeyjones/howdy/blob/main/manual/server.md" }, { title = "Router", href = "https://github.com/mikeyjones/howdy/blob/main/manual/routes.md" }, { title = "Context", href = "https://github.com/mikeyjones/howdy/blob/main/manual/context.md" }]
 

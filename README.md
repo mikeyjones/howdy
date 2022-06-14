@@ -15,6 +15,12 @@ gleam add howdy
 
 and its documentation can be found at <https://hexdocs.pm/howdy>.
 
+## Manual
+
+* [Server](https://github.com/mikeyjones/howdy/blob/main/manual/server.md) 
+* [Router](https://github.com/mikeyjones/howdy/blob/main/manual/routes.md)
+* [Context](https://github.com/mikeyjones/howdy/blob/main/manual/context.md) 
+
 ## Quick Start
 
 ```gleam
