@@ -19,6 +19,7 @@ mimerl = "~> 1.2"
 howdy_uuid = "~> 0.1"
 mist = "~> 0.4"
 gleam_hackney = "~> 0.2"
+hackney = "~> 1.18"
 
 [dev-dependencies]
 gleeunit = "~> 0.6"

@@ -133,6 +133,20 @@ fn(context) {
 }
 ```
 
+You can get claims from the user with the `get_claim` helper function, this will return `Result(String,Nil)` and expects an `Option(User)` as input:
+
+```gleam
+import gleam/result
+import howdy/response
+import howdy/context/user
+
+fn(context) {
+    context.user 
+    |> user.get_claim("email") 
+    |> result.unwrap("No email found")
+    |> response.of_string()
+}
+```
 ## Config
 When the server starts up you can send in any `Type` which will be then available to all the routes. You can do the following:
 
