@@ -4,12 +4,9 @@
 //// interigate the request object. 
 
 import gleam/bit_string
-import gleam/string
 import gleam/dynamic
 import gleam/json
-import gleam/result
 import gleam/uri
-import gleam/map.{Map}
 import howdy/context.{Context}
 
 /// Gets the body of the request as Json.
