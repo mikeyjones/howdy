@@ -5,10 +5,10 @@
 
 import gleam/bit_string
 import gleam/string
-import gleam/list
 import gleam/dynamic
 import gleam/json
 import gleam/result
+import gleam/uri
 import gleam/map.{Map}
 import howdy/context.{Context}
 
@@ -47,29 +47,8 @@ pub fn get_json(
 /// ```gleam
 /// get_form(context)
 /// ```
-pub fn get_form(context in: Context(a)) -> Result(Map(String, String), Nil) {
+pub fn get_form(context in: Context(a)) -> Result(List(#(String, String)), Nil) {
   try body = bit_string.to_string(in.request.body)
-
-  body
-  |> string.split("&")
-  |> list.map(fn(x) {
-    x
-    |> string.split("=")
-    |> to_tuple
-  })
-  |> list.filter(fn(x) { x != Error(Nil) })
-  |> list.map(fn(x) { result.unwrap(x, #("", "")) })
-  |> map.from_list
-  |> Ok
+  uri.parse_query(body)
 }
 
-fn to_tuple(lst: List(String)) -> Result(#(String, String), Nil) {
-  case list.length(lst) {
-    2 -> {
-      try first = list.first(lst)
-      try last = list.last(lst)
-      Ok(#(first, last))
-    }
-    _ -> Error(Nil)
-  }
-}
