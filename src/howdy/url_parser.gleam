@@ -9,6 +9,7 @@ import gleam/string
 import gleam/int
 import gleam/float
 import howdy/uuid
+import gleam/io
 
 /// Error return types for parsing URL segments
 pub type SegmentError {
@@ -91,7 +92,11 @@ fn wildcard_parts(
 
 fn wildcard_join_paths(template: String, path: String) {
   let striped_template = string.drop_right(template, 1)
-  string.replace(path, striped_template, "")
+
+  case string.starts_with(path, striped_template) {
+    True -> string.drop_left(path, string.length(striped_template))
+    False -> path
+  }
 }
 
 fn is_wild_card(template_segment: String) {
