@@ -9,7 +9,6 @@ import gleam/string
 import gleam/int
 import gleam/float
 import howdy/uuid
-import gleam/io
 
 /// Error return types for parsing URL segments
 pub type SegmentError {

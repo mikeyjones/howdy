@@ -231,7 +231,7 @@ fn register_routes_with_root(
       )
       Nil
     }
-    router.Spa(route_path, spa_file_path) -> {
+    router.Spa(route_path, file_path, spa_file_path) -> {
       let full_route = case string.ends_with(route_path, "/*") {
         True -> join_urls(root, route_path)
         False -> join_urls(root, join_urls(route_path, "/*"))
@@ -239,7 +239,7 @@ fn register_routes_with_root(
       process_map(
         pid,
         full_route,
-        static_resource.get_spa_file_contents(spa_file_path),
+        static_resource.get_spa_file_contents(file_path, spa_file_path),
         http.Get,
         filters,
       )

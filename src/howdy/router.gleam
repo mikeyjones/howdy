@@ -46,6 +46,6 @@ pub type Route(a) {
   /// ## Example
   ///
   /// ```gleam
-  /// Spa("/", "./client/index.html")
-  Spa(route: String, file_path: String)
+  /// Spa("/", "./priv/static", "./priv/static/client/index.html")
+  Spa(route: String, file_path: String, default_file: String)
 }
