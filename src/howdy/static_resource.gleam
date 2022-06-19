@@ -10,7 +10,6 @@ import howdy/context.{Context}
 import howdy/response
 import howdy/url_parser.{UrlSegment, WildcardSegment}
 import howdy/mime
-import gleam/io
 
 type Error {
   FileNotFound
