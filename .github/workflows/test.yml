@@ -11,11 +11,71 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2.0.0
-      - uses: erlef/setup-beam@v1.9.0
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
         with:
-          otp-version: "23.2"
-          gleam-version: "0.21.0"
-      - run: gleam format --check src test
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+          # elixir-version: "1"
       - run: gleam deps download
       - run: gleam test
+      - run: gleam run -m rate_limit_benchmark
+      - run: gleam run -m routing_benchmark
+      - run: gleam format --check src test
+
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - run: gleam test
+      - run: gleam format --check src test
+
+  howdy_dev:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: howdy_dev
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - run: gleam test
+      - run: gleam format --check src test
+
+  example:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [simple, guards, chat, live]
+    defaults:
+      run:
+        working-directory: examples/${{ matrix.example }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - run: gleam test
+      - if: matrix.example == 'live'
+        run: gleam run -m howdy/ui diff button
+      - if: matrix.example == 'live'
+        run: gleam run -m tasks/css
+      - run: gleam format --check src test

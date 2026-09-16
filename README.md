@@ -1,38 +1,505 @@
 # howdy
 
 [![Package Version](https://img.shields.io/hexpm/v/howdy)](https://hex.pm/packages/howdy)
-[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/howdy/)
-
-A simple API on top of the [Mist](https://hex.pm/packages/mist) webserver 
-
-## Installation
-
-If available on Hex this package can be added to your Gleam project:
+[![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://howdy.hexdocs.pm/)
 
 ```sh
-gleam add howdy
+gleam add howdy@2
 ```
-
-and its documentation can be found at <https://hexdocs.pm/howdy>.
-
-## Manual
-
-* [Server](https://github.com/mikeyjones/howdy/blob/main/manual/server.md) 
-* [Router](https://github.com/mikeyjones/howdy/blob/main/manual/routes.md)
-* [Context](https://github.com/mikeyjones/howdy/blob/main/manual/context.md) 
-
-## Quick Start
-
 ```gleam
-import gleam/erlang
-import howdy/server
-import howdy/router.{Get}
-import howdy/response
+import gleam/erlang/process
+import howdy
+import howdy/controller
 
-pub fn main() {
-    let _ = server.start(Get("/", fn(_) { response.of_string("Hello, World!") }))
-    erlang.sleep_forever()
+pub fn main() -> Nil {
+  let hello =
+    controller.new("/")
+    |> controller.get("/", fn(ctx) { controller.text(ctx, "Howdy!") })
+
+  let assert Ok(_) =
+    howdy.new()
+    |> howdy.controller(hello)
+    |> howdy.start
+
+  process.sleep_forever()
 }
 ```
 
-See router documentation for more details [here](https://github.com/mikeyjones/howdy/blob/main/manual/routes.md)
+The server defaults to `0.0.0.0:8787` (all IPv4 interfaces). Override either
+setting in the app pipeline:
+
+```gleam
+howdy.new()
+|> howdy.controller(hello)
+|> howdy.bind(to: "127.0.0.1")
+|> howdy.listening(on: 8080)
+|> howdy.start
+```
+
+`howdy.start` creates the process names and returns ewe's startup result.
+Once listening, it prints a HOWDY ASCII banner, the framework version (`2.0.0`),
+and the bound URL including the actual port (even when configured with port `0`).
+Keep the calling process alive while serving requests. For advanced ewe options
+or supervision, `howdy.handler` is still available for use with `ewe.new`.
+
+HTTP/2 is always on. Add `howdy.tls(cert: "priv/cert.pem", key: "priv/key.pem")`
+to serve HTTPS, which is also what lets browsers use HTTP/2. See
+[docs/deployment.md](docs/deployment.md) for TLS, reverse proxies, forwarded
+headers and checking a deployed instance with `scripts/smoke.sh`.
+
+Further documentation can be found at <https://howdy.hexdocs.pm/>.
+
+## Query strings
+
+Use `howdy/query` to extract typed query parameters in a handler:
+
+```gleam
+import gleam/json
+import howdy/controller
+import howdy/query
+
+pub fn users_controller() {
+  controller.new("/users")
+  |> controller.get("/", fn(ctx) {
+    use search <- query.string_or(ctx, "search", default: "")
+    use page <- query.int_or(ctx, "page", default: 1)
+    use active <- query.bool_or(ctx, "active", default: True)
+
+    controller.json(ctx, json.object([
+      #("search", json.string(search)),
+      #("page", json.int(page)),
+      #("active", json.bool(active)),
+    ]))
+  })
+}
+```
+
+- `string`, `int`, and `bool` require the parameter to be present.
+- `optional_string`, `optional_int`, and `optional_bool` return `Option` values.
+- `string_or`, `int_or`, and `bool_or` use a default only for missing parameters.
+- `strings` collects repeated values in request order, or returns `[]` if absent.
+
+Invalid input returns a JSON `400` response and stops the handler. For example,
+`query.int(ctx, "page")` returns `{"error":"missing query parameter page"}`
+when absent, or `{"error":"query parameter page must be an integer"}` for
+`?page=hello`. Defaults never hide invalid values.
+
+Empty strings are preserved. Booleans accept only `true` and `false`. Singular
+helpers reject duplicate keys, and all helpers reject invalid query encoding.
+Use `howdy/validate` for constraints such as a minimum page number.
+
+## Cookies
+
+Read cookies with `use` and write them through response pipelines:
+
+```gleam
+import howdy/controller
+import howdy/cookie
+
+pub fn preferences_controller() {
+  controller.new("/preferences")
+  |> controller.get("/", fn(ctx) {
+    use theme <- cookie.string_or(ctx, "theme", default: "system")
+    controller.text(ctx, theme)
+  })
+  |> controller.post("/dark", fn(ctx) {
+    let options =
+      cookie.defaults()
+      |> cookie.max_age(60 * 60 * 24 * 30)
+      |> cookie.same_site(cookie.Lax)
+
+    controller.text(ctx, "Preference saved")
+    |> cookie.set("theme", "dark", options)
+  })
+  |> controller.delete("/", fn(ctx) {
+    controller.text(ctx, "Preference cleared")
+    |> cookie.delete("theme", cookie.defaults())
+  })
+}
+```
+
+- `string` requires a cookie; absence returns `400` with
+  `{"error":"missing cookie theme"}` for a cookie named `theme`.
+- `optional_string` returns `Option(String)`; `string_or` defaults only when absent.
+- Empty values remain empty. Duplicate names and invalid percent encoding return
+  JSON `400` responses and stop the handler. The HTTP parser ignores malformed pairs.
+- Values are percent-encoded when written and decoded when read, preserving spaces,
+  Unicode, punctuation, and literal percent signs. External cookie writers should
+  use the same encoding convention.
+- `set` and `delete` preserve existing headers, including other `Set-Cookie` headers.
+
+Defaults enable `Secure`, `HttpOnly`, `SameSite=Lax`, and `Path=/`, with no domain
+attribute or persistent lifetime. Configure them using `max_age` (seconds),
+`same_site` (`Lax`, `Strict`, or `None`), `path`, `domain`, `secure`, and `http_only`.
+For local HTTP development use `cookie.defaults() |> cookie.secure(False)`.
+`SameSite=None` requires `Secure`. Invalid names, paths, domains, or incompatible
+options panic as configuration errors; values are safely encoded by `set`.
+
+To delete a cookie, pass options with the same path and domain used when setting
+it. Deletion writes an empty value, `Max-Age=0`, and an expiry in the past, following
+the [browser cookie deletion rules](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies).
+
+These helpers read and write cookies; they do not sign them or validate sessions.
+For authentication, let a guard validate the session and return `401` when needed.
+
+## Static files
+
+`howdy/static` serves the files in a directory. Mount it like any controller:
+
+```gleam
+import howdy/static
+
+howdy.new()
+|> howdy.controller(api_controller())
+|> howdy.controller(static.serve("/", from: "priv/public"))
+```
+
+`GET /css/site.css` answers with `priv/public/css/site.css` and a content type
+from its extension. `GET /` and `GET /docs/` answer with the `index.html` in
+that directory. Only `GET` and `HEAD` are handled, directories are never
+listed, and paths that would escape the root get a `404`. On a live
+connection files are sent by ewe without being held in memory.
+
+The public directory is for trusted deployment assets. The root itself and
+every requested component must be real files/directories: symbolic links,
+including linked indexes and fallbacks, return `404`. Index and fallback names
+must be relative paths without `..`, drive prefixes or backslashes; invalid
+configuration panics when built. Keep this tree inaccessible to untrusted
+writers. These path checks do not protect against concurrent filesystem swaps;
+do not use this controller for an attacker-writable upload directory.
+
+Build it step by step to change the defaults:
+
+```gleam
+static.new(from: "priv/public")
+|> static.at("/assets")              // mount under a prefix, default "/"
+|> static.index("home.html")         // directory index, default "index.html"
+|> static.max_age(seconds: 86_400)   // add a cache-control header
+|> static.fallback("index.html")     // single-page apps: unknown paths get this file
+|> static.build
+```
+
+The result is an ordinary controller, so `controller.middleware` and the rest
+apply. A controller at `"/"` matches every path, so add it last, and mount it
+under a prefix when the app has a version group: the group only answers paths
+no controller matched.
+
+To send one file from a handler, use `static.file`. It answers `404` in the
+standard error shape when the file is missing:
+
+```gleam
+controller.get("/invoice/:id", fn(ctx) {
+  use id <- param.int(ctx, "id")
+  static.file(ctx, "priv/invoices/" <> int.to_string(id) <> ".pdf")
+})
+```
+
+## Request logging
+
+Use `howdy/logger` to log the request method, path and response status with
+the `logging` library at `Info` level, for example `GET /user/2 -> 200`:
+
+```gleam
+import howdy
+import howdy/logger
+import logging
+
+logging.configure()
+
+howdy.new()
+|> howdy.middleware(logger.log)
+```
+
+Configure logging once at application startup. Add the logger before other
+middleware to include their rejected requests and CORS preflight responses.
+The response is returned unchanged. Query strings, headers and bodies are
+omitted. Unmatched routes bypass middleware, so their 404 responses are not
+logged; handlers that panic do not produce a request log either.
+
+## CORS
+
+Browsers only let a page read cross-origin responses that say so. Attach
+`howdy/cors` as the outermost middleware to add those headers and answer
+preflight requests:
+
+```gleam
+import gleam/http
+import howdy
+import howdy/cors
+
+let policy =
+  cors.new()
+  |> cors.allow_origins(["https://app.example.com", "http://localhost:5173"])
+  |> cors.allow_methods([http.Get, http.Post, http.Delete])
+  |> cors.allow_headers(["content-type", "authorization"])
+  |> cors.expose_headers(["x-request-id"])
+  |> cors.allow_credentials()
+  |> cors.max_age(600)
+
+howdy.new()
+|> howdy.middleware(cors.middleware(policy))
+|> howdy.middleware(require_api_key)
+|> howdy.controller(user.controller())
+```
+
+- `cors.new()` allows no origins. Add them with `allow_origins`,
+  `allow_any_origin`, or `allow_origins_matching` with your own function.
+  `cors.allow_all()` is a ready-made policy for public APIs: any origin and any
+  requested header, without credentials.
+- Origins are `scheme://host` with an optional port, such as
+  `http://localhost:5173`, and match case-insensitively. A path, trailing slash
+  or `*` panics as a configuration error. List `null` to allow sandboxed pages.
+- Methods default to `GET`, `HEAD`, `POST`, `PUT`, `PATCH` and `DELETE`. No
+  request headers beyond the browser safelist are allowed until you name them
+  with `allow_headers` or echo whatever was asked for with `allow_any_header`.
+- `allow_credentials` cannot be combined with `allow_any_origin`; building the
+  middleware panics. Use `allow_origins_matching(fn(_) { True })` if you really
+  mean it.
+
+A preflight is an `OPTIONS` request carrying `origin` and
+`access-control-request-method`. The middleware answers it with `204` and never
+calls the handler, so put CORS before authentication or rate limiting, which
+would otherwise reject the credential-less preflight. Other requests with an
+`origin` run as normal and the response gains the CORS headers, including error
+responses, so the browser can show a `422` instead of a CORS failure. Requests
+without an `origin` pass through without CORS headers.
+
+The router answers `OPTIONS` for any path that has routes, even without an
+explicit `OPTIONS` route: a `204` with an `allow` header, run through the
+controller's middleware but not its guard. Declare an `OPTIONS` route yourself
+to override that. Paths with no routes are `404` before any middleware runs, so
+they carry no CORS headers.
+
+Responses that depend on the origin carry `vary: origin`, including requests
+without an Origin header. This also applies to wildcard policies because they
+omit CORS headers when Origin is absent. Existing `Vary` fields are preserved,
+including version-group headers and `Vary: *`.
+
+## Versioning
+
+Group controllers by API version and let newer versions fall back to older ones
+for anything they do not override:
+
+```gleam
+import howdy
+import howdy/version
+
+let api =
+  version.new(version.path())
+  |> version.default("v1")
+  |> version.add("v1", [user_v1.controller(), order.controller()])
+  |> version.add("v2", [user_v2.controller()])
+
+howdy.new()
+|> howdy.controller(health.controller())
+|> howdy.versions(api)
+|> howdy.handler
+```
+
+- `GET /v2/users` hits the `v2` user controller. `GET /v2/orders` falls back to the
+  `v1` order controller. Fallback is per route, so `POST /v2/users` also falls back
+  if `v2` only declares `GET`. Fallback walks versions in reverse declaration order.
+- `GET /users` uses the default version. Without a default a missing version is
+  `404` for the path strategy and `400` for the others.
+- `version.no_fallback` makes every version answer only its own routes.
+- Unversioned controllers are matched first and never see a version.
+- Handlers and middleware read `ctx.version`, an `Option(String)`. The original
+  request path is preserved, including the version segment.
+
+One strategy applies per app. Pick it with the argument to `version.new`:
+
+- `version.path()` reads `/v2/...` and strips the segment before routing. This is
+  the default choice: URLs are shareable, cacheable and easy to test.
+- `version.header("x-api-version")` reads a request header.
+- `version.accept("vnd.howdy")` reads `application/vnd.howdy.v2+json` from the
+  `accept` header.
+- `version.custom(fn)` runs your own function from the request to an
+  `Option(String)`.
+
+Header and accept strategies answer `400` with `{"error":"unknown API version v9"}`
+for undeclared versions and add a `vary` header to every response from the group.
+Mixing strategies with precedence rules is deliberately unsupported; write a custom
+resolver if you need it. Versions are opaque strings ordered by declaration, so date
+based names such as `2026-09-14` work as well as `v1`.
+
+Duplicate version names, a default that was never added, and mounting two groups on
+one app panic when the app is built.
+
+## WebSockets
+
+A WebSocket is a `GET` route that ends in `websocket.upgrade`, so it goes
+through the same middleware, guards and versioning as any other route. Browsers
+cannot set headers on the handshake, so socket guards usually read a cookie or
+a query parameter.
+
+```gleam
+import howdy/websocket
+import howdy/websocket/channel
+
+controller.new("chat")
+|> controller.get("/:room", fn(ctx) {
+  use room <- param.string(ctx, "room")
+
+  websocket.new(fn(socket) {
+    channel.join(socket, "room:" <> room)
+    room
+  })
+  |> websocket.on_text(fn(_socket, room, text) {
+    channel.broadcast_text("room:" <> room, text)
+    websocket.continue(room)
+  })
+  |> websocket.on_close(fn(_socket, _room) { Nil })
+  |> websocket.upgrade(ctx)
+})
+```
+
+- `websocket.new(on_open)` returns the starting state. Add `on_text`, `on_binary`
+  or `on_json(decoder, ...)` for frames from the client, and `on_message` for
+  messages other processes send to `websocket.subject(socket)`. Every callback
+  returns `websocket.continue(state)` or `websocket.close(socket, code, reason)`.
+- Send with `send_text`, `send_binary` or `send_json` on the socket handle.
+- `howdy/websocket/channel` groups sockets under a topic. `channel.join` and
+  `channel.leave` manage membership; `channel.broadcast_text` and
+  `channel.broadcast_json` reach every socket on a topic from anywhere in the
+  program, including plain HTTP handlers. Topics are Erlang `pg` groups, so a
+  socket that closes or crashes is removed automatically.
+- In `howdy/testing` there is no connection to upgrade, so a socket route
+  answers `426` there. Test the guards and parameters in front of it as usual.
+
+See `examples/chat` for a working chat room.
+
+Socket upgrades check browser `Origin` before opening the connection. The
+default accepts only the request's own HTTP(S) scheme, hostname and port;
+malformed, duplicate and `null` origins receive `403`. Non-browser clients
+without Origin remain supported; add `websocket.require_origin` for a
+browser-only endpoint. Origin checks complement authentication, not replace it.
+
+For a separate frontend or a TLS-terminating reverse proxy, configure exact
+public origins on the socket builder:
+
+```gleam
+websocket.new(on_open)
+|> websocket.allow_origins(["https://app.example.com"])
+|> websocket.require_origin
+|> websocket.upgrade(ctx)
+```
+
+Forwarded headers are not trusted automatically. For live components, apply
+these options to `live.socket(app, args)` or `live.socket_shared(runtime)` before
+`websocket.upgrade(ctx)`; the direct `live.serve` helpers use the same-origin
+default.
+
+## Pages and live components
+
+Web pages, themes and Lustre server components live in a separate package,
+[`howdy_ui`](ui/README.md), so howdy itself stays free of Lustre and Sketch.
+
+```gleam
+import howdy/ui
+import howdy/ui/live
+import howdy/ui/page
+
+controller.new("/")
+|> controller.get("/", fn(ctx) {
+  use theme <- cookie.string_or(ctx, "theme", default: "system")
+  page.new("Counter")
+  |> page.theme(theme)
+  |> page.live
+  |> page.body([ui.h1("Counter"), live.mount("/counter")])
+  |> page.respond(ctx)
+})
+|> controller.get("/counter", fn(ctx) { live.serve(ctx, counter.app(), with: 0) })
+```
+
+Themes are records that compile to CSS variables, and every component reads
+them, so switching light and dark is one attribute change. Components can be
+copied into your project to edit with `gleam run -m howdy/ui add button`. The CSS is
+embedded in each page by default, served as one file in development with
+`ui.stylesheet`, or written to a minified static file for publishing with
+`howdy/ui/export`. See `examples/live` for a working page.
+
+## Hot reload
+
+[`howdy_dev`](howdy_dev/README.md) is a dev dependency that rebuilds and
+reloads the app when a file under `src` changes, and refreshes open pages.
+Put an entry point in `dev/` and run it with `gleam dev`:
+
+```gleam
+import howdy/dev
+import my_app
+
+pub fn main() {
+  let assert Ok(_) = dev.start(my_app.app)
+  process.sleep_forever()
+}
+```
+
+It polls files rather than using a native watcher, so it works the same on
+macOS. Nothing from it reaches a `gleam export erlang-shipment`.
+
+## Testing
+
+`howdy/testing` runs requests through an app without starting a server. The
+whole pipeline runs: routing, middleware, guards, versioning, body decoding and
+validation. Keep the app separate from `main` so tests can build it too:
+
+```gleam
+import gleam/json
+import howdy/service.{FieldError}
+import howdy/testing
+import my_app
+
+pub fn create_user_test() {
+  let res =
+    testing.post("/user", json.object([#("name", json.string("Ada"))]))
+    |> testing.header("x-api-key", "secret")
+    |> testing.send(my_app.app())
+
+  assert res.status == 201
+  assert testing.json(res, user.decoder()) == Ok(User(id: 1, name: "Ada"))
+}
+
+pub fn blank_name_is_rejected_test() {
+  let res =
+    testing.post("/user", json.object([#("name", json.string(""))]))
+    |> testing.send(my_app.app())
+
+  assert res.status == 422
+  assert testing.field_errors(res)
+    == Ok([FieldError("name", "must not be empty")])
+}
+```
+
+- Build requests with `get`, `delete`, or `post`, `put` and `patch` taking JSON.
+  `request(method, path)` covers the rest. A query string in the path is kept.
+- Adjust them with `header`, `query`, `cookie`, `json_body`, `text_body`,
+  `bytes_body` and `from_ip`, which makes `rate_limit.by_ip` count the request.
+  Requests are plain `gleam/http/request` values, so its functions work too.
+- Read responses with `text`, `bytes`, `json` with a decoder, `error` for the
+  message in `{"error": "..."}`, `field_errors` for a `422`, and `cookies` for
+  the name and value pairs the response sets.
+
+Both [example applications](examples) have a test suite written this way.
+
+## Development
+
+```sh
+gleam run   # Run the project
+gleam test  # Run the tests
+```
+
+
+## Performance checks
+
+`howdy.start` compiles route and middleware tables once. When integrating with
+Ewe directly, construct `howdy.handler(app)` once and reuse the returned handler.
+Declaration order, wildcard fallback and version fallback remain unchanged.
+
+Route dispatch is indexed, so its cost does not grow with the number of
+controllers; a 512-controller app dispatches as fast as a one-controller app.
+Run `gleam run -m routing_benchmark` for dispatch throughput and heap allocation,
+and `gleam run -m rate_limit_benchmark` for identity-cardinality scaling.
+[Routing measurements](docs/benchmarks/routing.md) and
+[rate-limit measurements](docs/benchmarks/rate-limit-cardinality.md) describe the
+fixtures, results and limitations. CI tests all four examples and retains both
+benchmarks. Generated `build/` directories are ignored throughout the repository.
