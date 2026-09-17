@@ -1,0 +1,102 @@
+//// Buttons, and the theme toggle built on them.
+
+import gleam/list
+import howdy/ui/style.{class}
+import howdy/ui/theme/tokens
+import lustre/attribute.{type Attribute}
+import lustre/element.{type Element}
+import lustre/element/html
+import sketch/css.{type Class}
+import sketch/css/length.{rem}
+
+/// How prominent a button is.
+pub type Variant {
+  /// The main action: filled with the primary colour.
+  Primary
+  /// A supporting action: outlined.
+  Secondary
+  /// A destructive action: filled with the danger colour.
+  Danger
+}
+
+pub fn button(
+  variant: Variant,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  html.button(
+    [class(button_class(variant)), attribute.type_("button"), ..attributes],
+    children,
+  )
+}
+
+/// A button that switches the document between two named themes and
+/// remembers the choice in a `theme` cookie, which the page can read back
+/// with `howdy/cookie`. Works in server-rendered pages and live views.
+pub fn theme_toggle(
+  children: List(Element(msg)),
+  from a: String,
+  to b: String,
+) -> Element(msg) {
+  button(
+    Secondary,
+    [
+      attribute.data("howdy-theme-from", a),
+      attribute.data("howdy-theme-to", b),
+      attribute.attribute("onclick", toggle_script),
+    ],
+    children,
+  )
+}
+
+/// Every class this module uses, for `howdy/ui/export`.
+pub fn classes() -> List(Class) {
+  [button_class(Primary), button_class(Secondary), button_class(Danger)]
+}
+
+pub fn button_class(variant: Variant) -> Class {
+  let colours = case variant {
+    Primary -> [
+      css.background(tokens.primary),
+      css.color(tokens.on_primary),
+      css.border("1px solid transparent"),
+      css.hover([css.background(tokens.primary_hover)]),
+    ]
+    Secondary -> [
+      css.background(tokens.surface),
+      css.color(tokens.text),
+      css.border("1px solid " <> tokens.border),
+      css.hover([css.property("border-color", tokens.primary)]),
+    ]
+    Danger -> [
+      css.background(tokens.danger),
+      css.color(tokens.on_danger),
+      css.border("1px solid transparent"),
+      css.hover([css.property("filter", "brightness(0.9)")]),
+    ]
+  }
+  css.class(list.append(
+    [
+      css.display("inline-flex"),
+      css.align_items("center"),
+      css.gap(rem(0.5)),
+      css.padding_(tokens.space_2 <> " " <> tokens.space_4),
+      css.property("border-radius", tokens.radius_medium),
+      css.font_family(tokens.font_body),
+      css.font_size(rem(1.0)),
+      css.font_weight("500"),
+      css.line_height("1.25"),
+      css.cursor("pointer"),
+      css.transition("background 120ms, border-color 120ms"),
+      css.disabled([css.property("opacity", "0.5"), css.cursor("default")]),
+      css.focus_visible([
+        css.outline("2px solid " <> tokens.focus),
+        css.property("outline-offset", "2px"),
+      ]),
+    ],
+    colours,
+  ))
+}
+
+// Theme names stay in HTML-escaped data attributes, never executable code.
+const toggle_script = "(function(r,a,b){var c=r.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var n=c===a?b:a;r.dataset.theme=n;document.cookie='theme='+encodeURIComponent(n)+';path=/;max-age=31536000;samesite=lax'})(document.documentElement,this.dataset.howdyThemeFrom,this.dataset.howdyThemeTo)"
