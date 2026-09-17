@@ -75,7 +75,7 @@ pub fn options_without_request_method_is_not_a_preflight_test() {
   let res =
     send(app(origins()), http.Options, "/user", [#("origin", app_origin)])
   assert res.status == 204
-  assert header(res, "allow") == Ok("GET, POST, OPTIONS")
+  assert header(res, "allow") == Ok("GET, HEAD, POST, OPTIONS")
   assert header(res, "access-control-allow-origin") == Ok(app_origin)
   assert header(res, "access-control-allow-methods") == Error(Nil)
 }

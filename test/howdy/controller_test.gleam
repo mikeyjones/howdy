@@ -69,14 +69,43 @@ pub fn not_found_test() {
 pub fn method_not_allowed_test() {
   let res = testing.delete("/user/all") |> testing.send(app())
   assert res.status == 405
-  assert response.get_header(res, "allow") == Ok("GET")
+  assert response.get_header(res, "allow") == Ok("GET, HEAD")
+}
+
+pub fn head_is_answered_by_get_route_test() {
+  // The server drops the body of a response to HEAD, so only the status and
+  // headers matter here.
+  let res = testing.request(http.Head, "/user/42") |> testing.send(app())
+  assert res.status == 200
+  assert response.get_header(res, "content-type")
+    == Ok("application/json; charset=utf-8")
+}
+
+pub fn head_without_get_route_is_405_test() {
+  let res = testing.request(http.Head, "/user") |> testing.send(app())
+  assert res.status == 405
+  assert response.get_header(res, "allow") == Ok("POST")
+}
+
+pub fn explicit_head_route_wins_test() {
+  let app =
+    howdy.new()
+    |> howdy.controller(
+      controller.new("doc")
+      |> controller.get("/", fn(ctx: Context) { controller.text(ctx, "get") })
+      |> controller.route(http.Head, "/", fn(ctx: Context) {
+        controller.text(ctx, "head")
+      }),
+    )
+  let res = testing.request(http.Head, "/doc") |> testing.send(app)
+  assert testing.text(res) == "head"
 }
 
 pub fn options_is_answered_for_known_paths_test() {
   let res = testing.request(http.Options, "/user/all") |> testing.send(app())
   assert res.status == 204
   assert testing.text(res) == ""
-  assert response.get_header(res, "allow") == Ok("GET, OPTIONS")
+  assert response.get_header(res, "allow") == Ok("GET, HEAD, OPTIONS")
 
   let res = testing.request(http.Options, "/nope") |> testing.send(app())
   assert res.status == 404

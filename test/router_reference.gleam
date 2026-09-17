@@ -42,13 +42,16 @@ pub fn match(
   {
     Ok(Candidate(route:, params:, ..)) -> Found(handler: route.handler, params:)
     Error(Nil) ->
-      case candidates {
-        [] -> NotFound
-        [Candidate(controller: ctrl, params:, ..), ..] -> {
+      case candidates, head_fallback(candidates, method) {
+        [], _ -> NotFound
+        _, Ok(Candidate(route:, params:, ..)) ->
+          Found(handler: route.handler, params:)
+        [Candidate(controller: ctrl, params:, ..), ..], Error(Nil) -> {
           let allowed =
             candidates
             |> list.map(fn(candidate) { candidate.route.method })
             |> list.unique
+            |> with_head
           case method {
             http.Options ->
               Found(handler: controller.options_handler(ctrl, allowed), params:)
@@ -56,6 +59,31 @@ pub fn match(
           }
         }
       }
+  }
+}
+
+/// A `HEAD` request with no `HEAD` route is answered by the first `GET` route.
+fn head_fallback(
+  candidates: List(Candidate),
+  method: Method,
+) -> Result(Candidate, Nil) {
+  case method {
+    http.Head ->
+      list.find(candidates, fn(candidate) { candidate.route.method == http.Get })
+    _ -> Error(Nil)
+  }
+}
+
+fn with_head(allowed: List(Method)) -> List(Method) {
+  case list.contains(allowed, http.Head) {
+    True -> allowed
+    False ->
+      list.flat_map(allowed, fn(method) {
+        case method {
+          http.Get -> [http.Get, http.Head]
+          _ -> [method]
+        }
+      })
   }
 }
 

@@ -143,7 +143,7 @@ pub fn path_method_not_allowed_test() {
   let app = app(group(version.path()))
   let res = send(app, http.Delete, "/v2/users", [])
   assert res.status == 405
-  assert response.get_header(res, "allow") == Ok("GET, POST")
+  assert response.get_header(res, "allow") == Ok("GET, HEAD, POST")
 }
 
 pub fn path_adds_no_vary_header_test() {

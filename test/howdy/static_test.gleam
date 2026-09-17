@@ -116,14 +116,16 @@ pub fn other_controllers_win_test() {
 }
 
 pub fn exact_routes_decide_allowed_methods_test() {
-  // The catch-all also matches /api/ping, but it must not add HEAD to the
-  // methods reported for a route that exists exactly.
+  // The catch-all also matches /api/ping, but only the exact route decides
+  // the methods reported. HEAD is there because the GET route answers it.
   let res = testing.post("/api/ping", json.null()) |> testing.send(app())
   assert res.status == 405
-  assert response.get_header(res, "allow") == Ok("GET")
+  assert response.get_header(res, "allow") == Ok("GET, HEAD")
 
+  // Answered by the exact GET route, not the catch-all's HEAD route.
   let res = testing.request(http.Head, "/api/ping") |> testing.send(app())
-  assert res.status == 405
+  assert res.status == 200
+  assert testing.text(res) == "pong"
 }
 
 pub fn mounted_under_prefix_test() {

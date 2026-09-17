@@ -16,7 +16,9 @@ pub type Match {
   Found(handler: Handler, params: Dict(String, String))
   /// The path matched at least one route but none with this method. An
   /// `OPTIONS` request never produces this: it is answered by
-  /// `controller.options_handler` instead.
+  /// `controller.options_handler` instead, and neither does a `HEAD` request
+  /// to a path with a `GET` route, which the `GET` handler answers. `allowed`
+  /// lists `HEAD` wherever it lists `GET`.
   MethodNotAllowed(allowed: List(Method))
   /// Nothing matched the path.
   NotFound
@@ -136,13 +138,14 @@ pub fn match_table(table: Table, method: Method, path: String) -> Match {
     dict.get(table.exact, list.length(segments))
     |> result.map(candidates(_, first))
     |> result.unwrap([])
-  case scan(exact, segments, method, [], None, table.middleware) {
+  case scan(exact, segments, method, [], None, None, table.middleware) {
     NotFound ->
       scan(
         candidates(table.wildcards, first),
         segments,
         method,
         [],
+        None,
         None,
         table.middleware,
       )
@@ -153,20 +156,27 @@ pub fn match_table(table: Table, method: Method, path: String) -> Match {
 // Exact patterns always take precedence over wildcards, even if their methods
 // do not match. Stop as soon as the first handler for the requested method wins.
 // Only 405/implicit OPTIONS need the full list of matching methods.
+//
+// A `HEAD` request with no `HEAD` route of its own is answered by the first
+// matching `GET` route, held in `get` until the scan shows no explicit `HEAD`
+// route exists. The server drops the body of a response to `HEAD`.
 fn scan(
   entries: List(Entry),
   path: List(String),
   method: Method,
   allowed: List(Method),
   first: Option(Candidate),
+  get: Option(Candidate),
   middleware: List(Middleware),
 ) -> Match {
   case entries {
     [] ->
-      case first {
-        None -> NotFound
-        Some(Candidate(controller: ctrl, params:, ..)) -> {
-          let allowed = allowed |> list.reverse |> list.unique
+      case first, get {
+        None, _ -> NotFound
+        _, Some(Candidate(route:, params:, ..)) ->
+          Found(handler: route.handler, params:)
+        Some(Candidate(controller: ctrl, params:, ..)), None -> {
+          let allowed = allowed |> list.reverse |> list.unique |> with_head
           case method {
             http.Options ->
               Found(
@@ -180,14 +190,16 @@ fn scan(
       }
     [Entry(controller: ctrl, route:, ..), ..rest] ->
       case match_segments(route.segments, path, dict.new()) {
-        Error(Nil) -> scan(rest, path, method, allowed, first, middleware)
+        Error(Nil) -> scan(rest, path, method, allowed, first, get, middleware)
         Ok(params) ->
           case route.method == method {
             True -> Found(handler: route.handler, params:)
             False -> {
-              let first = case first {
-                None -> Some(Candidate(ctrl, route, params))
-                Some(_) -> first
+              let candidate = Some(Candidate(ctrl, route, params))
+              let first = option.or(first, candidate)
+              let get = case method, route.method {
+                http.Head, http.Get -> option.or(get, candidate)
+                _, _ -> get
               }
               scan(
                 rest,
@@ -195,11 +207,26 @@ fn scan(
                 method,
                 [route.method, ..allowed],
                 first,
+                get,
                 middleware,
               )
             }
           }
       }
+  }
+}
+
+/// A `GET` route also answers `HEAD`, so report it right after `GET`.
+fn with_head(allowed: List(Method)) -> List(Method) {
+  case list.contains(allowed, http.Head) {
+    True -> allowed
+    False ->
+      list.flat_map(allowed, fn(method) {
+        case method {
+          http.Get -> [http.Get, http.Head]
+          _ -> [method]
+        }
+      })
   }
 }
 
