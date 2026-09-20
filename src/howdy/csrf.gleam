@@ -16,10 +16,21 @@
 //// `GET`, `HEAD` and `OPTIONS` pass through untouched, so pages and
 //// preflights still work. Every other method must carry exactly one
 //// `origin` header matching one of the origins, or it gets `403` before
-//// the handler runs. Browsers send that header on cross-site writes, and
-//// the check fails closed when it is missing.
+//// the handler runs. Browsers send that header on cross-site writes.
 ////
-//// Because this rejects requests with no `origin`, it will also reject
+//// Some proxies and privacy tools strip `origin`. When it is missing, a
+//// single `sec-fetch-site: same-origin` header is accepted in its place.
+//// Browsers set that header themselves and scripts cannot forge it. An
+//// `origin` that is present always decides, and a request with neither
+//// header fails closed.
+////
+//// The protection is header-based by design and uses no tokens. Every
+//// current browser sends these headers, Go's standard library protects
+//// against CSRF the same way with `http.CrossOriginProtection`, and OWASP's
+//// verification standard (ASVS 4.0, 13.2.3) lists origin header checks
+//// among the accepted protections.
+////
+//// Because this rejects requests with neither header, it will also reject
 //// non-browser clients such as `curl` and native apps. Where those
 //// authenticate with a bearer token rather than a cookie they cannot be
 //// made to send one by a hostile page, so exempt them:
@@ -93,22 +104,32 @@ pub fn middleware(policy: Policy) -> Middleware {
   }
 }
 
-/// Whether a request carries exactly one `origin` header matching one of
-/// `origins`. Use it in a guard, or for a check of your own on one route.
-/// The method is not considered.
+/// Whether a request passes the check against `origins`: exactly one
+/// `origin` header matching one of them or, when there is no `origin` at
+/// all, exactly one `sec-fetch-site: same-origin`. Use it in a guard, or for
+/// a check of your own on one route. The method is not considered. Unlike
+/// `new`, this does not reject a malformed origin, so it never matches one.
 pub fn check(ctx: Context, origins: List(String)) -> service.Result(Nil) {
-  let sent =
-    list.filter(ctx.request.headers, fn(header) {
-      string.lowercase(header.0) == "origin"
-    })
-  case sent {
-    [#(_, value)] ->
-      case list.contains(origins, string.lowercase(value)) {
-        True -> Ok(Nil)
-        False -> Error(service.Forbidden)
-      }
-    _ -> Error(service.Forbidden)
+  let origins = list.map(origins, string.lowercase)
+  let allowed = case headers(ctx, "origin"), headers(ctx, "sec-fetch-site") {
+    [origin], _ -> list.contains(origins, origin)
+    [], ["same-origin"] -> True
+    _, _ -> False
   }
+  case allowed {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
+  }
+}
+
+/// Every value sent for a header, lowercased.
+fn headers(ctx: Context, name: String) -> List(String) {
+  list.filter_map(ctx.request.headers, fn(header) {
+    case string.lowercase(header.0) == name {
+      True -> Ok(string.lowercase(header.1))
+      False -> Error(Nil)
+    }
+  })
 }
 
 fn valid_origin(origin: String) -> Bool {

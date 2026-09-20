@@ -34,7 +34,8 @@
 //// and get a `415`.
 ////
 //// Form posts are not subject to CORS preflight, so cookie-authenticated
-//// forms need CSRF protection, such as the `Origin` check in `howdy_auth`.
+//// forms need CSRF protection. Use `howdy/csrf`, or the `Origin` check
+//// `howdy_auth` already applies to routes behind its guard.
 
 import ewe
 import gleam/bit_array

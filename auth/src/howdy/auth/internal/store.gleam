@@ -745,6 +745,25 @@ pub fn delete_expired(
   )
 }
 
+/// The user if they exist and are not suspended: what an external session
+/// store cannot know. Lock only inside a transaction.
+pub fn active_user(
+  conn: Repo,
+  user_id: String,
+  locking locking: Bool,
+) -> service.Result(List(User)) {
+  db.query(
+    conn,
+    "SELECT u.id, u.email, u.group_id FROM howdy_auth_users u WHERE u.id = $1 AND u.suspended = 0"
+      <> case locking {
+      True -> db.for_update(conn, "u")
+      False -> ""
+    },
+    [sql.string(user_id)],
+    user.row(),
+  )
+}
+
 /// Verify and lock the subject before privileged mutations.
 pub fn require_user(conn: Repo, user_id: String) -> service.Result(Nil) {
   use rows <- result.try(db.query(

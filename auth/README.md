@@ -473,7 +473,8 @@ the starter pages pass on a `?group=` query parameter. That value is the
 client's claim about where it wants to sign in. After authentication, trust
 `principal.user.group_id`, or guard with `auth.required(auth.in_group(…))`.
 With public registration enabled, anyone who knows a group's id can register
-into it; leave `allow_registration` off if membership is by invitation.
+into it; leave `allow_registration` off if membership is by invitation, and
+create members with `auth.provision`.
 
 `howdy/auth/groups` manages groups. Like user administration, these are trusted
 operations that take `by:` and are not exposed over HTTP:
@@ -511,6 +512,64 @@ running node keeps the mode it started with.
 Uniqueness is enforced by the database through `howdy_auth_users.login_key`:
 the address, or `group_id:address` under `AccountPerGroup`. Read
 `howdy_auth_users.email` for the address, as before.
+
+## Session storage
+
+Sessions live in the auth database by default, and most applications should
+leave them there: they are created and revoked in the same transactions as the
+changes that cause them. To keep them elsewhere, such as Redis, supply a
+`SessionStore`:
+
+```gleam
+import howdy/auth/session_store
+
+let identity = auth.with_session_store(identity, my_redis_store(connection))
+```
+
+A store is a record of seven functions over one small record type,
+`session_store.Entry`: `insert`, `get`, `touch`, `list`, `delete`,
+`delete_for_user` and `prune`. `howdy/auth/session_store` documents what each
+must do. Nothing else changes: the routes, guards, `auth.sessions` and the rest
+behave the same, and this package gains no dependency on any backend.
+
+```gleam
+pub fn my_redis_store(connection) -> session_store.SessionStore {
+  session_store.SessionStore(
+    insert: fn(entry) { todo as "SET howdy:s:<digest> with a TTL; SADD howdy:u:<user_id>" },
+    get: fn(digest) { todo },
+    touch: fn(digest, now) { todo },
+    list: fn(user_id) { todo },
+    delete: fn(digest, user_id) { todo },
+    delete_for_user: fn(user_id, keep) { todo },
+    prune: fn(_now) { Ok(Nil) },  // the TTL already does it
+  )
+}
+```
+
+- **A store never sees a session token**, only a one-way digest of it, so its
+  contents cannot be used to sign in.
+- **Users, credentials and suspension stay in the database.** Every request
+  reads the session from the store and then confirms in the database that its
+  user is active, so a suspended user is refused even if the store still holds
+  their sessions. An external store moves session data; it does not remove the
+  per-request database read.
+- **The package enforces expiry and idle timeouts itself** from the entry's
+  timestamps. A store may expire entries natively as well.
+- **Atomicity is what you give up.** The database commits first and the store
+  is written second. If the store fails in between, the operation returns its
+  error with the database change already made: a sign-in without a session
+  (request another token), or a `suspend`, `revoke_sessions` or `set_password`
+  whose sessions are not yet removed (call it again). `resume` clears the
+  user's stored sessions first and refuses if it cannot, so a suspension whose
+  revocation failed never comes back to life.
+- **Changing store signs everyone out.** Sessions are not copied across.
+- Return `Error(service.Internal(_))` when the backend fails. Operations then
+  fail closed.
+
+`session_store.check(store)` exercises a store against the contract and returns
+the first rule it breaks; call it from an adapter's test suite, pointed at a
+test backend. `session_store.memory()` is a reference implementation for tests
+and single-node development: it is lost on restart and not shared between nodes.
 
 ## Simple roles and permission-based RBAC
 
@@ -575,6 +634,15 @@ are **not exposed as unauthenticated HTTP routes**. Authorize a caller before
 using them. Each takes `by:` — `user.Acting(principal)` for an administrator's
 request or `user.System` for provisioning and scheduled code. The function
 records who acted; deciding whether they may is still the application's job.
+
+`auth.provision(identity, email, by:)` is the trusted way to create a user
+without asking them: an invitation, an import, a directory sync. It works with
+public registration disabled, which makes it the way to run an invitation-only
+installation, and it sends nothing. The user signs in with a login token when
+they are ready, which is also what proves the address is theirs. The group is
+chosen as for registration, so outside `group.Single` pass
+`auth.in_group(identity, group_id)`. It is `Conflict` when the address already
+has an account where it must be unique, and is recorded as `user.provisioned`.
 
 Users manage their own sessions with `auth.sessions` and `auth.revoke_session`
 (`GET /sessions`, `POST /sessions/revoke`). Session ids are digests: they

@@ -5,8 +5,10 @@ import howdy/auth/secret
 
 import gleam/http
 import gleam/http/request
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/order
 import gleam/result
 import gleam/string
 import gloo/repo.{type Repo}
@@ -19,6 +21,7 @@ import howdy/auth/internal/schema
 import howdy/auth/internal/store
 import howdy/auth/internal/token
 import howdy/auth/policy.{type Policy}
+import howdy/auth/session_store.{type Entry, type SessionStore, Entry}
 import howdy/auth/user.{
   type Actor, type Principal, type User, Acting, Principal, System,
 }
@@ -65,7 +68,16 @@ pub opaque type Auth {
     groups: Mode,
     /// The group this value acts in, chosen with `in_group`.
     group: Option(String),
+    sessions: Sessions,
   )
+}
+
+/// The database keeps sessions in the transactions that create and revoke
+/// them. An external store cannot join one, so it is written after the
+/// database commits; see `with_session_store` for what that changes.
+type Sessions {
+  InDatabase
+  External(SessionStore)
 }
 
 /// How a session was authenticated.
@@ -129,7 +141,25 @@ pub fn new(
     throttle_key,
     groups,
     None,
+    InDatabase,
   ))
+}
+
+/// Keep sessions in a store of your own instead of the auth database; see
+/// `howdy/auth/session_store`. Construct once at startup. Sessions are not
+/// copied between stores, so changing store signs everyone out.
+///
+/// Users, credentials and suspension stay in the database, and every request
+/// still confirms there that the session's user is active, so a suspended
+/// user is refused even if the store still holds their sessions. What changes
+/// is atomicity. The database commits first and the store is written second,
+/// so if the store fails in between, the operation returns its error with
+/// the database change already made: a registration or sign-in without a
+/// session (request another token), or a suspension, `revoke_sessions` or
+/// `set_password` whose sessions are not yet removed (call it again, or
+/// `revoke_sessions`).
+pub fn with_session_store(auth: Auth, store: SessionStore) -> Auth {
+  Auth(..auth, sessions: External(store))
 }
 
 /// Choose how users relate to groups; see `howdy/auth/group`. Construct once
@@ -601,6 +631,14 @@ pub fn exchange_from(
   secret: String,
   client: String,
 ) -> service.Result(Session) {
+  redeem(auth, secret, client) |> result.try(publish(auth, _))
+}
+
+fn redeem(
+  auth: Auth,
+  secret: String,
+  client: String,
+) -> service.Result(Issued) {
   use _ <- result.try(valid_token(secret))
   use consumed <- result.try({
     use conn <- db.transaction(auth.repo)
@@ -648,25 +686,45 @@ pub fn exchange_from(
   issue_session(conn, auth, user, EmailToken, client)
 }
 
+/// A session the database has committed to, and the entry an external store
+/// has yet to be given.
+type Issued {
+  Issued(session: Session, entry: Entry)
+}
+
 fn issue_session(
   conn: Repo,
   auth: Auth,
   user: User,
   method: Method,
   client: String,
-) -> service.Result(Session) {
+) -> service.Result(Issued) {
   let now = token.now()
   let session =
     Session(user, secret.wrap(token.new()), now + auth.policy.session_seconds)
-  use _ <- result.try(store.insert_session(
-    conn,
-    digest: token.digest(secret.reveal(session.token)),
-    user_id: user.id,
-    method: method_name(method),
-    now:,
-    expires_at: session.expires_at,
-    client:,
-  ))
+  let entry =
+    Entry(
+      digest: token.digest(secret.reveal(session.token)),
+      user_id: user.id,
+      method: method_name(method),
+      created_at: now,
+      last_seen_at: now,
+      expires_at: session.expires_at,
+      client:,
+    )
+  use _ <- result.try(case auth.sessions {
+    InDatabase ->
+      store.insert_session(
+        conn,
+        digest: entry.digest,
+        user_id: entry.user_id,
+        method: entry.method,
+        now:,
+        expires_at: entry.expires_at,
+        client:,
+      )
+    External(_) -> Ok(Nil)
+  })
   use _ <- result.try(event_from(
     conn,
     user.id,
@@ -675,7 +733,39 @@ fn issue_session(
     method_name(method),
     client,
   ))
-  Ok(session)
+  Ok(Issued(session, entry))
+}
+
+/// Hand a committed session to the external store, if there is one.
+fn publish(auth: Auth, issued: Issued) -> service.Result(Session) {
+  case auth.sessions {
+    InDatabase -> Ok(issued.session)
+    External(external) ->
+      external.insert(issued.entry) |> result.replace(issued.session)
+  }
+}
+
+/// Run against the external store, if there is one.
+fn externally(
+  auth: Auth,
+  run: fn(SessionStore) -> service.Result(Nil),
+) -> service.Result(Nil) {
+  case auth.sessions {
+    InDatabase -> Ok(Nil)
+    External(external) -> run(external)
+  }
+}
+
+/// Commit a database change, then revoke in the external store. In that
+/// order, so a session revoked because a credential or suspension changed
+/// cannot be recreated under the old rules in between.
+fn after_commit(
+  auth: Auth,
+  revoke: fn(SessionStore) -> service.Result(Nil),
+  commit: fn() -> service.Result(Nil),
+) -> service.Result(Nil) {
+  use _ <- result.try(commit())
+  externally(auth, revoke)
 }
 
 /// Authenticate by email and password. Wrong, unknown, email-only and suspended
@@ -699,6 +789,16 @@ pub fn login_password_from(
   password: String,
   client: String,
 ) -> service.Result(Session) {
+  verify_password(auth, email, password, client)
+  |> result.try(publish(auth, _))
+}
+
+fn verify_password(
+  auth: Auth,
+  email: String,
+  password: String,
+  client: String,
+) -> service.Result(Issued) {
   use hasher <- result.try(passwords(auth))
   use email <- result.try(
     address.normalize_email(email)
@@ -828,13 +928,33 @@ pub fn set_password(
   use _ <- result.try(validate_new_password(auth, password))
   let fresh = fn(conn) {
     let now = token.now()
-    use fresh <- result.try(store.fresh_email_session(
-      conn,
-      principal.session_id,
-      principal.user.id,
-      now,
-      now - auth.policy.fresh_session_seconds,
-    ))
+    let created_after = now - auth.policy.fresh_session_seconds
+    use fresh <- result.try(case auth.sessions {
+      InDatabase ->
+        store.fresh_email_session(
+          conn,
+          principal.session_id,
+          principal.user.id,
+          now,
+          created_after,
+        )
+      External(external) -> {
+        use entry <- result.try(external.get(principal.session_id))
+        use users <- result.try(store.active_user(
+          conn,
+          principal.user.id,
+          locking: True,
+        ))
+        Ok(case entry, users {
+          Some(entry), [_] ->
+            entry.user_id == principal.user.id
+            && entry.method == method_name(EmailToken)
+            && entry.expires_at > now
+            && entry.created_at > created_after
+          _, _ -> False
+        })
+      }
+    })
     case fresh {
       True -> Ok(Nil)
       False -> Error(service.Forbidden)
@@ -843,6 +963,10 @@ pub fn set_password(
   // Refuse before paying for a hash, then check again under the row lock.
   use _ <- result.try(db.connect(auth.repo, fresh))
   use encoded <- result.try(password_hash.hash(hasher, password))
+  // Revoked after the commit: from then on the old password opens no more.
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(principal.user.id, Some(principal.session_id))
+  })
   use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
   use _ <- result.try(fresh(conn))
   use _ <- result.try(store.replace_password(conn, principal.user.id, encoded))
@@ -902,6 +1026,52 @@ fn register(
   event_from(conn, id, "user.registered", System, group_id, client)
 }
 
+/// Privileged operation: create a user without asking them, for an
+/// invitation, an import or a directory sync. Authorize the caller first. It
+/// works whether or not public registration is enabled, and sends nothing:
+/// the user signs in with a login token when they are ready, which is also
+/// what proves the address is theirs. The group is chosen as for
+/// registration, so outside `Single` use `auth.in_group`:
+///
+/// ```gleam
+/// auth.provision(auth.in_group(identity, "acme"), email, by: user.System)
+/// ```
+///
+/// Conflict when the address already has an account where it must be unique.
+pub fn provision(
+  auth: Auth,
+  email: String,
+  by actor: Actor,
+) -> service.Result(User) {
+  use email <- result.try(address.normalize_email(email))
+  use within <- result.try(target(auth, True))
+  let group_id = option.unwrap(within, group.default_id)
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  // Locked, so the group cannot be deleted before the user is in it.
+  use found <- result.try(store.find_group(conn, group_id))
+  use _ <- result.try(case found {
+    [_] -> Ok(Nil)
+    _ -> Error(service.NotFound("group"))
+  })
+  let login_key = group.login_key(auth.groups, group_id, email)
+  use taken <- result.try(store.login_key_taken(conn, login_key))
+  use _ <- result.try(case taken {
+    False -> Ok(Nil)
+    True ->
+      Error(service.Conflict("an account already exists for this address"))
+  })
+  let id = token.new()
+  use _ <- result.try(store.insert_user(
+    conn,
+    id:,
+    email:,
+    group_id:,
+    login_key:,
+  ))
+  use _ <- result.try(event(conn, id, "user.provisioned", actor, group_id))
+  Ok(user.User(id, email, group_id))
+}
+
 fn valid_token(secret: String) -> service.Result(Nil) {
   case string.byte_size(secret) == token_bytes {
     True -> Ok(Nil)
@@ -924,25 +1094,56 @@ pub fn authenticate_from(
   client: String,
 ) -> service.Result(Principal) {
   use _ <- result.try(valid_token(secret))
-  use conn <- db.connect(auth.repo)
   let digest = token.digest(secret)
   let now = token.now()
   let seen_after = case auth.policy.session_idle_seconds {
     0 -> -1
     idle -> now - idle
   }
-  use users <- result.try(store.session_user(conn, digest, now, seen_after))
-  case users {
-    [#(user, last_seen_at)] -> {
-      use _ <- result.try(in_bound_group(auth, user.group_id))
-      use _ <- result.try(case last_seen_at <= now - touch_seconds {
-        True -> store.touch_session(conn, digest, now)
-        False -> Ok(Nil)
-      })
-      Ok(Principal(user, digest, client))
+  let touch_due = fn(last_seen_at) { last_seen_at <= now - touch_seconds }
+  use user <- result.try(case auth.sessions {
+    InDatabase -> {
+      use conn <- db.connect(auth.repo)
+      use found <- result.try(store.session_user(conn, digest, now, seen_after))
+      case found {
+        [#(user, last_seen_at)] ->
+          case touch_due(last_seen_at) {
+            True -> store.touch_session(conn, digest, now)
+            False -> Ok(Nil)
+          }
+          |> result.replace(user)
+        _ -> Error(service.Unauthorized)
+      }
     }
-    _ -> Error(service.Unauthorized)
-  }
+    External(external) -> {
+      use entry <- result.try(external.get(digest))
+      use entry <- result.try(case entry {
+        Some(entry)
+          if entry.expires_at > now && entry.last_seen_at > seen_after
+        -> Ok(entry)
+        _ -> Error(service.Unauthorized)
+      })
+      // The store says who; the database says whether they still may.
+      use users <- result.try(
+        db.connect(auth.repo, store.active_user(
+          _,
+          entry.user_id,
+          locking: False,
+        )),
+      )
+      case users {
+        [user] ->
+          case touch_due(entry.last_seen_at) {
+            True -> external.touch(digest, now)
+            False -> Ok(Nil)
+          }
+          |> result.replace(user)
+        _ -> Error(service.Unauthorized)
+      }
+    }
+  })
+  use _ <- result.try(in_bound_group(auth, user.group_id))
+  Ok(Principal(user, digest, client))
 }
 
 /// A typed controller/endpoint guard. Ambiguous credentials are rejected.
@@ -995,6 +1196,11 @@ pub fn check_origin(auth: Auth, ctx: Context(a)) -> service.Result(Nil) {
 }
 
 pub fn logout(auth: Auth, principal: Principal) -> service.Result(Nil) {
+  use _ <- result.try(
+    externally(auth, fn(external) {
+      external.delete(principal.session_id, principal.user.id)
+    }),
+  )
   use conn <- db.transaction(auth.repo)
   use _ <- result.try(store.delete_session(
     conn,
@@ -1009,12 +1215,31 @@ pub fn sessions(
   auth: Auth,
   principal: Principal,
 ) -> service.Result(List(SessionInfo)) {
-  use conn <- db.connect(auth.repo)
-  use rows <- result.try(store.sessions_for_user(
-    conn,
-    principal.user.id,
-    token.now(),
-  ))
+  let now = token.now()
+  use rows <- result.try(case auth.sessions {
+    InDatabase ->
+      db.connect(auth.repo, store.sessions_for_user(_, principal.user.id, now))
+    External(external) -> {
+      use entries <- result.try(external.list(principal.user.id))
+      entries
+      |> list.filter(fn(entry) { entry.expires_at > now })
+      |> list.sort(fn(a, b) {
+        int.compare(b.created_at, a.created_at)
+        |> order.break_tie(string.compare(a.digest, b.digest))
+      })
+      |> list.map(fn(entry) {
+        store.SessionRow(
+          digest: entry.digest,
+          method: entry.method,
+          created_at: entry.created_at,
+          last_seen_at: entry.last_seen_at,
+          expires_at: entry.expires_at,
+          client: entry.client,
+        )
+      })
+      |> Ok
+    }
+  })
   Ok(
     list.map(rows, fn(row) {
       SessionInfo(
@@ -1037,6 +1262,11 @@ pub fn revoke_session(
   principal: Principal,
   session_id: String,
 ) -> service.Result(Nil) {
+  use _ <- result.try(
+    externally(auth, fn(external) {
+      external.delete(session_id, principal.user.id)
+    }),
+  )
   use conn <- db.transaction(auth.repo)
   use _ <- result.try(store.delete_session(conn, session_id, principal.user.id))
   event(conn, principal.user.id, "session.revoked", Acting(principal), "")
@@ -1048,6 +1278,9 @@ pub fn revoke_sessions(
   user_id: String,
   by actor: Actor,
 ) -> service.Result(Nil) {
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(user_id, None)
+  })
   use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
   use _ <- result.try(store.require_user(conn, user_id))
   use _ <- result.try(store.delete_sessions(conn, user_id))
@@ -1061,6 +1294,9 @@ pub fn suspend(
   user_id: String,
   by actor: Actor,
 ) -> service.Result(Nil) {
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(user_id, None)
+  })
   use <- cache.changing
   use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
   use _ <- result.try(store.require_user(conn, user_id))
@@ -1076,6 +1312,10 @@ pub fn resume(
   user_id: String,
   by actor: Actor,
 ) -> service.Result(Nil) {
+  // A suspension whose external revocation failed must not come back to life.
+  use _ <- result.try(
+    externally(auth, fn(external) { external.delete_for_user(user_id, None) }),
+  )
   use <- cache.changing
   use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
   use _ <- result.try(store.require_user(conn, user_id))
@@ -1086,6 +1326,9 @@ pub fn resume(
 /// Housekeeping for a scheduled job. Expired rows are already removed as a
 /// side effect of normal traffic; this covers quiet installations.
 pub fn prune_expired(auth: Auth) -> service.Result(Nil) {
+  use _ <- result.try(
+    externally(auth, fn(external) { external.prune(token.now()) }),
+  )
   use conn <- db.transaction(auth.repo)
   store.delete_expired(conn, token.now(), auth.policy)
 }

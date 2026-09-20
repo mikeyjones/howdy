@@ -1,5 +1,6 @@
 -module(howdy_auth_ffi).
--export([now/0, with_repo_lock/2, normalize_password/1, canonical_host/1, cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1]).
+-export([now/0, with_repo_lock/2, normalize_password/1, canonical_host/1, cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1,
+         sessions_new/0, sessions_put/5, sessions_get/2, sessions_list/2, sessions_delete/3, sessions_delete_user/3, sessions_prune/2]).
 
 now() -> erlang:system_time(second).
 
@@ -217,3 +218,32 @@ cache_changing(Run) ->
         cache_invalidate(),
         Run()
     end).
+
+%% The in-memory session store: one public ETS table of
+%% {Digest, UserId, ExpiresAt, Record}, owned by the process that made it.
+sessions_new() -> ets:new(howdy_auth_sessions, [public, set, {read_concurrency, true}]).
+
+sessions_put(Table, Digest, UserId, ExpiresAt, Record) ->
+    ets:insert(Table, {Digest, UserId, ExpiresAt, Record}),
+    nil.
+
+sessions_get(Table, Digest) ->
+    case ets:lookup(Table, Digest) of
+        [{_, _, _, Record}] -> {some, Record};
+        [] -> none
+    end.
+
+sessions_list(Table, UserId) ->
+    [Record || [Record] <- ets:match(Table, {'_', UserId, '_', '$1'})].
+
+sessions_delete(Table, Digest, UserId) ->
+    ets:match_delete(Table, {Digest, UserId, '_', '_'}),
+    nil.
+
+sessions_delete_user(Table, UserId, Keep) ->
+    ets:select_delete(Table, [{{'$1', UserId, '_', '_'}, [{'=/=', '$1', {const, Keep}}], [true]}]),
+    nil.
+
+sessions_prune(Table, Now) ->
+    ets:select_delete(Table, [{{'_', '_', '$1', '_'}, [{'=<', '$1', Now}], [true]}]),
+    nil.

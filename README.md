@@ -146,8 +146,66 @@ or over one mebibyte; `read_with_limit` changes the limit. Multipart forms,
 and so file uploads, are not supported yet. A local variable named `form`
 would shadow the module, so call the value something else, such as `fields`.
 
-Form posts skip CORS preflight, so cookie-authenticated forms need CSRF
-protection such as the `Origin` check in [`howdy_auth`](auth/README.md).
+## Cross-site request forgery
+
+A page on another site can make a browser post a form to your application,
+and the browser attaches the user's cookies, because it decides by
+destination rather than by who asked. Form posts need no CORS preflight, so
+nothing stops the request from arriving. An attacker cannot read the
+response, so this is about writes, not disclosure.
+
+Two defences already apply. `cookie.defaults()` sets `SameSite=Lax`, which
+keeps cookies off cross-site writes, and [`howdy_auth`](auth/README.md)
+requires a matching `Origin` on cookie-authenticated writes, both on its own
+routes and on any route behind its guard. An application that uses that guard
+for every write is already protected.
+
+For applications that manage their own session cookies, `howdy/csrf` applies
+the same check:
+
+```gleam
+import howdy/csrf
+
+howdy.new()
+|> howdy.middleware(csrf.middleware(csrf.new(["https://example.com"])))
+```
+
+`GET`, `HEAD` and `OPTIONS` pass through, so pages and preflights still work.
+Every other method must carry exactly one `origin` header matching one of the
+origins, or it gets `403` before the handler runs. `null`, a different scheme,
+a different port and a host that merely starts with an allowed one are all
+rejected. Origins must be `scheme://host` with an optional port; anything else
+panics when built.
+
+Some proxies and privacy tools strip `origin`. When it is missing, a single
+`sec-fetch-site: same-origin` header is accepted in its place: browsers set it
+themselves and scripts cannot forge it. An `origin` that is present always
+decides, and a request with neither header fails closed.
+
+The protection is header-based by design and uses no tokens. Every current
+browser sends these headers. Go's standard library protects against CSRF the
+same way, with `http.CrossOriginProtection`. OWASP's CSRF cheat sheet treats
+`Sec-Fetch-Site` with an origin fallback as a primary defence, and its
+Application Security Verification Standard (4.0, requirement 13.2.3) lists
+origin header checks among the accepted protections.
+
+Because it rejects requests with neither header, it also rejects non-browser
+clients. Where those authenticate with a bearer token rather than a cookie, a
+hostile page cannot make a browser send one on their behalf, so exempt them:
+
+```gleam
+csrf.new(["https://example.com"])
+|> csrf.exempt(fn(ctx) {
+  case request.get_header(ctx.request, "authorization") {
+    Ok("Bearer " <> _) -> True
+    _ -> False
+  }
+})
+```
+
+`csrf.check(ctx, origins)` runs the same check inside a guard or a single
+handler. Keep `SameSite` cookies as well, since the two fail in different
+ways, and never write on a `GET` route, because those are not checked.
 
 ## Cookies
 
