@@ -149,3 +149,67 @@ test('deletion submits explicit email confirmation and handles a stale session w
   assert.equal(deletion.method, 'POST');
   assert.deepEqual(JSON.parse(deletion.body), {email: 'new@example.com'});
 });
+
+function passkeyPage({ cancelled = false, mfa = true } = {}) {
+  const ids = Object.fromEntries(['status', 'passkey-login', 'mfa-login', 'mfa-verify', 'mfa-send'].map(id => [id, new Element()]));
+  ids['passkey-login'].dataset.api = '/api/auth';
+  ids['mfa-login'].hidden = true;
+  ids['mfa-verify'].button = new Element();
+  ids['mfa-verify'].elements = {method: {value: 'recovery'}, code: {value: ' BACKUP '}, remember: {checked: true}};
+  const calls = [], ceremonies = [];
+  vm.runInNewContext(script, {
+    document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
+    location: {search: '?group=team'}, URLSearchParams, atob, btoa,
+    navigator: {credentials: {get: async options => {
+      ceremonies.push(options);
+      return cancelled ? null : {id: 'AQI', rawId: new Uint8Array([1,2]).buffer, type: 'public-key', response: {
+        clientDataJSON: new Uint8Array([3]).buffer, authenticatorData: new Uint8Array([4]).buffer,
+        signature: new Uint8Array([5]).buffer, userHandle: new Uint8Array([6]).buffer,
+      }};
+    }}},
+    fetch: async (url, options) => {
+      calls.push({url, ...options});
+      const body = url.endsWith('/passkeys/login') ? {challenge: 'opaque', options: {challenge: 'AQI', rpId: 'example.test', userVerification: 'required'}}
+        : url.endsWith('/passkeys/session') ? {mfa_required: mfa} : {id: 'user'};
+      return {status: 200, ok: true, json: async () => body};
+    },
+  });
+  return {ids, calls, ceremonies};
+}
+
+test('passkey login serializes the assertion and waits for MFA before reporting success', async () => {
+  const {ids, calls, ceremonies} = passkeyPage();
+  await ids['passkey-login'].fire('click');
+  assert.deepEqual([...ceremonies[0].publicKey.challenge], [1,2]);
+  assert.equal(ceremonies[0].publicKey.userVerification, 'required');
+  assert.deepEqual(JSON.parse(calls[0].body), {group: 'team'});
+  const posted = JSON.parse(calls[1].body);
+  assert.equal(posted.challenge, 'opaque');
+  assert.equal(JSON.parse(posted.credential).response.userHandle, 'Bg');
+  assert.equal(ids['mfa-login'].hidden, false);
+  assert.match(ids.status.textContent, /Verify your second factor/);
+  await ids['mfa-verify'].fire('submit');
+  assert.deepEqual(JSON.parse(calls.at(-1).body), {method: 'recovery', code: 'BACKUP', remember: true});
+  assert.equal(ids['mfa-login'].hidden, true);
+  assert.match(ids.status.textContent, /You are signed in/);
+});
+
+test('cancelled passkey prompt does not submit a credential or claim success', async () => {
+  const {ids, calls} = passkeyPage({cancelled: true});
+  await ids['passkey-login'].fire('click');
+  assert.equal(calls.length, 1);
+  assert.match(ids.status.textContent, /cancelled/);
+  assert.equal(ids['passkey-login'].disabled, false);
+});
+
+test('recovery codes render on separate lines and enrollment secrets are cleared', () => {
+  const ids = Object.fromEntries(['status', 'sessions', 'recovery-codes', 'mfa-setup-key'].map(id => [id, new Element()]));
+  const context = {document: {getElementById: id => ids[id] || null}};
+  vm.createContext(context);
+  vm.runInContext(script, context);
+  vm.runInContext("signedOut = message => { document.getElementById('status').textContent = message; }", context);
+  vm.runInContext("showRecovery({recovery_codes: ['ONE', 'TWO']}, 'Enabled.')", context);
+  assert.equal(ids['recovery-codes'].textContent, 'ONE\nTWO');
+  assert.equal(ids['mfa-setup-key'].textContent, '');
+  assert.match(ids.status.textContent, /Save your recovery codes/);
+});

@@ -5,6 +5,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
 import howdy/auth.{type Auth}
+import howdy/auth/internal/login_transport
 import howdy/auth/secret
 import howdy/controller
 import howdy/cookie
@@ -113,6 +114,31 @@ pub fn routes(
               options(identity)
                 |> cookie.max_age(auth.policy(identity).session_seconds),
             )
+          }
+          Ok(auth.ProviderSecondFactor(challenge)) -> {
+            case principal {
+              Some(p) -> {
+                let _ = auth.logout(identity, p)
+                Nil
+              }
+              None -> Nil
+            }
+            case login_transport.try_trusted(identity, ctx, challenge) {
+              auth.SignedIn(session) ->
+                redirect(ctx, success)
+                |> cookie.set(
+                  auth.cookie_name(identity),
+                  secret.reveal(session.token),
+                  options(identity)
+                    |> cookie.max_age(auth.policy(identity).session_seconds),
+                )
+              auth.SecondFactor(challenge) ->
+                login_transport.pending(
+                  identity,
+                  redirect(ctx, prefix <> "/mfa"),
+                  challenge,
+                )
+            }
           }
           Ok(auth.ProviderLinked) -> redirect(ctx, success)
           Error(_) -> redirect(ctx, failure)

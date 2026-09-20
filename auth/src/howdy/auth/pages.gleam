@@ -64,6 +64,18 @@ pub fn routes(
       False -> controller.status(ctx, 404)
     }
   })
+  |> controller.get("/mfa", fn(ctx) {
+    controller.html(
+      ctx,
+      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Verify sign-in</title><script src=\""
+        <> escape(prefix)
+        <> "/client.js\" defer></script></head><body><main><h1>Verify sign-in</h1>"
+        <> mfa_login(identity, api, False)
+        <> "<p id=\"status\" role=\"status\" aria-live=\"polite\"></p><a href=\""
+        <> escape(prefix)
+        <> "/account\">Your account</a></main></body></html>",
+    )
+  })
   |> controller.get("/account", fn(ctx) {
     use _ <- guard.require(ctx, auth.required(identity))
     controller.html(ctx, account_page(identity, prefix, api))
@@ -253,10 +265,64 @@ fn page(
   <> "</h1>"
   <> provider_forms(identity, prefix, "login", group)
   <> credentials
+  <> case auth.passkeys_enabled(identity) {
+    True ->
+      "<button id=\"passkey-login\" data-api=\""
+      <> api
+      <> "\">Sign in with a passkey</button>"
+    False -> ""
+  }
+  <> mfa_login(identity, api, True)
   <> "<p><a href=\""
   <> prefix
   <> "/account\">Manage your account</a></p>"
   <> "<p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>Email and account management require JavaScript. Provider sign-in works without it.</noscript></main></body></html>"
+}
+
+fn delivered_option(identity: Auth) -> String {
+  case auth.mfa_delivery_enabled(identity) {
+    True -> "<option value=\"otp\">Delivered code</option>"
+    False -> ""
+  }
+}
+
+fn delivered_button(identity: Auth) -> String {
+  case auth.mfa_delivery_enabled(identity) {
+    True ->
+      "<button id=\"mfa-send\">Send a code to my verified contact</button>"
+    False -> ""
+  }
+}
+
+fn mfa_login(identity: Auth, api: String, hidden: Bool) -> String {
+  "<section id=\"mfa-login\" data-api=\""
+  <> escape(api)
+  <> "\""
+  <> case hidden {
+    True -> " hidden"
+    False -> ""
+  }
+  <> "><h2>Second factor</h2><form id=\"mfa-verify\"><label>Method <select name=\"method\"><option value=\"totp\">Authenticator app</option>"
+  <> delivered_option(identity)
+  <> "<option value=\"recovery\">Recovery code</option></select></label><label>Code <input name=\"code\" autocomplete=\"one-time-code\" required maxlength=\"64\"></label><label><input name=\"remember\" type=\"checkbox\">Remember this device for 30 days</label><button>Verify sign-in</button></form>"
+  <> delivered_button(identity)
+  <> "</section>"
+}
+
+fn security_settings(identity: Auth) -> String {
+  let passkeys = case auth.passkeys_enabled(identity) {
+    False -> ""
+    True ->
+      "<h2>Passkeys</h2><p>Sign in again before changing passkeys. To remove one, sign in through another login method.</p><form id=\"passkey-add\"><label>Passkey name <input name=\"name\" required maxlength=\"100\"></label><button>Add passkey</button></form><ul id=\"passkeys\"></ul>"
+  }
+  let mfa = case auth.mfa_enabled(identity) {
+    False -> ""
+    True ->
+      "<h2>Two-factor authentication</h2><p id=\"mfa-state\"></p><p>Sign in again before changing these settings. Enrollment, disabling MFA and replacing recovery codes sign out all sessions.</p><form id=\"mfa-enroll\"><label>Method <select name=\"method\"><option value=\"totp\">Authenticator app</option>"
+      <> delivered_option(identity)
+      <> "</select></label><button>Start enrollment</button></form><pre id=\"mfa-setup-key\"></pre><form id=\"mfa-enroll-confirm\" hidden><label>Confirmation code <input name=\"code\" autocomplete=\"one-time-code\" required maxlength=\"6\"></label><button>Enable two-factor authentication</button></form><button id=\"mfa-disable\">Disable two-factor authentication</button><button id=\"mfa-recovery\">Replace recovery codes</button><p>Save these recovery codes privately. Each works once and they are shown only now.</p><pre id=\"recovery-codes\"></pre><h3>Remembered devices</h3><ul id=\"trusted-devices\"></ul>"
+  }
+  passkeys <> mfa
 }
 
 fn account_page(identity: Auth, prefix: String, api: String) -> String {
@@ -290,6 +356,7 @@ fn account_page(identity: Auth, prefix: String, api: String) -> String {
   <> password_form
   <> email_forms
   <> "<h2>Linked sign-in providers</h2><p>To unlink a provider, first sign in again using another method. Unlinking signs out all sessions.</p><ul id=\"linked-providers\"></ul>"
+  <> security_settings(identity)
   <> deletion_form
   <> "<h2>Active sessions</h2><ul id=\"sessions\"></ul><button id=\"refresh-sessions\">Refresh sessions</button><button id=\"logout\">Sign out</button><p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>Account management requires JavaScript.</noscript></main></body></html>"
 }
@@ -298,7 +365,8 @@ const script = "const requestForm = document.getElementById('request');
 const exchangeForm = document.getElementById('exchange');
 const account = document.getElementById('account');
 const status = document.getElementById('status');
-const api = (requestForm || account)?.dataset.api;
+const mfaLogin = document.getElementById('mfa-login');
+const api = (requestForm || account || mfaLogin || document.getElementById('passkey-login'))?.dataset.api;
 async function call(endpoint, payload) {
   const response = await fetch(api + '/' + endpoint, {
     method: payload === undefined ? 'GET' : 'POST', credentials: 'same-origin',
@@ -314,6 +382,7 @@ async function submit(form, endpoint, payload) {
   button.disabled = true;
   try {
     const body = await call(endpoint, payload);
+    if (body.mfa_required) { showMfa(); return; }
     const signedIn = endpoint === 'session' || endpoint === 'password/session';
     status.textContent = signedIn ? 'You are signed in. You can now manage your account.' : body.message;
     if (form.elements.password) form.elements.password.value = '';
@@ -433,4 +502,157 @@ if (account) {
       account.querySelectorAll('button').forEach(b => b.disabled = true);
     } catch (error) { status.textContent = error.message; }
   });
-}"
+}
+function showMfa() {
+  if (mfaLogin) mfaLogin.hidden = false;
+  if (requestForm) requestForm.hidden = true;
+  if (exchangeForm) exchangeForm.hidden = true;
+  status.textContent = 'Verify your second factor to finish signing in.';
+}
+function loginResult(body) {
+  if (body.mfa_required) { showMfa(); return; }
+  if (mfaLogin) mfaLogin.hidden = true;
+  status.textContent = 'You are signed in. You can now manage your account.';
+}
+document.getElementById('mfa-verify')?.addEventListener('submit', async event => {
+  event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true;
+  try {
+    const body = await call('mfa/verify', {method: form.elements.method.value, code: form.elements.code.value.trim(), remember: form.elements.remember.checked});
+    form.reset(); loginResult(body);
+  } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+});
+document.getElementById('mfa-send')?.addEventListener('click', async event => {
+  const button = event.currentTarget; button.disabled = true;
+  try { await call('mfa/send', {}); status.textContent = 'Code sent to your verified contact. Choose Delivered code above.'; }
+  catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+});
+function fromBase64(value) {
+  const text = value.replaceAll('-', '+').replaceAll('_', '/');
+  return Uint8Array.from(atob(text.padEnd(Math.ceil(text.length / 4) * 4, '=')), c => c.charCodeAt(0));
+}
+function toBase64(value) {
+  return btoa(String.fromCharCode(...new Uint8Array(value))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+function credentialOptions(options, register) {
+  const parsed = {...options, challenge: fromBase64(options.challenge)};
+  if (register) parsed.user = {...options.user, id: fromBase64(options.user.id)};
+  for (const field of ['excludeCredentials', 'allowCredentials']) if (options[field]) parsed[field] = options[field].map(c => ({...c, id: fromBase64(c.id)}));
+  return parsed;
+}
+function credentialJSON(credential) {
+  const response = credential.response;
+  const encoded = {clientDataJSON: toBase64(response.clientDataJSON)};
+  if (response.attestationObject) {
+    encoded.attestationObject = toBase64(response.attestationObject);
+    encoded.transports = response.getTransports?.() || [];
+  } else {
+    encoded.authenticatorData = toBase64(response.authenticatorData);
+    encoded.signature = toBase64(response.signature);
+    encoded.userHandle = response.userHandle ? toBase64(response.userHandle) : null;
+  }
+  return JSON.stringify({id: credential.id, rawId: toBase64(credential.rawId), type: credential.type, response: encoded, clientExtensionResults: credential.getClientExtensionResults?.() || {}});
+}
+document.getElementById('passkey-login')?.addEventListener('click', async event => {
+  const button = event.currentTarget; button.disabled = true;
+  try {
+    if (!navigator.credentials) throw Error('This browser does not support passkeys.');
+    const group = new URLSearchParams(location.search).get('group');
+    const challenge = await call('passkeys/login', group ? {group} : {});
+    const credential = await navigator.credentials.get({publicKey: credentialOptions(challenge.options, false)});
+    if (!credential) throw Error('Passkey sign-in was cancelled.');
+    loginResult(await call('passkeys/session', {challenge: challenge.challenge, credential: credentialJSON(credential)}));
+  } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+});
+async function refreshPasskeys() {
+  const list = document.getElementById('passkeys'); if (!list) return;
+  const keys = await call('passkeys'); list.replaceChildren();
+  for (const key of keys) {
+    const item = document.createElement('li'); item.textContent = key.name + (key.backed_up ? ' (backed up)' : '') + ' ';
+    const name = document.createElement('input'); name.value = key.name; name.maxLength = 100; name.setAttribute('aria-label', 'Passkey name');
+    const rename = document.createElement('button'); rename.textContent = 'Rename';
+    rename.addEventListener('click', async () => {
+      rename.disabled = true;
+      try { await call('passkeys/rename', {id: key.id, name: name.value}); await refreshPasskeys(); }
+      catch (error) { status.textContent = error.message; rename.disabled = false; }
+    });
+    const remove = document.createElement('button'); remove.textContent = 'Remove';
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      try { await call('passkeys/delete', {id: key.id}); signedOut('Passkey removed. Sign in again using another method.'); }
+      catch (error) { status.textContent = error.message; remove.disabled = false; }
+    });
+    item.append(name); item.append(rename); item.append(remove); list.append(item);
+  }
+}
+document.getElementById('passkey-add')?.addEventListener('submit', async event => {
+  event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true;
+  try {
+    if (!navigator.credentials) throw Error('This browser does not support passkeys.');
+    const challenge = await call('passkeys/register', {name: form.elements.name.value});
+    const credential = await navigator.credentials.create({publicKey: credentialOptions(challenge.options, true)});
+    if (!credential) throw Error('Passkey registration was cancelled.');
+    await call('passkeys/register/confirm', {challenge: challenge.challenge, credential: credentialJSON(credential)});
+    form.reset(); await refreshPasskeys(); status.textContent = 'Passkey added.';
+  } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+});
+let mfaEnrollment = null;
+document.getElementById('mfa-enroll')?.addEventListener('submit', async event => {
+  event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true;
+  try {
+    const setup = await call('mfa/enroll', {method: form.elements.method.value});
+    mfaEnrollment = setup.challenge;
+    document.getElementById('mfa-setup-key').textContent = setup.key ? 'Enter this key in your authenticator app: ' + setup.key : 'Check your verified contact for the code.';
+    document.getElementById('mfa-enroll-confirm').hidden = false;
+    status.textContent = 'Confirm the code to enable two-factor authentication.';
+  } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+});
+function showRecovery(result, message) {
+  document.getElementById('recovery-codes').textContent = result.recovery_codes.join('\\n');
+  document.getElementById('mfa-setup-key').textContent = '';
+  signedOut(message + ' Save your recovery codes, then sign in again.');
+}
+document.getElementById('mfa-enroll-confirm')?.addEventListener('submit', async event => {
+  event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true;
+  try {
+    const result = await call('mfa/enroll/confirm', {challenge: mfaEnrollment, code: form.elements.code.value.trim()});
+    form.reset(); form.hidden = true; mfaEnrollment = null; showRecovery(result, 'Two-factor authentication enabled.');
+  } catch (error) {
+    mfaEnrollment = null; form.hidden = true; document.getElementById('mfa-setup-key').textContent = '';
+    status.textContent = error.message + ' Start enrollment again to retry.'; button.disabled = false;
+  }
+});
+document.getElementById('mfa-recovery')?.addEventListener('click', async event => {
+  const button = event.currentTarget; button.disabled = true;
+  try { showRecovery(await call('mfa/recovery', {}), 'Old recovery codes replaced.'); }
+  catch (error) { status.textContent = error.message; button.disabled = false; }
+});
+document.getElementById('mfa-disable')?.addEventListener('click', async event => {
+  const button = event.currentTarget; button.disabled = true;
+  try { await call('mfa/disable', {}); signedOut('Two-factor authentication disabled. Sign in again.'); }
+  catch (error) { status.textContent = error.message; button.disabled = false; }
+});
+async function refreshDevices() {
+  const list = document.getElementById('trusted-devices'); if (!list) return;
+  const devices = await call('mfa/devices'); list.replaceChildren();
+  for (const device of devices) {
+    const item = document.createElement('li'); item.textContent = 'Remembered ' + new Date(device.created_at * 1000).toLocaleString() + ' ';
+    const button = document.createElement('button'); button.textContent = 'Forget device';
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try { await call('mfa/devices/revoke', {id: device.id}); await refreshDevices(); status.textContent = 'Device forgotten. Existing sessions can be revoked below.'; }
+      catch (error) { status.textContent = error.message; button.disabled = false; }
+    });
+    item.append(button); list.append(item);
+  }
+}
+if (account) {
+  refreshPasskeys().catch(error => status.textContent = error.message);
+  refreshDevices().catch(error => status.textContent = error.message);
+  if (document.getElementById('mfa-state')) call('security').then(state => {
+    document.getElementById('mfa-state').textContent = state.mfa ? 'Enabled: ' + state.mfa : 'Not enabled';
+    document.getElementById('mfa-enroll').hidden = !!state.mfa;
+    document.getElementById('mfa-disable').hidden = !state.mfa;
+    document.getElementById('mfa-recovery').hidden = !state.mfa;
+  }).catch(error => status.textContent = error.message);
+}
+"

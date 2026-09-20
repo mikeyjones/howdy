@@ -53,7 +53,8 @@ pub fn browser_api_custom_pages_and_guard_integration_test() {
   assert string.contains(string.lowercase(header), "httponly")
   assert string.contains(string.lowercase(header), "secure")
   assert string.contains(string.lowercase(header), "samesite=lax")
-  let assert [#(name, secret)] = testing.cookies(session)
+  let assert [#(name, secret), #("__Host-howdy_mfa", "")] =
+    testing.cookies(session)
   assert name == "__Host-howdy_session"
   let me =
     testing.get("/api/auth/me")
@@ -273,7 +274,8 @@ pub fn password_api_supports_cookies_bearer_and_custom_pages_test() {
     |> testing.header("origin", "https://example.test")
     |> testing.send(app)
   assert login.status == 200
-  let assert [#(name, secret)] = testing.cookies(login)
+  let assert [#(name, secret), #("__Host-howdy_mfa", "")] =
+    testing.cookies(login)
   assert testing.get("/api/auth/me")
     |> testing.cookie(name, secret)
     |> testing.send(app)

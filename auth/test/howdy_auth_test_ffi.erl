@@ -1,5 +1,5 @@
 -module(howdy_auth_test_ffi).
--export([count_verifications/1, backend/0, delete_file/1, lock_serializes/0, lock_reentrant/0, lock_holder_exit/0]).
+-export([totp_code/2, count_verifications/1, backend/0, delete_file/1, lock_serializes/0, lock_reentrant/0, lock_holder_exit/0]).
 backend() ->
     case os:getenv("HOWDY_AUTH_TEST_BACKEND") of
         false -> <<"sqlite">>;
@@ -76,3 +76,13 @@ verification_traces(Parent, Count, Ref) ->
         finish -> verification_traces(Parent, Count, erlang:trace_delivered(Parent));
         {trace_delivered, Parent, Ref} -> Parent ! {verification_count, self(), Count}
     end.
+
+%% Independent test authenticator, using RFC 4226 dynamic truncation.
+totp_code(Seed, Seconds) ->
+    Alphabet = <<"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567">>,
+    Values = [begin {I,1} = binary:match(Alphabet, <<C>>), I end || <<C>> <= Seed],
+    Key = << <<V:5>> || V <- Values >>,
+    H = crypto:mac(hmac, sha, Key, <<(Seconds div 30):64>>),
+    O = binary:last(H) band 15,
+    <<_:O/binary, N:32, _/binary>> = H,
+    list_to_binary(io_lib:format("~6..0B", [(N band 16#7fffffff) rem 1000000])).

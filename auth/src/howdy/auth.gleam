@@ -7,11 +7,13 @@ import howdy/auth/secret
 import gleam/http
 import gleam/http/request
 import gleam/int
+import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/order
 import gleam/result
 import gleam/string
+import gleam/uri
 import gloo/repo.{type Repo}
 import howdy/auth/field.{type Change}
 import howdy/auth/group.{type Mode, AccountPerGroup, OneGroupPerUser, Single}
@@ -22,8 +24,11 @@ import howdy/auth/internal/database as db
 import howdy/auth/internal/password as password_hash
 import howdy/auth/internal/provider_store
 import howdy/auth/internal/schema
+import howdy/auth/internal/security_store
 import howdy/auth/internal/store
 import howdy/auth/internal/token
+import howdy/auth/mfa
+import howdy/auth/passkey
 import howdy/auth/policy.{type Policy}
 import howdy/auth/provider
 import howdy/auth/session_store.{type Entry, type SessionStore, Entry}
@@ -79,6 +84,8 @@ pub opaque type Auth {
     group: Option(String),
     sessions: Sessions,
     before_delete: Option(fn(Repo, User) -> service.Result(Nil)),
+    mfa: Option(mfa.Config),
+    passkeys: Option(String),
   )
 }
 
@@ -95,6 +102,7 @@ pub type Method {
   EmailToken
   Password
   Provider(id: String)
+  Passkey
 }
 
 /// Returned by a successful sign-in. Keep the token secret. Browser
@@ -155,6 +163,8 @@ pub fn new(
     groups,
     None,
     InDatabase,
+    None,
+    None,
     None,
   ))
 }
@@ -250,6 +260,7 @@ fn convert_groups(conn: Repo, from: Mode, to: Mode) -> service.Result(Nil) {
   })
   use _ <- result.try(provider_store.invalidate(conn))
   use _ <- result.try(account_store.invalidate_email_changes(conn))
+  use _ <- result.try(security_store.invalidate(conn))
   use _ <- result.try(store.set_setting(conn, "groups", group.mode_name(to)))
   event(conn, "", "groups.mode", System, group.mode_name(to))
 }
@@ -631,11 +642,14 @@ fn method_name(method: Method) -> String {
     EmailToken -> "email"
     Password -> "password"
     Provider(id) -> "provider:" <> id
+    Passkey -> "passkey"
   }
 }
 
 fn method_from(name: String) -> Method {
   case name {
+    "mfa:" <> base -> method_from(base)
+    "passkey" -> Passkey
     "password" -> Password
     "provider:" <> id -> Provider(id)
     _ -> EmailToken
@@ -717,6 +731,7 @@ fn redeem(
 /// has yet to be given.
 type Issued {
   Issued(session: Session, entry: Entry)
+  Pending(challenge: MfaChallenge)
 }
 
 fn issue_session(
@@ -724,6 +739,39 @@ fn issue_session(
   auth: Auth,
   user: User,
   method: Method,
+  client: String,
+) -> service.Result(Issued) {
+  use factor <- result.try(security_store.factor(conn, user.id))
+  case factor {
+    None ->
+      issue_verified_session(conn, auth, user, method_name(method), client)
+    Some(_) -> {
+      use _ <- result.try(mfa_config(auth))
+      let challenge = token.new()
+      use version <- result.try(account_store.version(conn, user.id))
+      use _ <- result.try(security_store.add_pending(
+        conn,
+        token.digest(challenge),
+        security_store.Pending(
+          user.id,
+          version,
+          user.group_id,
+          method_name(method),
+          client,
+          "",
+          0,
+        ),
+      ))
+      Ok(Pending(MfaChallenge(secret.wrap(challenge))))
+    }
+  }
+}
+
+fn issue_verified_session(
+  conn: Repo,
+  auth: Auth,
+  user: User,
+  method: String,
   client: String,
 ) -> service.Result(Issued) {
   let now = token.now()
@@ -734,7 +782,7 @@ fn issue_session(
     Entry(
       digest: token.digest(secret.reveal(session.token)),
       user_id: user.id,
-      method: method_name(method),
+      method: method,
       created_at: now,
       last_seen_at: now,
       expires_at: session.expires_at,
@@ -759,7 +807,7 @@ fn issue_session(
     user.id,
     "session.created",
     System,
-    method_name(method),
+    method,
     client,
   ))
   Ok(Issued(session, entry))
@@ -767,10 +815,20 @@ fn issue_session(
 
 /// Hand a committed session to the external store, if there is one.
 fn publish(auth: Auth, issued: Issued) -> service.Result(Session) {
-  case auth.sessions {
-    InDatabase -> Ok(issued.session)
-    External(external) ->
-      external.insert(issued.entry) |> result.replace(issued.session)
+  case issued {
+    Pending(_) -> Error(service.Forbidden)
+    Issued(session, entry) ->
+      case auth.sessions {
+        InDatabase -> Ok(session)
+        External(external) -> external.insert(entry) |> result.replace(session)
+      }
+  }
+}
+
+fn publish_step(auth: Auth, issued: Issued) -> service.Result(LoginStep) {
+  case issued {
+    Pending(challenge) -> Ok(SecondFactor(challenge))
+    Issued(_, _) -> publish(auth, issued) |> result.map(SignedIn)
   }
 }
 
@@ -981,7 +1039,7 @@ pub fn set_password(
           Some(entry), [_] ->
             entry.version == version
             && entry.user_id == principal.user.id
-            && entry.method == method_name(EmailToken)
+            && method_from(entry.method) == EmailToken
             && entry.expires_at > now
             && entry.created_at > created_after
           _, _ -> False
@@ -1016,6 +1074,7 @@ pub fn set_password(
     conn,
     address_key(auth, Some(principal.user.group_id), principal.user.email),
   ))
+  use _ <- result.try(security_store.clear(conn, principal.user.id))
   event(conn, principal.user.id, "password.set", Acting(principal), "")
 }
 
@@ -1512,6 +1571,7 @@ pub type ProviderStart {
 pub type ProviderOutcome {
   ProviderSession(Session)
   ProviderLinked
+  ProviderSecondFactor(MfaChallenge)
 }
 
 /// Begin browser sign-in. `callback_path` is trusted application configuration,
@@ -1759,6 +1819,7 @@ pub fn finish_provider(
     }
   })
   case completed {
+    Some(Pending(challenge)) -> Ok(ProviderSecondFactor(challenge))
     Some(issued) -> publish(auth, issued) |> result.map(ProviderSession)
     None -> Ok(ProviderLinked)
   }
@@ -2082,6 +2143,13 @@ fn current_account(
   )
   let method = method_from(row.method)
   use enabled <- result.try(case method {
+    Passkey ->
+      case auth.passkeys {
+        None -> Ok(False)
+        Some(_) ->
+          security_store.passkeys(conn, user.id)
+          |> result.map(fn(keys) { keys != [] })
+      }
     EmailToken -> Ok(auth.email_tokens)
     Password ->
       case auth.passwords {
@@ -2100,4 +2168,857 @@ fn current_account(
     True -> Ok(#(user, method))
     False -> Error(service.Forbidden)
   }
+}
+
+// --- Passkeys and second factors --------------------------------------------
+
+pub type MfaChallenge {
+  MfaChallenge(token: secret.Secret)
+}
+
+pub type LoginStep {
+  SignedIn(Session)
+  SecondFactor(MfaChallenge)
+}
+
+pub type MfaMethod {
+  Totp
+  DeliveredCode
+  RecoveryCode
+}
+
+pub type MfaSetup {
+  MfaSetup(
+    challenge: secret.Secret,
+    key: Option(secret.Secret),
+    uri: Option(secret.Secret),
+  )
+}
+
+pub type MfaSession {
+  MfaSession(session: Session, trusted_device: Option(secret.Secret))
+}
+
+pub type PasskeyChallenge {
+  PasskeyChallenge(challenge: secret.Secret, options: json.Json)
+}
+
+/// All nodes need the same stable encryption key. Removing this configuration
+/// never bypasses MFA for an enrolled account; those sign-ins fail closed.
+pub fn with_mfa(auth: Auth, config: mfa.Config) -> Auth {
+  Auth(..auth, mfa: Some(config))
+}
+
+pub fn mfa_enabled(auth: Auth) -> Bool {
+  option.is_some(auth.mfa)
+}
+
+pub fn mfa_delivery_enabled(auth: Auth) -> Bool {
+  case auth.mfa {
+    Some(config) -> mfa.can_deliver(config)
+    None -> False
+  }
+}
+
+/// Passkeys use the exact public-origin hostname as RP ID and require user
+/// verification (PIN/biometric). Enable once at startup with the displayed name.
+pub fn with_passkeys(
+  auth: Auth,
+  relying_party_name: String,
+) -> service.Result(Auth) {
+  case
+    string.trim(relying_party_name) != ""
+    && string.byte_size(relying_party_name) <= 128
+  {
+    True -> Ok(Auth(..auth, passkeys: Some(relying_party_name)))
+    False ->
+      Error(service.Invalid(
+        "passkey relying-party name must contain 1 to 128 bytes",
+      ))
+  }
+}
+
+pub fn passkeys_enabled(auth: Auth) -> Bool {
+  option.is_some(auth.passkeys)
+}
+
+fn mfa_config(auth: Auth) -> service.Result(mfa.Config) {
+  case auth.mfa {
+    Some(config) -> Ok(config)
+    None -> Error(service.Forbidden)
+  }
+}
+
+fn passkey_config(auth: Auth) -> service.Result(#(String, String)) {
+  use name <- result.try(case auth.passkeys {
+    Some(name) -> Ok(name)
+    None -> Error(service.Forbidden)
+  })
+  use parsed <- result.try(
+    uri.parse(auth.origin) |> result.replace_error(service.Forbidden),
+  )
+  case parsed.host {
+    Some(host) -> Ok(#(host, name))
+    None -> Error(service.Forbidden)
+  }
+}
+
+/// MFA-aware replacements for transports that previously called exchange_from
+/// and login_password_from. A SecondFactor token is NOT a session credential.
+pub fn exchange_step(
+  auth: Auth,
+  token: String,
+  client: String,
+) -> service.Result(LoginStep) {
+  redeem(auth, token, client) |> result.try(publish_step(auth, _))
+}
+
+pub fn login_password_step(
+  auth: Auth,
+  email: String,
+  password: String,
+  client: String,
+) -> service.Result(LoginStep) {
+  verify_password(auth, email, password, client)
+  |> result.try(publish_step(auth, _))
+}
+
+pub fn passkeys(
+  auth: Auth,
+  principal: Principal,
+) -> service.Result(List(passkey.Passkey)) {
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, False))
+  security_store.passkeys(conn, user.id)
+  |> result.map(list.map(_, fn(key) { key.info }))
+}
+
+fn key_name(name: String) -> service.Result(String) {
+  let name = string.trim(name)
+  case name != "" && string.byte_size(name) <= 100 {
+    True -> Ok(name)
+    False -> Error(service.Invalid("passkey name must contain 1 to 100 bytes"))
+  }
+}
+
+pub fn begin_passkey_registration(
+  auth: Auth,
+  principal: Principal,
+  name: String,
+) -> service.Result(PasskeyChallenge) {
+  use #(rp, rp_name) <- result.try(passkey_config(auth))
+  use name <- result.try(key_name(name))
+  let challenge = token.new()
+  use options <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+    use keys <- result.try(security_store.passkeys(conn, user.id))
+    use _ <- result.try(case list.length(keys) < 20 {
+      True -> Ok(Nil)
+      False -> Error(service.Conflict("at most 20 passkeys per account"))
+    })
+    let #(options, state) =
+      passkey.registration_options(
+        rp,
+        rp_name,
+        auth.origin,
+        user.id,
+        user.email,
+        keys,
+      )
+    use version <- result.try(account_store.version(conn, user.id))
+    use _ <- result.try(security_store.ceremony(
+      conn,
+      token.digest(challenge),
+      "passkey-register",
+      security_store.Ceremony(
+        Some(user.id),
+        principal.session_id,
+        user.group_id,
+        version,
+        state,
+        name,
+      ),
+    ))
+    Ok(options)
+  })
+  Ok(PasskeyChallenge(secret.wrap(challenge), options))
+}
+
+pub fn finish_passkey_registration(
+  auth: Auth,
+  principal: Principal,
+  challenge: String,
+  credential: String,
+) -> service.Result(Nil) {
+  use _ <- result.try(passkey_config(auth))
+  use ceremony <- result.try(consume_ceremony(
+    auth,
+    challenge,
+    "passkey-register",
+    credential,
+  ))
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+  use _ <- result.try(bound_ceremony(conn, ceremony, user, principal))
+  use keys <- result.try(security_store.passkeys(conn, user.id))
+  use _ <- result.try(case list.length(keys) < 20 {
+    True -> Ok(Nil)
+    False -> Error(service.Conflict("at most 20 passkeys per account"))
+  })
+  use key <- result.try(passkey.register(
+    ceremony.payload,
+    credential,
+    user.id,
+    ceremony.label,
+    token.now(),
+  ))
+  use _ <- result.try(security_store.add_passkey(conn, key))
+  event(conn, user.id, "passkey.registered", Acting(principal), key.info.id)
+}
+
+fn consume_ceremony(
+  auth: Auth,
+  challenge: String,
+  kind: String,
+  response: String,
+) -> service.Result(security_store.Ceremony) {
+  use _ <- result.try(valid_token(challenge))
+  use _ <- result.try(case string.byte_size(response) <= 65_536 {
+    True -> Ok(Nil)
+    False -> Error(service.Invalid("credential response is too large"))
+  })
+  db.transaction(auth.repo, security_store.consume(
+    _,
+    token.digest(challenge),
+    kind,
+  ))
+}
+
+fn bound_ceremony(
+  conn: Repo,
+  ceremony: security_store.Ceremony,
+  user: User,
+  principal: Principal,
+) -> service.Result(Nil) {
+  use version <- result.try(account_store.version(conn, user.id))
+  case
+    ceremony.user_id == Some(user.id)
+    && ceremony.session_id == principal.session_id
+    && ceremony.group_id == user.group_id
+    && ceremony.version == version
+  {
+    True -> Ok(Nil)
+    False -> Error(service.Unauthorized)
+  }
+}
+
+pub fn begin_passkey_login(auth: Auth) -> service.Result(PasskeyChallenge) {
+  use #(rp, _) <- result.try(passkey_config(auth))
+  let #(options, state) = passkey.authentication_options(rp, auth.origin)
+  let challenge = token.new()
+  use _ <- result.try(
+    db.transaction(auth.repo, security_store.ceremony(
+      _,
+      token.digest(challenge),
+      "passkey-login",
+      security_store.Ceremony(
+        None,
+        "",
+        option.unwrap(auth.group, ""),
+        0,
+        state,
+        "",
+      ),
+    )),
+  )
+  Ok(PasskeyChallenge(secret.wrap(challenge), options))
+}
+
+pub fn finish_passkey_login(
+  auth: Auth,
+  challenge: String,
+  credential: String,
+  client: String,
+) -> service.Result(LoginStep) {
+  use _ <- result.try(passkey_config(auth))
+  use ceremony <- result.try(consume_ceremony(
+    auth,
+    challenge,
+    "passkey-login",
+    credential,
+  ))
+  use id <- result.try(passkey.credential_id(credential))
+  use issued <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use initial <- result.try(security_store.passkey(conn, id))
+    use users <- result.try(store.active_user(
+      conn,
+      initial.user_id,
+      locking: True,
+    ))
+    use user <- result.try(case users {
+      [user] -> Ok(user)
+      _ -> Error(service.Unauthorized)
+    })
+    use _ <- result.try(in_bound_group(auth, user.group_id))
+    use _ <- result.try(
+      case ceremony.group_id == "" || ceremony.group_id == user.group_id {
+        True -> Ok(Nil)
+        False -> Error(service.Unauthorized)
+      },
+    )
+    // Re-read after acquiring the user lock, including the signature counter.
+    use stored <- result.try(security_store.passkey(conn, id))
+    use verified <- result.try(passkey.verify(
+      ceremony.payload,
+      credential,
+      stored,
+    ))
+    use _ <- result.try(security_store.update_passkey(conn, verified))
+    issue_session(conn, auth, user, Passkey, client)
+  })
+  publish_step(auth, issued)
+}
+
+pub fn rename_passkey(
+  auth: Auth,
+  principal: Principal,
+  id: String,
+  name: String,
+) -> service.Result(Nil) {
+  use name <- result.try(key_name(name))
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+  use _ <- result.try(own_passkey(conn, user.id, id))
+  use _ <- result.try(security_store.rename_passkey(conn, user.id, id, name))
+  event(conn, user.id, "passkey.renamed", Acting(principal), id)
+}
+
+fn own_passkey(
+  conn: Repo,
+  user_id: String,
+  id: String,
+) -> service.Result(passkey.Stored) {
+  use key <- result.try(
+    security_store.passkey(conn, id)
+    |> result.replace_error(service.NotFound("passkey")),
+  )
+  case key.user_id == user_id {
+    True -> Ok(key)
+    False -> Error(service.NotFound("passkey"))
+  }
+}
+
+pub fn delete_passkey(
+  auth: Auth,
+  principal: Principal,
+  id: String,
+) -> service.Result(Nil) {
+  use <- after_commit(auth, fn(store) {
+    store.delete_for_user(principal.user.id, None)
+  })
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, method) <- result.try(current_account(conn, auth, principal, True))
+  use _ <- result.try(own_passkey(conn, user.id, id))
+  // Conservative removal: prove a separate login method, not the key being deleted.
+  use _ <- result.try(case method {
+    Passkey -> Error(service.Forbidden)
+    _ -> Ok(Nil)
+  })
+  use _ <- result.try(security_store.delete_passkey(conn, user.id, id))
+  use _ <- result.try(account_store.clear_pending(conn, user.id))
+  use _ <- result.try(account_store.revoke(conn, user.id))
+  event(conn, user.id, "passkey.deleted", Acting(principal), id)
+}
+
+pub fn mfa_status(
+  auth: Auth,
+  principal: Principal,
+) -> service.Result(Option(String)) {
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, False))
+  security_store.factor(conn, user.id)
+  |> result.map(option.map(_, fn(f) { f.method }))
+}
+
+/// Begin enrollment; it is NOT enabled until the code is confirmed. The key
+/// and URI are secrets; render locally, never through a third-party QR service.
+pub fn begin_mfa(
+  auth: Auth,
+  principal: Principal,
+  method: MfaMethod,
+) -> service.Result(MfaSetup) {
+  use config <- result.try(mfa_config(auth))
+  let challenge = token.new()
+  let seed = case method {
+    Totp -> mfa.new_secret()
+    _ -> mfa.otp()
+  }
+  use #(user, setup) <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(user, login_method) <- result.try(current_account(
+      conn,
+      auth,
+      principal,
+      True,
+    ))
+    use factor <- result.try(security_store.factor(conn, user.id))
+    use _ <- result.try(case factor {
+      None -> Ok(Nil)
+      Some(_) -> Error(service.Conflict("MFA is already enabled"))
+    })
+    use kind <- result.try(case method {
+      Totp -> Ok("totp")
+      DeliveredCode if login_method != EmailToken ->
+        case mfa.can_deliver(config) {
+          True -> Ok("otp")
+          False -> Error(service.Forbidden)
+        }
+      _ -> Error(service.Forbidden)
+    })
+    use _ <- result.try(store.reserve_email(
+      conn,
+      token.keyed_digest(auth.throttle_key, "mfa-enroll:" <> user.id),
+      token.now(),
+      auth.policy,
+    ))
+    use payload <- result.try(case method {
+      Totp -> mfa.seal(config, user.id, seed)
+      _ -> Ok(code_digest(auth, user.id, seed))
+    })
+    use version <- result.try(account_store.version(conn, user.id))
+    use _ <- result.try(security_store.ceremony(
+      conn,
+      token.digest(challenge),
+      "mfa-setup",
+      security_store.Ceremony(
+        Some(user.id),
+        principal.session_id,
+        user.group_id,
+        version,
+        payload,
+        kind,
+      ),
+    ))
+    let setup = case method {
+      Totp ->
+        MfaSetup(
+          secret.wrap(challenge),
+          Some(secret.wrap(seed)),
+          Some(secret.wrap(
+            "otpauth://totp/"
+            <> uri.percent_encode(mfa.issuer(config) <> ":" <> user.email)
+            <> "?secret="
+            <> seed
+            <> "&issuer="
+            <> uri.percent_encode(mfa.issuer(config))
+            <> "&algorithm=SHA1&digits=6&period=30",
+          )),
+        )
+      _ -> MfaSetup(secret.wrap(challenge), None, None)
+    }
+    Ok(#(user, setup))
+  })
+  case method {
+    DeliveredCode ->
+      case mfa.deliver(config, user, secret.wrap(seed)) {
+        Ok(_) -> Ok(setup)
+        Error(error) -> {
+          let _ =
+            db.connect(auth.repo, security_store.discard(
+              _,
+              token.digest(challenge),
+            ))
+          Error(error)
+        }
+      }
+    _ -> Ok(setup)
+  }
+}
+
+fn code_digest(auth: Auth, user_id: String, code: String) -> String {
+  token.keyed_digest(auth.throttle_key, "mfa-code:" <> user_id <> ":" <> code)
+}
+
+fn security_attempt(auth: Auth, user_id: String) -> service.Result(Nil) {
+  use attempts <- result.try(
+    db.transaction(auth.repo, security_store.reserve_attempt(_, user_id)),
+  )
+  case attempts <= 5 {
+    True -> Ok(Nil)
+    False -> Error(service.TooManyRequests(300))
+  }
+}
+
+fn new_recovery_codes(
+  conn: Repo,
+  auth: Auth,
+  user_id: String,
+) -> service.Result(List(secret.Secret)) {
+  let codes = list.map(list.repeat(Nil, 10), fn(_) { mfa.backup() })
+  use _ <- result.try(security_store.recovery_codes(
+    conn,
+    user_id,
+    list.map(codes, code_digest(auth, user_id, _)),
+  ))
+  Ok(list.map(codes, secret.wrap))
+}
+
+/// Successful enrollment revokes all sessions. Save the returned recovery
+/// codes once, then sign in again using the new second factor.
+pub fn confirm_mfa(
+  auth: Auth,
+  principal: Principal,
+  challenge: String,
+  code: String,
+) -> service.Result(List(secret.Secret)) {
+  use config <- result.try(mfa_config(auth))
+  use _ <- result.try(
+    db.write_transaction(auth.repo, "howdy_auth_users", fn(conn) {
+      current_account(conn, auth, principal, True) |> result.map(fn(_) { Nil })
+    }),
+  )
+  use _ <- result.try(security_attempt(auth, principal.user.id))
+  use ceremony <- result.try(consume_ceremony(
+    auth,
+    challenge,
+    "mfa-setup",
+    code,
+  ))
+  use codes <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+    use _ <- result.try(bound_ceremony(conn, ceremony, user, principal))
+    use existing <- result.try(security_store.factor(conn, user.id))
+    use _ <- result.try(case existing {
+      None -> Ok(Nil)
+      _ -> Error(service.Conflict("MFA is already enabled"))
+    })
+    use factor <- result.try(case ceremony.label {
+      "totp" -> {
+        use seed <- result.try(mfa.open(config, user.id, ceremony.payload))
+        use step <- result.try(
+          mfa.verify_totp(seed, code, -1, token.now())
+          |> result.replace_error(service.Unauthorized),
+        )
+        Ok(security_store.Factor("totp", ceremony.payload, step))
+      }
+      "otp" if code != "" ->
+        case code_digest(auth, user.id, code) == ceremony.payload {
+          True -> Ok(security_store.Factor("otp", "", -1))
+          False -> Error(service.Unauthorized)
+        }
+      _ -> Error(service.Unauthorized)
+    })
+    use _ <- result.try(security_store.enable(conn, user.id, factor))
+    use codes <- result.try(new_recovery_codes(conn, auth, user.id))
+    use _ <- result.try(account_store.clear_pending(conn, user.id))
+    use _ <- result.try(account_store.revoke(conn, user.id))
+    use _ <- result.try(security_store.reset_attempts(conn, user.id))
+    use _ <- result.try(event(
+      conn,
+      user.id,
+      "mfa.enabled",
+      Acting(principal),
+      factor.method,
+    ))
+    Ok(codes)
+  })
+  // Database generation makes old external sessions inert even if cleanup fails.
+  let _ =
+    externally(auth, fn(store) {
+      store.delete_for_user(principal.user.id, None)
+    })
+  Ok(codes)
+}
+
+fn pending_user(
+  conn: Repo,
+  auth: Auth,
+  digest: String,
+) -> service.Result(#(security_store.Pending, User, security_store.Factor)) {
+  use initial <- result.try(security_store.pending(conn, digest))
+  use users <- result.try(store.active_user(
+    conn,
+    initial.user_id,
+    locking: True,
+  ))
+  use user <- result.try(case users {
+    [u] -> Ok(u)
+    _ -> Error(service.Unauthorized)
+  })
+  use pending <- result.try(security_store.pending(conn, digest))
+  use version <- result.try(account_store.version(conn, user.id))
+  use _ <- result.try(in_bound_group(auth, user.group_id))
+  use _ <- result.try(
+    case pending.group_id == user.group_id && pending.version == version {
+      True -> Ok(Nil)
+      False -> Error(service.Unauthorized)
+    },
+  )
+  use factor <- result.try(security_store.factor(conn, user.id))
+  use factor <- result.try(case factor {
+    Some(factor) -> Ok(factor)
+    None -> Error(service.Unauthorized)
+  })
+  // Configuration changes cannot promote proof from a disabled login method.
+  use _ <- result.try(case method_from(pending.method) {
+    EmailToken -> require_email_tokens(auth)
+    Password -> passwords(auth) |> result.map(fn(_) { Nil })
+    Passkey -> passkey_config(auth) |> result.map(fn(_) { Nil })
+    Provider(id) -> configured_provider(auth, id) |> result.map(fn(_) { Nil })
+  })
+  Ok(#(pending, user, factor))
+}
+
+/// Optional delivered-code fallback. Refused after email-token primary proof,
+/// so the same inbox cannot serve as both authentication factors.
+pub fn send_mfa_code(auth: Auth, challenge: String) -> service.Result(Nil) {
+  use config <- result.try(mfa_config(auth))
+  use _ <- result.try(valid_token(challenge))
+  let code = mfa.otp()
+  let digest = token.digest(challenge)
+  use user <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(pending, user, _) <- result.try(pending_user(conn, auth, digest))
+    use _ <- result.try(
+      case pending.method != "email" && mfa.can_deliver(config) {
+        True -> Ok(Nil)
+        False -> Error(service.Forbidden)
+      },
+    )
+    use _ <- result.try(store.reserve_email(
+      conn,
+      token.keyed_digest(auth.throttle_key, "mfa-send:" <> user.id),
+      token.now(),
+      auth.policy,
+    ))
+    use _ <- result.try(security_store.send_otp(
+      conn,
+      digest,
+      code_digest(auth, user.id, code),
+    ))
+    Ok(user)
+  })
+  case mfa.deliver(config, user, secret.wrap(code)) {
+    Ok(_) -> Ok(Nil)
+    Error(error) -> {
+      let _ = db.connect(auth.repo, security_store.spend_pending(_, digest))
+      Error(error)
+    }
+  }
+}
+
+pub fn verify_mfa(
+  auth: Auth,
+  challenge: String,
+  method: MfaMethod,
+  code: String,
+  remember: Bool,
+) -> service.Result(MfaSession) {
+  use config <- result.try(mfa_config(auth))
+  use _ <- result.try(valid_token(challenge))
+  let digest = token.digest(challenge)
+  use initial <- result.try(
+    db.connect(auth.repo, security_store.pending(_, digest)),
+  )
+  use _ <- result.try(security_attempt(auth, initial.user_id))
+  let trusted = case remember {
+    True -> Some(secret.wrap(token.new()))
+    False -> None
+  }
+  use issued <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(pending, user, factor) <- result.try(pending_user(conn, auth, digest))
+    use _ <- result.try(case method {
+      Totp if factor.method == "totp" -> {
+        use seed <- result.try(mfa.open(config, user.id, factor.secret))
+        use step <- result.try(
+          mfa.verify_totp(seed, code, factor.last_step, token.now())
+          |> result.replace_error(service.Unauthorized),
+        )
+        security_store.step(conn, user.id, step)
+      }
+      RecoveryCode ->
+        security_store.recover(
+          conn,
+          user.id,
+          code_digest(auth, user.id, string.uppercase(string.trim(code))),
+        )
+      DeliveredCode
+        if pending.method != "email" && pending.otp_digest != "" && code != ""
+      ->
+        case
+          mfa.can_deliver(config)
+          && code_digest(auth, user.id, code) == pending.otp_digest
+        {
+          True -> Ok(Nil)
+          False -> Error(service.Unauthorized)
+        }
+      _ -> Error(service.Unauthorized)
+    })
+    use _ <- result.try(security_store.spend_pending(conn, digest))
+    use _ <- result.try(security_store.reset_attempts(conn, user.id))
+    use _ <- result.try(case trusted {
+      Some(value) ->
+        security_store.add_trusted(
+          conn,
+          user.id,
+          pending.version,
+          token.digest(secret.reveal(value)),
+        )
+      None -> Ok(Nil)
+    })
+    use _ <- result.try(event_from(
+      conn,
+      user.id,
+      "mfa.verified",
+      System,
+      case method {
+        RecoveryCode -> "recovery"
+        Totp -> "totp"
+        DeliveredCode -> "otp"
+      },
+      pending.client,
+    ))
+    issue_verified_session(
+      conn,
+      auth,
+      user,
+      "mfa:" <> pending.method,
+      pending.client,
+    )
+  })
+  use session <- result.try(publish(auth, issued))
+  Ok(MfaSession(session, trusted))
+}
+
+/// Redeem a remembered device only AFTER a successful primary login challenge.
+/// Tokens are user- and generation-bound and have a fixed 30-day lifetime.
+pub fn use_trusted_device(
+  auth: Auth,
+  challenge: String,
+  device: String,
+) -> service.Result(Session) {
+  use _ <- result.try(mfa_config(auth))
+  use _ <- result.try(valid_token(challenge))
+  use _ <- result.try(valid_token(device))
+  use issued <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(pending, user, _) <- result.try(pending_user(
+      conn,
+      auth,
+      token.digest(challenge),
+    ))
+    use trusted <- result.try(security_store.trusted(
+      conn,
+      token.digest(device),
+      user.id,
+      pending.version,
+    ))
+    use _ <- result.try(case trusted {
+      True -> Ok(Nil)
+      False -> Error(service.Unauthorized)
+    })
+    use _ <- result.try(security_store.spend_pending(
+      conn,
+      token.digest(challenge),
+    ))
+    issue_verified_session(
+      conn,
+      auth,
+      user,
+      "mfa:" <> pending.method,
+      pending.client,
+    )
+  })
+  publish(auth, issued)
+}
+
+fn require_mfa_session(
+  conn: Repo,
+  auth: Auth,
+  principal: Principal,
+) -> service.Result(User) {
+  use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+  use method <- result.try(case auth.sessions {
+    InDatabase -> {
+      use rows <- result.try(store.sessions_for_user(conn, user.id, token.now()))
+      list.find(rows, fn(row) { row.digest == principal.session_id })
+      |> result.map(fn(row) { row.method })
+      |> result.replace_error(service.Unauthorized)
+    }
+    External(store) -> {
+      use entry <- result.try(store.get(principal.session_id))
+      case entry {
+        Some(entry) -> Ok(entry.method)
+        None -> Error(service.Unauthorized)
+      }
+    }
+  })
+  case string.starts_with(method, "mfa:") {
+    True -> Ok(user)
+    False -> Error(service.Forbidden)
+  }
+}
+
+pub fn disable_mfa(auth: Auth, principal: Principal) -> service.Result(Nil) {
+  use _ <- result.try(mfa_config(auth))
+  use <- after_commit(auth, fn(store) {
+    store.delete_for_user(principal.user.id, None)
+  })
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use user <- result.try(require_mfa_session(conn, auth, principal))
+  use _ <- result.try(security_store.disable(conn, user.id))
+  use _ <- result.try(account_store.clear_pending(conn, user.id))
+  use _ <- result.try(account_store.revoke(conn, user.id))
+  event(conn, user.id, "mfa.disabled", Acting(principal), "")
+}
+
+pub fn regenerate_recovery_codes(
+  auth: Auth,
+  principal: Principal,
+) -> service.Result(List(secret.Secret)) {
+  use _ <- result.try(mfa_config(auth))
+  use codes <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use user <- result.try(require_mfa_session(conn, auth, principal))
+    use codes <- result.try(new_recovery_codes(conn, auth, user.id))
+    use _ <- result.try(account_store.clear_pending(conn, user.id))
+    use _ <- result.try(account_store.revoke(conn, user.id))
+    use _ <- result.try(event(
+      conn,
+      user.id,
+      "mfa.recovery_regenerated",
+      Acting(principal),
+      "",
+    ))
+    Ok(codes)
+  })
+  let _ =
+    externally(auth, fn(store) {
+      store.delete_for_user(principal.user.id, None)
+    })
+  Ok(codes)
+}
+
+pub fn trusted_devices(
+  auth: Auth,
+  principal: Principal,
+) -> service.Result(List(#(String, Int, Int))) {
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, False))
+  security_store.trusted_devices(conn, user.id)
+}
+
+pub fn revoke_trusted_device(
+  auth: Auth,
+  principal: Principal,
+  id: String,
+) -> service.Result(Nil) {
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+  use _ <- result.try(security_store.delete_trusted(conn, user.id, id))
+  event(conn, user.id, "mfa.device_revoked", Acting(principal), "")
 }

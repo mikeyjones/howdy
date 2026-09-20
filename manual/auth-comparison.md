@@ -1,54 +1,121 @@
 # Howdy Auth compared with Better Auth
 
-Reviewed 20 September 2026. Local revision: `52d8d2f`. Better Auth references describe its current online documentation, rather than a pinned release. Features may require opt-in configuration, plugins and migrations.
+Updated 20 September 2026. Assesses the working tree based on `0127fec`, including
+the uncommitted passkey/MFA implementation. Better Auth references are its live
+official documentation, not a pinned release. Enterprise integrations such as
+SSO, SAML and SCIM are deferred for this comparison. Optional
+Better Auth plugins are identified as available capabilities, not enabled defaults.
 
 ## Assessment
 
-Howdy Auth is a thoughtfully implemented, narrowly scoped authentication package for Gleam/Erlang. Its security mechanisms and tests are substantial. Better Auth is a substantially more complete authentication framework, with more login methods, account workflows and integration options. These are separate judgments: a longer feature list does not establish that one implementation is more secure.
+Howdy now covers the core authentication lifecycle for a conventional web app:
+verified registration, password/email/provider login, passkeys, MFA, recovery,
+account changes/deletion and session management. The earlier comparison's major
+missing-workflow findings are no longer accurate.
 
-Howdy fits applications that need email/password or Google login, database-backed sessions and scoped permissions in the existing Howdy stack. It is not yet a feature-equivalent alternative for applications needing passkeys, MFA, shared organization membership or enterprise federation. Better Auth is a JavaScript/TypeScript system, so adopting it in a Gleam application requires an integration boundary rather than a dependency swap.
+My assessment: Howdy is now a credible, deliberately narrower auth library for
+Howdy/Gleam applications. Better Auth remains the more complete general-purpose
+framework, especially in client integrations, login convenience, configuration
+and operational tooling. Implemented features and passing tests do not establish
+equal production maturity or prove that either library is more secure.
 
-## Existing strengths
+## What is now covered
 
-- Passwords use Argon2id with explicit costs, Unicode normalization, a configurable breach check, dummy verification for unavailable accounts, persistent guessing limits and upgrades of older hashes. Recovery exists: a fresh email-token session authorizes password replacement and revokes other sessions. [Implementation](../auth/src/howdy/auth/internal/password.gleam), [password documentation](../auth/README.md#optional-passwords).
-- Random email and session tokens are stored as digests. Browser cookies, exact-origin checks and rejection of ambiguous credentials provide deliberate transport protections. [Tokens](../auth/src/howdy/auth/internal/token.gleam), [guards](../auth/src/howdy/auth.gleam), [routes](../auth/src/howdy/auth/routes.gleam).
-- Google login includes PKCE, nonce and browser-bound single-use state, signature validation and explicit linking to existing accounts. [Provider documentation](../auth/README.md#google-and-built-in-providers), [Google implementation](../auth/src/howdy/auth/providers/google.gleam), [signature verification](../auth/src/howdy_auth_oidc_ffi.erl).
-- Sessions can be listed and revoked. Authorization has scoped roles and permission grants, with fresh database checks by default. Lifecycle events record actors and clients. Groups, typed custom fields, PostgreSQL/SQLite support and a custom session-store interface already exist. These should not be counted as missing features. [Local documentation](../auth/README.md), [authorization](../auth/src/howdy/authorization.gleam).
-
-## Important differences
-
-| Area | Howdy today | Better Auth |
+| Area | Howdy working tree | Comparison |
 | --- | --- | --- |
-| Passkeys | No WebAuthn/passkey flow | Official [passkey plugin](https://better-auth.com/docs/plugins/passkey) |
-| MFA | No second-factor enrollment, challenge or recovery codes; password and email login are alternatives | Official [2FA plugin](https://better-auth.com/docs/plugins/2fa) |
-| Account lifecycle | No supported change-email, delete-user or provider-unlink API | Configurable email changes and deletion, plus account unlinking in [user/account APIs](https://better-auth.com/docs/concepts/users-accounts) |
-| Organizations | One group per user, or distinct accounts per group; no invitation lifecycle | [Organization plugin](https://better-auth.com/docs/plugins/organization) supports memberships, invitations, teams and organization roles |
-| Session lifetime | Fixed absolute expiry, optional idle timeout, list/revoke and custom store | Configurable renewal and optional cookie caching/stateless strategies in [session management](https://better-auth.com/docs/concepts/session-management) |
-| Provider extensibility | Google only; provider construction is an internal seam, not a supported extension contract | Broader provider ecosystem and a generic OAuth [plugin](https://better-auth.com/docs/plugins) |
-| Additional login experiences | Paste a high-entropy emailed token, password or Google; a username custom field does not enable username login | Optional magic links, email OTP, username, phone and anonymous authentication [plugins](https://better-auth.com/docs/plugins) |
-| Enterprise identity | No arbitrary OIDC federation, SAML or SCIM | Public [SSO](https://better-auth.com/docs/plugins/sso) and [SCIM](https://better-auth.com/docs/plugins/scim) plugins; enterprise self-service SSO is a separate offering |
-| Administration | Trusted provisioning, suspension/resumption and revocation functions; applications authorize callers and build management interfaces | [Admin plugin](https://better-auth.com/docs/plugins/admin) adds permission-controlled user/session management and impersonation |
-| Client and extension APIs | Typed Gleam headless operations, HTTP API and starter pages; targeted password/store callbacks | Framework-specific typed clients and reactive session state, [client plugins](https://better-auth.com/docs/concepts/client), endpoint [hooks](https://better-auth.com/docs/concepts/hooks) and database hooks |
-| Database integrations | PostgreSQL/SQLite through Gloo, explicit migrations, custom session-store contract | Broader [database/adaptor tooling](https://better-auth.com/docs/concepts/database), including Prisma, Drizzle and MongoDB, plus secondary storage |
-| Shared HTTP rate limits | HTTP limits are in-process; password/account throttling is already database-backed | Configurable memory/database/secondary/custom [rate-limit storage](https://better-auth.com/docs/concepts/rate-limit); server-side `auth.api` calls bypass this limiter |
-| Service/delegated access | Bearer session tokens already supported; no scoped API-key lifecycle or OAuth authorization server | Optional API-key, JWT, OAuth-provider and device-authorization [plugins](https://better-auth.com/docs/plugins) |
+| Passwords and recovery | Argon2id, verified registration, persistent throttling, configurable breach check; replacement/recovery through a fresh email-token session | Core capability present; Better Auth also offers current-password changes and a dedicated reset-link flow. [Password docs](https://better-auth.com/docs/authentication/email-password) |
+| Account lifecycle | New-email verification, recent-session checks, deletion cleanup hook, safe provider unlinking and session revocation | Major gap closed. Better Auth additionally offers confirmation through the old email before proceeding. [Account docs](https://better-auth.com/docs/concepts/users-accounts) |
+| Passkeys | Discoverable enrollment/login, naming/removal, signature counters, backup metadata, required user verification | Core lifecycle present. Better Auth additionally exposes conditional autofill, configurable RP/origins, extensions and pre-authentication enrollment hooks. [Passkey plugin](https://better-auth.com/docs/plugins/passkey) |
+| MFA | TOTP, callback-delivered OTP, one-use recovery codes, recovery replacement, disablement and remembered devices | Core lifecycle present. Better Auth exposes more settings and automatic trust renewal; Howdy fixes formats/timings and uses a fixed 30-day trust lifetime. [2FA plugin](https://better-auth.com/docs/plugins/2fa) |
+| Providers | Google, GitHub, Facebook and Microsoft Entra, with explicit linking | Much improved; smaller catalog, no supported public provider-construction contract, and no provider token retention/refresh. Apple is one concrete consumer gap. [Apple support](https://better-auth.com/docs/authentication/apple), [account token management](https://better-auth.com/docs/concepts/users-accounts) |
+| Sessions | Cookie/bearer sessions, list/revoke, absolute and idle expiry, custom session storage | Core present. Better Auth also supports rolling renewal and optional cookie caching/stateless strategies. [Session docs](https://better-auth.com/docs/concepts/session-management) |
+| Authorization and user data | Scoped roles/permissions, typed custom fields, trusted provisioning and suspension | Already implemented; these are not missing features. Applications own administrative authorization and UI. [Howdy documentation](../auth/README.md#simple-roles-and-permission-based-rbac) |
 
-The organization difference is architectural. `AccountPerGroup` creates separate identities and credentials, rather than allowing one identity to join multiple organizations. Scoped authorization does not itself create membership or invitations. [Group model](../auth/src/howdy/auth/group.gleam).
+Howdy's MFA enforcement is broader than Better Auth's documented default:
+enrolled users must complete it after email, password, provider and passkey
+login. Better Auth normally challenges credential-based login; its passwordless
+and social flows are not gated by default. Both provide shared failed-code
+budgets; that protection is not unique to Howdy. These are policy differences,
+not proof of overall security superiority. [Better Auth 2FA](https://better-auth.com/docs/plugins/2fa)
 
-Session caching is a tradeoff rather than an automatic improvement: Better Auth documents that revocation can remain stale until the cache expires. Howdy checks current account state on every authentication, even with an external session store. That store does not eliminate the database read, and cross-store mutations lose database/session atomicity. [Better Auth sessions](https://better-auth.com/docs/concepts/session-management), [Howdy storage contract](../auth/README.md#session-storage).
+Howdy also stores session-token digests, checks current account state and uses
+session generations for account-security revocation. Choosing fresh database
+checks has a cost but avoids accepting stale cached account state. Better Auth's
+optional cookie cache can delay revocation until cache expiry, as its docs
+explicitly explain. [Howdy storage](../auth/README.md#session-storage),
+[Better Auth sessions](https://better-auth.com/docs/concepts/session-management)
 
-## Release readiness and verification
+## Remaining practical gaps
 
-Howdy describes itself as an initial implementation. It depends on a locally patched native password dependency and documents that this must be resolved before Hex publication. It offers no rolling-upgrade compatibility guarantee; old instances should stop before migrations. These are material operational limitations beyond missing login features. [Installation and migration notes](../auth/README.md#install-and-migrate), [dependency patch](../auth/vendor/jargon/README.md).
+1. **Login and account UX.** Built-in magic links and short email OTP login are
+   absent; Howdy's emailed-token flow requires pasting a high-entropy token.
+   Delivered second-factor OTP does not fill that primary-login gap. Username,
+   phone and anonymous-to-registered accounts are also absent. Better Auth offers
+   these as optional [authentication plugins](https://better-auth.com/docs/plugins).
+   Password changes in Howdy require another email login, even when the user
+   knows the current password. Its authenticator page displays a manual key;
+   custom pages can render the supplied URI as a QR code.
+2. **Client tooling.** Typed Gleam server APIs, JSON endpoints and starter pages
+   exist, but no reusable typed browser SDK, reactive session client or supported
+   mobile integration. Better Auth's [client](https://better-auth.com/docs/concepts/client)
+   and [Expo integration](https://better-auth.com/docs/integrations/expo) reduce
+   integration work for application developers.
+3. **Passkey deployment flexibility.** Howdy uses exactly one public-origin
+   hostname as RP ID and requires authenticated enrollment. Cross-subdomain
+   arrangements and passkey-first signup need more design. Conditional autofill
+   is a useful smaller UX improvement. This is narrower configuration rather
+   than absence of passkeys. [Better Auth passkeys](https://better-auth.com/docs/plugins/passkey)
+4. **Session convenience.** Howdy has fixed absolute expiry, not sliding renewal.
+   Remembering MFA is separate from keeping the main session alive. Better Auth
+   provides renewal and optional [same-browser account switching](https://better-auth.com/docs/plugins/multi-session).
+5. **Distributed abuse controls.** Howdy's HTTP limits are per process, although
+   account/password/MFA guessing and email cooldowns are database-backed. Better
+   Auth offers shared database, secondary-storage and custom limiter backends.
+   Its server-side `auth.api` calls bypass that HTTP limiter. [Rate-limit docs](https://better-auth.com/docs/concepts/rate-limit)
+6. **Administrative and extension tooling.** Howdy has useful headless primitives
+   but no equivalent packaged permission-controlled admin API/client,
+   impersonation, general endpoint/database hooks or supported third-party
+   plugin contract. [Admin plugin](https://better-auth.com/docs/plugins/admin),
+   [hooks](https://better-auth.com/docs/concepts/hooks). A hosted dashboard should
+   not be assumed to come with Better Auth's open-source admin plugin.
+7. **Service credentials.** Bearer login sessions exist in Howdy; independently
+   scoped API keys with expiry, management and per-key limits do not. This is a
+   separate capability, useful when applications expose integrations. [API-key plugin](https://better-auth.com/docs/plugins/api-key)
+8. **Shared workspaces, if needed.** Groups currently partition identities: each
+   user belongs to one group, or has separate accounts in separate groups. This
+   does not supply one identity with multiple memberships, teams and invitations.
+   Better Auth supplies those in its [organization plugin](https://better-auth.com/docs/plugins/organization).
+   This concerns ordinary collaborative SaaS as well as enterprise products.
+9. **Release readiness.** Howdy still carries a locally patched native password
+   dependency and a pinned prerelease WebAuthn verifier (`glasslock 1.0.0-rc1`),
+   including internal metadata parsing. No independent audit or physical-device
+   interoperability matrix was completed in this work. Current deployment
+   guidance stops old instances before migrations. These are concrete limits
+   on claiming production parity. [Package notes](../auth/README.md),
+   [verifier research](passkey-mfa-research.md), [password dependency](../auth/vendor/jargon/README.md)
 
-Executed locally: `cd auth && gleam test` passed all 126 tests; `node --test test/pages_client_test.mjs` passed all four tests. Tests include concurrency, token replay, provider validation, session revocation, authorization and migrations. The [CI configuration](../.github/workflows/test.yml) includes SQLite/PostgreSQL and both native Argon2 implementations. PostgreSQL and the full CI matrix were not rerun for this comparison. This review is not a penetration test, independent security audit or performance benchmark.
+## Recommended next work
 
-## Suggested priorities
+For a normal Howdy web application, prioritize:
 
-1. Complete everyday account lifecycle: verified email changes, deletion with application cleanup hooks, and safe provider unlinking.
-2. Add passkeys and/or MFA with enrollment, recovery and sensitive-action reauthentication designed together.
-3. Establish a supported external-provider extension contract and add providers users actually need.
-4. If targeting collaborative SaaS, add an explicit user-to-organization membership model and invitation lifecycle. Preserve account partitioning where it is intentional.
-5. Resolve packaging and upgrade limitations, then invest in client integrations and distributed operation according to actual deployment needs.
+1. Release/dependency hardening and real-browser/device interoperability checks.
+2. Smoother existing workflows: magic-link or short email-OTP login, current-password
+   changes, local authenticator QR rendering, and passkey autofill.
+3. A small reusable auth client with explicit signed-out, pending-MFA and signed-in
+   states; configurable session renewal if the application needs persistent login.
+4. Shared HTTP rate limiting before deploying multiple application instances.
+5. Add providers and API-key support when there is a concrete product requirement.
 
-Howdy does not need every Better Auth plugin to be useful. The immediate objective should be a complete, supportable set of workflows for its intended applications.
+Multi-origin passkeys deserve earlier priority if deployment spans subdomains.
+Shared memberships and invitations matter if the product needs collaborative
+workspaces. Enterprise integrations remain deferred.
+
+## Evidence and limits
+
+Reviewed the current APIs, provider boundary, policies, storage contracts, starter
+pages and documentation. The immediately preceding implementation run passed
+**163 Gleam tests on SQLite and 163 on PostgreSQL**, plus **10 JavaScript starter-page
+tests**. This comparison did not rerun them. Those tests include actual signed
+ES256/Ed25519/RSA assertions, replay checks, recovery-code concurrency and MFA
+transport behavior; they are not a production benchmark or independent audit.
+Additional current primary-source notes: [Better Auth research](betterauth-current-research.md).

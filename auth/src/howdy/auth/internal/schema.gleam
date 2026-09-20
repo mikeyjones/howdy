@@ -249,6 +249,81 @@ CREATE TABLE howdy_auth_email_changes (
 CREATE INDEX howdy_auth_email_changes_expiry ON howdy_auth_email_changes(expires_at);
 ",
     ),
+    gloo_migration.new(11, "add_passkeys_and_mfa", "
+CREATE TABLE howdy_auth_passkeys (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  sign_count BIGINT NOT NULL,
+  transports TEXT NOT NULL,
+  backup_eligible INTEGER NOT NULL,
+  backed_up INTEGER NOT NULL,
+  aaguid TEXT NOT NULL,
+  created_at BIGINT NOT NULL
+);
+CREATE INDEX howdy_auth_passkeys_user ON howdy_auth_passkeys(user_id);
+CREATE TABLE howdy_auth_ceremonies (
+  digest TEXT PRIMARY KEY NOT NULL,
+  kind TEXT NOT NULL,
+  user_id TEXT REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  version BIGINT NOT NULL,
+  payload TEXT NOT NULL,
+  label TEXT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+CREATE INDEX howdy_auth_ceremonies_expiry ON howdy_auth_ceremonies(expires_at);
+CREATE INDEX howdy_auth_ceremonies_user ON howdy_auth_ceremonies(user_id);
+CREATE TABLE howdy_auth_mfa (
+  user_id TEXT PRIMARY KEY NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  method TEXT NOT NULL CHECK (method IN ('totp', 'otp')),
+  secret TEXT NOT NULL,
+  last_step BIGINT NOT NULL
+);
+CREATE TABLE howdy_auth_recovery_codes (
+  digest TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE
+);
+CREATE INDEX howdy_auth_recovery_codes_user ON howdy_auth_recovery_codes(user_id);
+CREATE TABLE howdy_auth_mfa_pending (
+  digest TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  version BIGINT NOT NULL,
+  group_id TEXT NOT NULL,
+  method TEXT NOT NULL,
+  client TEXT NOT NULL,
+  otp_digest TEXT NOT NULL DEFAULT '',
+  otp_sent_at BIGINT NOT NULL DEFAULT 0,
+  expires_at BIGINT NOT NULL
+);
+CREATE INDEX howdy_auth_mfa_pending_expiry ON howdy_auth_mfa_pending(expires_at);
+CREATE INDEX howdy_auth_mfa_pending_user ON howdy_auth_mfa_pending(user_id);
+CREATE TABLE howdy_auth_security_attempts (
+  user_id TEXT PRIMARY KEY NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  window_start BIGINT NOT NULL,
+  attempts INTEGER NOT NULL
+);
+CREATE TABLE howdy_auth_trusted_devices (
+  digest TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  version BIGINT NOT NULL,
+  created_at BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+CREATE INDEX howdy_auth_trusted_devices_user ON howdy_auth_trusted_devices(user_id);
+" <> migration.per_database(
+      postgres: "
+ALTER TABLE howdy_auth_sessions DROP CONSTRAINT howdy_auth_sessions_method_check;
+ALTER TABLE howdy_auth_sessions ADD CONSTRAINT howdy_auth_sessions_method_check CHECK (method IN ('email', 'password', 'passkey') OR method LIKE 'provider:%' OR method LIKE 'mfa:%');
+",
+      sqlite: "
+ALTER TABLE howdy_auth_sessions RENAME COLUMN method TO pre_mfa_method;
+ALTER TABLE howdy_auth_sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'email' CHECK (method IN ('email', 'password', 'passkey') OR method LIKE 'provider:%' OR method LIKE 'mfa:%');
+UPDATE howdy_auth_sessions SET method = pre_mfa_method;
+",
+    )),
   ])
 }
 

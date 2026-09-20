@@ -1,6 +1,6 @@
 # howdy_auth
 
-Optional email-token, password and Google authentication and separate role-based authorization for
+Optional email-token, password, provider and passkey authentication and separate role-based authorization for
 Howdy. The package includes JSON endpoints, optional starter pages and headless
 operations for applications supplying their own UI or transport.
 
@@ -8,8 +8,142 @@ This is an initial implementation, not the complete enterprise identity system.
 It targets Erlang and accepts an **already-configured `gloo/repo.Repo`**, supporting
 Gloo’s PostgreSQL and SQLite adapters. The application owns connection setup,
 configuration and shutdown, and supplies email delivery when email tokens are enabled.
-Google OpenID Connect is built in; arbitrary OIDC providers, SAML, MFA, SCIM, invitations, tenant lifecycle management, a hosted management
-dashboard and username login are not implemented yet. Do not advertise those capabilities.
+Google, GitHub, Facebook and Microsoft Entra adapters are built in. Passkeys and
+optional TOTP/delivered-code MFA are described below. Arbitrary OIDC providers,
+SAML, SCIM, invitations, tenant lifecycle management, a hosted management
+dashboard and username login are not implemented yet.
+
+## Passkeys and multi-factor authentication
+
+Run auth migration **11** before starting this version, and stop old instances
+for the upgrade. It adds passkey credentials, enrollment/login challenges,
+encrypted factors, recovery-code digests, verification budgets and remembered
+devices; existing users and sessions survive. New session methods include
+`passkey` and `mfa:<primary-method>`. External stores must preserve the method
+string and session version unchanged.
+
+Enable either feature independently:
+
+```gleam
+import howdy/auth
+import howdy/auth/mfa
+
+let assert Ok(identity) = auth.with_passkeys(identity, "My application")
+let assert Ok(config) = mfa.new("My application", encryption_key_from_environment)
+let identity = auth.with_mfa(identity, config)
+```
+
+The MFA key must be **32 random bytes encoded as unpadded base64url**, kept
+outside the auth database and shared by all application nodes. Generate it once
+(for example `openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'`) and retain it
+across restarts and restores. Changing it prevents existing TOTP secrets from
+being decrypted; automatic key rotation is not implemented. Removing MFA
+configuration does not bypass enrollment: affected logins fail closed.
+
+The starter login/account pages include passkey enrollment, sign-in, rename and
+removal, authenticator setup, delivered-code and recovery-code verification,
+recovery replacement, MFA disablement and remembered-device revocation. TOTP
+setup displays a manual key; custom UIs can render the returned `otpauth:` URI
+locally as a QR code. Enrollment is not active until the code is verified.
+Successful enrollment/recovery replacement returns ten 80-bit recovery codes
+once and signs out all sessions. Save those codes before navigating away.
+
+Passkeys require a recently authenticated account for enrollment and management.
+The RP ID is the configured public-origin hostname; exact origin, user presence
+and user verification (PIN/biometric) are required. Credentials are discoverable,
+with ES256, Ed25519 and RS256 support, signature counters, AAGUID, transports and
+backup metadata. Challenges expire after five minutes and are single-use.
+Enrollment is bound to the initiating session, user, group and session version.
+Removing a passkey requires a recent login through another enabled method and
+revokes all sessions. An account may have up to 20 passkeys.
+
+An enrolled account must complete MFA after **every primary login method**,
+including email, password, provider and passkey login. A pending MFA token cannot
+access authenticated endpoints. TOTP uses RFC 6238 SHA-1, six digits and a
+30-second interval with adjacent-interval tolerance and an account-wide replay
+fence. Secrets use AES-256-GCM with the user ID as authenticated data. Recovery
+codes are hashed and atomically consumed. Five failed code checks within five
+minutes exhaust the shared account budget, even across new login challenges.
+
+To offer delivered codes, configure `mfa.with_delivery(config, fn(user, code) {
+... })` before `auth.with_mfa`. Deliver privately to an application-selected,
+separately verified contact; never accept a destination from the request. This
+can be the enrolled factor or a fallback for TOTP. Email-token primary logins
+cannot use delivered OTP, so two codes to the same mailbox do not become two
+factors. They can still use TOTP or recovery codes. Delivery failures fail closed;
+sends and enrollment starts use the existing persistent cooldown policy.
+
+Remembered devices require a successful primary login, have a fixed 30-day
+lifetime, and are bound to the account/session version. Tokens are hashed at
+rest; browser cookies are HttpOnly and Secure outside loopback development.
+Account security changes invalidate them. Forgetting a remembered device stops
+future MFA bypass on that device; separately revoke its existing sessions to
+sign it out immediately. Disabling MFA or regenerating recovery codes requires
+a recent, completed MFA session and revokes all sessions and remembered devices.
+
+### Headless and HTTP contracts
+
+Use `auth.exchange_step` and `auth.login_password_step` to receive
+`SignedIn(Session)` or `SecondFactor(MfaChallenge)`. Provider completion can also
+return `ProviderSecondFactor`. Old session-only exchange/password APIs return
+`Forbidden` for enrolled accounts. Handle `auth.Passkey` in exhaustive matches
+on `Method`. Complete a pending challenge using `auth.verify_mfa` with `Totp`,
+`DeliveredCode` or `RecoveryCode`; `auth.send_mfa_code` sends a delivered code.
+`auth.use_trusted_device` also requires the pending primary-login challenge.
+
+`auth.begin_passkey_registration` / `finish_passkey_registration` and
+`begin_passkey_login` / `finish_passkey_login` expose WebAuthn ceremonies.
+`PasskeyChallenge.options` is the browser public-key options object; `challenge`
+is an opaque Howdy token that must accompany the response. The browser must
+convert base64url option fields to ArrayBuffers. Finish operations accept a JSON
+string containing the standard WebAuthn credential response. Listing/management
+uses `passkeys`, `rename_passkey`, `delete_passkey`. MFA management uses
+`begin_mfa`, `confirm_mfa`, `mfa_status`, `disable_mfa`,
+`regenerate_recovery_codes`, `trusted_devices`, `revoke_trusted_device`.
+
+Under the configured API prefix:
+
+| Endpoint | Request / result |
+| --- | --- |
+| `GET /security` | Current MFA method and enabled features |
+| `GET /passkeys` | Owned credential metadata |
+| `POST /passkeys/register` | `{name}` → `{challenge, options}` |
+| `POST /passkeys/register/confirm` | `{challenge, credential}` → 204; `credential` is a JSON string |
+| `POST /passkeys/login` | `{group?}` → `{challenge, options}` |
+| `POST /passkeys/session` | `{challenge, credential}` → session cookie or pending MFA |
+| `POST /passkeys/rename` | `{id, name}` → 204 |
+| `POST /passkeys/delete` | `{id}` → 204 and sign-out |
+| `POST /mfa/enroll` | `{method: "totp" or "otp"}` → `{challenge, key, uri}` |
+| `POST /mfa/enroll/confirm` | `{challenge, code}` → `{recovery_codes}` and sign-out |
+| `POST /mfa/send` | `{}` with pending cookie → 204 |
+| `POST /mfa/verify` | `{method, code, remember?}` with pending cookie → session cookie |
+| `POST /mfa/token/send` | `{challenge}` → 204 for native clients |
+| `POST /mfa/token` | `{challenge, method, code, remember?}` → `{session, trusted_device}` |
+| `POST /mfa/disable` | `{}` → 204 and sign-out |
+| `POST /mfa/recovery` | `{}` → replacement recovery codes and sign-out |
+| `GET /mfa/devices` | Owned remembered-device IDs and expiry |
+| `POST /mfa/devices/revoke` | `{id}` → 204 |
+
+Verification methods are `totp`, `otp`, `recovery`. Browser primary-login
+endpoints return **202 `{mfa_required: true}`** with a five-minute pending cookie
+when needed; this is not login success. Bearer login endpoints also return
+`mfa_token`, which becomes `challenge` for `/mfa/token`. Cookie verification
+requires the exact Origin; all mutations retain the existing JSON, Origin and
+rate-limit policies. Provider callbacks redirect pending users to `<provider
+prefix>/mfa`; mount the starter pages there or provide that page in your UI.
+
+### Scope compared with Better Auth
+
+The everyday passkey and MFA lifecycle is implemented. This is not full plugin
+parity: parent-domain/multiple-origin RP configuration, browser conditional
+autofill, pre-authentication passkey signup, attestation policy, extension
+customization and Expo integration are not exposed. MFA intervals, code formats
+and trust duration are fixed; remembered devices do not renew automatically.
+The native verifier is pinned to **glasslock 1.0.0-rc1**, a recent prerelease,
+including internal metadata parsing APIs. It has not been independently audited
+as part of this work. Review upgrades explicitly; keep signed-ceremony regression
+tests. See [comparison and dependency research](../manual/passkey-mfa-research.md)
+for the official Better Auth references and inspected verifier behavior.
 
 ## Install and migrate
 

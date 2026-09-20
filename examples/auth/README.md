@@ -50,3 +50,19 @@ account, sign into it with an email token first and use **Link Google** on
 `/auth/account`. Linking requires a session created within the last ten minutes.
 Google accounts using third-party email addresses must register/verify locally
 before linking. Google sign-in leaves existing RBAC permissions unchanged.
+
+Passkeys are enabled in the demo. Sign in, then add a passkey on `/auth/account`;
+subsequent logins can use the **Sign in with a passkey** button. Browsers permit
+WebAuthn on localhost; deployments need HTTPS and a stable public origin.
+
+To enable authenticator MFA, generate a key once and store it privately:
+
+```sh
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
+```
+
+Supply that value as `HOWDY_AUTH_MFA_KEY` every time you start the example.
+Do not generate a replacement on each startup. Run the migration command before
+using an existing database. Enroll from `/auth/account`, copy the manual key into
+your authenticator and verify its code. Save the recovery codes, then sign in
+again and complete MFA. The demo does not configure delivered-code fallback.

@@ -1,7 +1,5 @@
 //// JSON endpoints for custom pages and API clients. Mount once at startup.
 
-import howdy/auth/secret
-
 import gleam/dynamic/decode
 import gleam/http
 import gleam/http/response
@@ -10,7 +8,9 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/string
 import howdy/auth.{type Auth}
+import howdy/auth/internal/login_transport
 import howdy/auth/internal/provider_routes
+import howdy/auth/internal/security_routes
 import howdy/auth/user
 import howdy/body
 import howdy/context
@@ -137,7 +137,7 @@ pub fn api_limited_by(
       browser_session(
         identity,
         ctx,
-        auth.exchange_from(identity, secret, client(ctx)),
+        auth.exchange_step(identity, secret, client(ctx)),
         required,
       )
     }),
@@ -146,8 +146,8 @@ pub fn api_limited_by(
     "/token",
     strict(fn(ctx) {
       use secret <- body.json_with_limit(ctx, body_limit, field("token"))
-      auth.exchange_from(identity, secret, client(ctx))
-      |> service.respond(ctx, token_json(identity))
+      auth.exchange_step(identity, secret, client(ctx))
+      |> login_transport.bearer(identity, ctx, _)
     }),
   )
   |> controller.post(
@@ -171,7 +171,7 @@ pub fn api_limited_by(
       browser_session(
         identity,
         ctx,
-        auth.login_password_from(
+        auth.login_password_step(
           within(identity, credentials.2),
           credentials.0,
           credentials.1,
@@ -185,13 +185,13 @@ pub fn api_limited_by(
     "/password/token",
     strict(fn(ctx) {
       use credentials <- body.json_with_limit(ctx, body_limit, credentials())
-      auth.login_password_from(
+      auth.login_password_step(
         within(identity, credentials.2),
         credentials.0,
         credentials.1,
         client(ctx),
       )
-      |> service.respond(ctx, token_json(identity))
+      |> login_transport.bearer(identity, ctx, _)
     }),
   )
   |> controller.post(
@@ -302,6 +302,7 @@ pub fn api_limited_by(
       |> cookie.delete(auth.cookie_name(identity), options(identity))
     }),
   )
+  |> security_routes.add(identity, strict, signed_in, required, client)
 }
 
 /// Request bodies hold an address, a token or a password; nothing larger.
@@ -376,27 +377,10 @@ fn credentials() -> decode.Decoder(#(String, String, Option(String))) {
 fn browser_session(
   identity: Auth,
   ctx: controller.Context,
-  result: service.Result(auth.Session),
-  required: fn(controller.Context) -> service.Result(user.Principal),
+  answer: service.Result(auth.LoginStep),
+  required,
 ) {
-  case result {
-    Error(error) -> service.error_response(ctx, error)
-    Ok(session) -> {
-      case required(ctx) {
-        Ok(principal) -> {
-          let _ = auth.logout(identity, principal)
-          Nil
-        }
-        Error(_) -> Nil
-      }
-      controller.json(ctx, user.to_json(session.user))
-      |> cookie.set(
-        auth.cookie_name(identity),
-        secret.reveal(session.token),
-        options(identity),
-      )
-    }
-  }
+  login_transport.browser(identity, ctx, answer, required)
 }
 
 fn session_json(session: auth.SessionInfo) -> json.Json {
@@ -407,6 +391,7 @@ fn session_json(session: auth.SessionInfo) -> json.Json {
       json.string(case session.method {
         auth.EmailToken -> "email"
         auth.Password -> "password"
+        auth.Passkey -> "passkey"
         auth.Provider(id) -> "provider:" <> id
       }),
     ),
@@ -416,17 +401,6 @@ fn session_json(session: auth.SessionInfo) -> json.Json {
     #("current", json.bool(session.current)),
     #("client", json.string(session.client)),
   ])
-}
-
-fn token_json(identity: Auth) -> fn(auth.Session) -> json.Json {
-  fn(session: auth.Session) {
-    json.object([
-      #("access_token", json.string(secret.reveal(session.token))),
-      #("token_type", json.string("Bearer")),
-      #("expires_in", json.int(auth.policy(identity).session_seconds)),
-      #("user", user.to_json(session.user)),
-    ])
-  }
 }
 
 /// Browser redirects for built-in identity providers. Mount once at startup.

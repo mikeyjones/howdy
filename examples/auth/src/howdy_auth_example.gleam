@@ -4,6 +4,7 @@ import gleam/io
 import gleam/option.{None, Some}
 import howdy
 import howdy/auth
+import howdy/auth/mfa
 import howdy/auth/pages
 import howdy/auth/providers/google
 import howdy/auth/routes
@@ -79,6 +80,14 @@ pub fn main() {
     auth.with_account_deletion(identity, fn(_repo, _user) { Ok(Nil) })
   let identity = auth.allow_registration(identity)
   let assert Ok(identity) = auth.with_passwords(identity)
+  let assert Ok(identity) = auth.with_passkeys(identity, "Howdy demo")
+  let identity = case mfa_key() {
+    None -> identity
+    Some(key) -> {
+      let assert Ok(config) = mfa.new("Howdy demo", key)
+      auth.with_mfa(identity, config)
+    }
+  }
   let assert Ok(permissions) = access.new(db)
   let assert Ok(_) =
     access.define_role(
@@ -98,3 +107,6 @@ pub fn main() {
 // Read credentials at startup, never from requests or source-controlled values.
 @external(erlang, "howdy_auth_example_ffi", "google_credentials")
 fn google_credentials() -> option.Option(#(String, String))
+
+@external(erlang, "howdy_auth_example_ffi", "mfa_key")
+fn mfa_key() -> option.Option(String)

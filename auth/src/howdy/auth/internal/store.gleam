@@ -17,6 +17,7 @@ import howdy/auth/group.{type Group}
 import howdy/auth/internal/account_store
 import howdy/auth/internal/database as db
 import howdy/auth/internal/provider_store
+import howdy/auth/internal/security_store
 import howdy/auth/internal/token
 import howdy/auth/policy.{type Policy}
 import howdy/auth/user.{type User}
@@ -652,7 +653,7 @@ pub fn fresh_email_session(
     conn,
     "SELECT "
       <> user_columns(conn)
-      <> " FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.user_id = $2 AND s.method = 'email' AND s.expires_at > $3 AND s.created_at > $4 AND u.suspended = 0"
+      <> " FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.user_id = $2 AND s.method IN ('email', 'mfa:email') AND s.expires_at > $3 AND s.created_at > $4 AND u.suspended = 0"
       <> db.for_update(conn, "u"),
     [
       sql.string(digest),
@@ -762,6 +763,7 @@ pub fn delete_expired(
 ) -> service.Result(Nil) {
   use _ <- result.try(provider_store.prune(conn))
   use _ <- result.try(account_store.prune(conn))
+  use _ <- result.try(security_store.prune(conn))
   use _ <- result.try(
     db.execute(conn, "DELETE FROM howdy_auth_sessions WHERE expires_at <= $1", [
       sql.int(now),

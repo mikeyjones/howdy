@@ -5,6 +5,7 @@ import gleam/result
 import gloo/repo.{type Repo}
 import gloo/sql
 import howdy/auth/internal/database as db
+import howdy/auth/internal/security_store
 import howdy/auth/internal/token
 import howdy/service
 
@@ -141,6 +142,7 @@ pub fn change_email(
 /// Invalidate pending sensitive operations as well as sessions. Provider
 /// callbacks already consumed in another process must recheck the session.
 pub fn clear_pending(conn: Repo, user_id: String) -> service.Result(Nil) {
+  use _ <- result.try(security_store.clear(conn, user_id))
   use _ <- result.try(
     db.execute(conn, "DELETE FROM howdy_auth_email_changes WHERE user_id = $1", [
       sql.string(user_id),
