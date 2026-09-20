@@ -144,6 +144,53 @@ CREATE TABLE howdy_auth_settings (
 );
 ",
     ),
+    // PostgreSQL has a type for an instant and SQLite does not, so the columns
+    // differ; see `database.read_time`. Creation is recovered from the audit
+    // trail, and is the epoch where that has been pruned. The default group
+    // has no event, so it dates from this migration.
+    gloo_migration.new(8, "add_timestamps_and_fields", "
+CREATE TABLE howdy_auth_user_fields (
+  user_id TEXT NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  value TEXT NOT NULL,
+  unique_key TEXT,
+  PRIMARY KEY (user_id, name)
+);
+CREATE UNIQUE INDEX howdy_auth_user_fields_unique ON howdy_auth_user_fields(name, unique_key);
+CREATE INDEX howdy_auth_user_fields_value ON howdy_auth_user_fields(name, value);
+CREATE TABLE howdy_auth_group_fields (
+  group_id TEXT NOT NULL REFERENCES howdy_auth_groups(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  value TEXT NOT NULL,
+  unique_key TEXT,
+  PRIMARY KEY (group_id, name)
+);
+CREATE UNIQUE INDEX howdy_auth_group_fields_unique ON howdy_auth_group_fields(name, unique_key);
+CREATE INDEX howdy_auth_group_fields_value ON howdy_auth_group_fields(name, value);
+" <> migration.per_database(
+      postgres: "
+ALTER TABLE howdy_auth_users ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT to_timestamp(0);
+ALTER TABLE howdy_auth_users ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT to_timestamp(0);
+ALTER TABLE howdy_auth_groups ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT to_timestamp(0);
+ALTER TABLE howdy_auth_groups ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT to_timestamp(0);
+UPDATE howdy_auth_users SET created_at = to_timestamp(COALESCE((SELECT MIN(e.occurred_at) FROM howdy_auth_events e WHERE e.user_id = howdy_auth_users.id AND e.action IN ('user.registered', 'user.provisioned')), 0));
+UPDATE howdy_auth_groups SET created_at = to_timestamp(COALESCE((SELECT MIN(e.occurred_at) FROM howdy_auth_events e WHERE e.action = 'group.created' AND e.detail = howdy_auth_groups.id), 0));
+UPDATE howdy_auth_groups SET created_at = CURRENT_TIMESTAMP WHERE id = 'default' AND created_at = to_timestamp(0);
+UPDATE howdy_auth_users SET updated_at = created_at;
+UPDATE howdy_auth_groups SET updated_at = created_at;
+",
+      sqlite: "
+ALTER TABLE howdy_auth_users ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE howdy_auth_users ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE howdy_auth_groups ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE howdy_auth_groups ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0;
+UPDATE howdy_auth_users SET created_at = COALESCE((SELECT MIN(e.occurred_at) FROM howdy_auth_events e WHERE e.user_id = howdy_auth_users.id AND e.action IN ('user.registered', 'user.provisioned')), 0);
+UPDATE howdy_auth_groups SET created_at = COALESCE((SELECT MIN(e.occurred_at) FROM howdy_auth_events e WHERE e.action = 'group.created' AND e.detail = howdy_auth_groups.id), 0);
+UPDATE howdy_auth_groups SET created_at = CAST(strftime('%s', 'now') AS INTEGER) WHERE id = 'default' AND created_at = 0;
+UPDATE howdy_auth_users SET updated_at = created_at;
+UPDATE howdy_auth_groups SET updated_at = created_at;
+",
+    )),
   ])
 }
 

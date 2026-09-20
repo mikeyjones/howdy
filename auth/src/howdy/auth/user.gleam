@@ -1,11 +1,24 @@
-//// Application profile data belongs in application tables keyed by user ID.
+//// Small facts about a user, such as a username, fit `howdy/auth/field`.
+//// Anything relational belongs in application tables keyed by user ID.
 
 import gleam/dynamic/decode
 import gleam/json
+import gleam/time/calendar
+import gleam/time/timestamp.{type Timestamp}
 
 /// `group_id` is the one group the user belongs to; see `howdy/auth/group`.
+/// `updated_at` moves when the user is suspended or resumed, changes group,
+/// or has a field changed; credentials and sessions do not move it. Both are
+/// whole seconds. `created_at` is the epoch for a user who predates it and
+/// whose registration has been pruned from the audit trail.
 pub type User {
-  User(id: String, email: String, group_id: String)
+  User(
+    id: String,
+    email: String,
+    group_id: String,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+  )
 }
 
 /// A verified session. Roles are intentionally absent: authorization reads
@@ -51,7 +64,15 @@ pub fn to_json(user: User) -> json.Json {
     #("id", json.string(user.id)),
     #("email", json.string(user.email)),
     #("group_id", json.string(user.group_id)),
+    #("created_at", time_to_json(user.created_at)),
+    #("updated_at", time_to_json(user.updated_at)),
   ])
+}
+
+/// An instant as JSON: an RFC 3339 string in UTC.
+@internal
+pub fn time_to_json(time: Timestamp) -> json.Json {
+  json.string(timestamp.to_rfc3339(time, calendar.utc_offset))
 }
 
 @internal
@@ -59,5 +80,13 @@ pub fn row() -> decode.Decoder(User) {
   use id <- decode.field(0, decode.string)
   use email <- decode.field(1, decode.string)
   use group_id <- decode.field(2, decode.string)
-  decode.success(User(id, email, group_id))
+  use created_at <- decode.field(3, decode.int)
+  use updated_at <- decode.field(4, decode.int)
+  decode.success(User(
+    id,
+    email,
+    group_id,
+    timestamp.from_unix_seconds(created_at),
+    timestamp.from_unix_seconds(updated_at),
+  ))
 }

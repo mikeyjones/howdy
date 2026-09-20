@@ -8,15 +8,33 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/result
 import gleam/string
+import gleam/time/timestamp
 import gloo/repo.{type Repo}
 import gloo/sql
 import gloo/value.{type GlooValue}
+import howdy/auth/field
 import howdy/auth/group.{type Group}
 import howdy/auth/internal/database as db
 import howdy/auth/internal/token
 import howdy/auth/policy.{type Policy}
 import howdy/auth/user.{type User}
 import howdy/service
+
+/// The columns `user.row` decodes, from the users table under alias `u`.
+fn user_columns(conn: Repo) -> String {
+  "u.id, u.email, u.group_id, "
+  <> db.read_time(conn, "u.created_at")
+  <> ", "
+  <> db.read_time(conn, "u.updated_at")
+}
+
+/// The columns `group.row` decodes, from the groups table under alias `g`.
+fn group_columns(conn: Repo) -> String {
+  "g.id, g.name, "
+  <> db.read_time(conn, "g.created_at")
+  <> ", "
+  <> db.read_time(conn, "g.updated_at")
+}
 
 // --- Per-installation keys --------------------------------------------------
 
@@ -348,24 +366,35 @@ pub fn insert_user(
   email email: String,
   group_id group_id: String,
   login_key login_key: String,
-) -> service.Result(Nil) {
+) -> service.Result(User) {
+  let now = token.now()
   use _ <- result.try(
     db.execute(
       conn,
-      "INSERT INTO howdy_auth_users(id, email, group_id, login_key) VALUES ($1, $2, $3, $4)",
+      "INSERT INTO howdy_auth_users(id, email, group_id, login_key, created_at, updated_at) VALUES ($1, $2, $3, $4, "
+        <> db.write_time(conn, "$5")
+        <> ", "
+        <> db.write_time(conn, "$6")
+        <> ")",
       [
         sql.string(id),
         sql.string(email),
         sql.string(group_id),
         sql.string(login_key),
+        sql.int(now),
+        sql.int(now),
       ],
     ),
   )
-  db.execute(
-    conn,
-    "INSERT INTO howdy_auth_identities(issuer, subject, user_id) VALUES ('email', $1, $2)",
-    [sql.string(login_key), sql.string(id)],
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "INSERT INTO howdy_auth_identities(issuer, subject, user_id) VALUES ('email', $1, $2)",
+      [sql.string(login_key), sql.string(id)],
+    ),
   )
+  let at = timestamp.from_unix_seconds(now)
+  Ok(user.User(id, email, group_id, at, at))
 }
 
 /// The active user owning a verified email address, row-locked.
@@ -379,7 +408,9 @@ pub fn active_user_by_email(
     // howdy_auth_users.email is the one address this package authenticates on.
     // The identity row records that the address was verified by email; it is
     // never a second place to look one up, so the two cannot disagree.
-    "SELECT u.id, u.email, u.group_id FROM howdy_auth_users u JOIN howdy_auth_identities i ON i.user_id = u.id AND i.issuer = 'email' WHERE u.email = $1 AND ($2 = '' OR u.group_id = $3) AND u.suspended = 0"
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_users u JOIN howdy_auth_identities i ON i.user_id = u.id AND i.issuer = 'email' WHERE u.email = $1 AND ($2 = '' OR u.group_id = $3) AND u.suspended = 0"
       <> db.for_update(conn, "u"),
     [sql.string(email), ..in_group(group)],
     user.row(),
@@ -391,13 +422,20 @@ pub fn set_suspended(
   user_id: String,
   suspended: Bool,
 ) -> service.Result(Nil) {
-  db.execute(conn, "UPDATE howdy_auth_users SET suspended = $1 WHERE id = $2", [
-    sql.int(case suspended {
-      True -> 1
-      False -> 0
-    }),
-    sql.string(user_id),
-  ])
+  db.execute(
+    conn,
+    "UPDATE howdy_auth_users SET suspended = $1, updated_at = "
+      <> db.write_time(conn, "$2")
+      <> " WHERE id = $3",
+    [
+      sql.int(case suspended {
+        True -> 1
+        False -> 0
+      }),
+      sql.int(token.now()),
+      sql.string(user_id),
+    ],
+  )
 }
 
 pub fn insert_password(
@@ -440,13 +478,15 @@ pub fn password_candidates(
 ) -> service.Result(List(#(User, String, Bool))) {
   let row = {
     use found <- decode.then(user.row())
-    use hash <- decode.field(3, decode.string)
-    use normalized <- decode.field(4, decode.int)
+    use hash <- decode.field(5, decode.string)
+    use normalized <- decode.field(6, decode.int)
     decode.success(#(found, hash, normalized == 1))
   }
   db.query(
     conn,
-    "SELECT u.id, u.email, u.group_id, p.encoded_hash, p.normalized FROM howdy_auth_users u JOIN howdy_auth_passwords p ON p.user_id = u.id WHERE u.email = $1 AND ($2 = '' OR u.group_id = $3) AND u.suspended = 0",
+    "SELECT "
+      <> user_columns(conn)
+      <> ", p.encoded_hash, p.normalized FROM howdy_auth_users u JOIN howdy_auth_passwords p ON p.user_id = u.id WHERE u.email = $1 AND ($2 = '' OR u.group_id = $3) AND u.suspended = 0",
     [sql.string(email), ..in_group(group)],
     row,
   )
@@ -463,7 +503,9 @@ pub fn active_user_with_password(
 ) -> service.Result(List(User)) {
   db.query(
     conn,
-    "SELECT u.id, u.email, u.group_id FROM howdy_auth_users u JOIN howdy_auth_passwords p ON p.user_id = u.id WHERE u.id = $1 AND p.encoded_hash = $2 AND p.normalized >= $3 AND u.suspended = 0"
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_users u JOIN howdy_auth_passwords p ON p.user_id = u.id WHERE u.id = $1 AND p.encoded_hash = $2 AND p.normalized >= $3 AND u.suspended = 0"
       <> db.for_update(conn, "u"),
     [
       sql.string(user_id),
@@ -570,12 +612,14 @@ pub fn session_user(
 ) -> service.Result(List(#(User, Int))) {
   let row = {
     use found <- decode.then(user.row())
-    use last_seen_at <- decode.field(3, decode.int)
+    use last_seen_at <- decode.field(5, decode.int)
     decode.success(#(found, last_seen_at))
   }
   db.query(
     conn,
-    "SELECT u.id, u.email, u.group_id, s.last_seen_at FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.expires_at > $2 AND s.last_seen_at > $3 AND u.suspended = 0",
+    "SELECT "
+      <> user_columns(conn)
+      <> ", s.last_seen_at FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.expires_at > $2 AND s.last_seen_at > $3 AND u.suspended = 0",
     [sql.string(digest), sql.int(now), sql.int(seen_after)],
     row,
   )
@@ -604,7 +648,9 @@ pub fn fresh_email_session(
 ) -> service.Result(Bool) {
   db.query(
     conn,
-    "SELECT u.id, u.email, u.group_id FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.user_id = $2 AND s.method = 'email' AND s.expires_at > $3 AND s.created_at > $4 AND u.suspended = 0"
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.user_id = $2 AND s.method = 'email' AND s.expires_at > $3 AND s.created_at > $4 AND u.suspended = 0"
       <> db.for_update(conn, "u"),
     [
       sql.string(digest),
@@ -754,7 +800,9 @@ pub fn active_user(
 ) -> service.Result(List(User)) {
   db.query(
     conn,
-    "SELECT u.id, u.email, u.group_id FROM howdy_auth_users u WHERE u.id = $1 AND u.suspended = 0"
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_users u WHERE u.id = $1 AND u.suspended = 0"
       <> case locking {
       True -> db.for_update(conn, "u")
       False -> ""
@@ -905,18 +953,30 @@ pub fn insert_group(
   conn: Repo,
   id: String,
   name: String,
-) -> service.Result(Nil) {
-  db.execute(conn, "INSERT INTO howdy_auth_groups(id, name) VALUES ($1, $2)", [
-    sql.string(id),
-    sql.string(name),
-  ])
+) -> service.Result(Group) {
+  let now = token.now()
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "INSERT INTO howdy_auth_groups(id, name, created_at, updated_at) VALUES ($1, $2, "
+        <> db.write_time(conn, "$3")
+        <> ", "
+        <> db.write_time(conn, "$4")
+        <> ")",
+      [sql.string(id), sql.string(name), sql.int(now), sql.int(now)],
+    ),
+  )
+  let at = timestamp.from_unix_seconds(now)
+  Ok(group.Group(id, name, at, at))
 }
 
 /// The group, row-locked so it cannot be deleted while a user is put in it.
 pub fn find_group(conn: Repo, id: String) -> service.Result(List(Group)) {
   db.query(
     conn,
-    "SELECT g.id, g.name FROM howdy_auth_groups g WHERE g.id = $1"
+    "SELECT "
+      <> group_columns(conn)
+      <> " FROM howdy_auth_groups g WHERE g.id = $1"
       <> db.for_update(conn, "g"),
     [sql.string(id)],
     group.row(),
@@ -926,7 +986,9 @@ pub fn find_group(conn: Repo, id: String) -> service.Result(List(Group)) {
 pub fn groups(conn: Repo) -> service.Result(List(Group)) {
   db.query(
     conn,
-    "SELECT id, name FROM howdy_auth_groups ORDER BY name, id",
+    "SELECT "
+      <> group_columns(conn)
+      <> " FROM howdy_auth_groups g ORDER BY g.name, g.id",
     [],
     group.row(),
   )
@@ -937,10 +999,13 @@ pub fn rename_group(
   id: String,
   name: String,
 ) -> service.Result(Nil) {
-  db.execute(conn, "UPDATE howdy_auth_groups SET name = $1 WHERE id = $2", [
-    sql.string(name),
-    sql.string(id),
-  ])
+  db.execute(
+    conn,
+    "UPDATE howdy_auth_groups SET name = $1, updated_at = "
+      <> db.write_time(conn, "$2")
+      <> " WHERE id = $3",
+    [sql.string(name), sql.int(token.now()), sql.string(id)],
+  )
 }
 
 pub fn delete_group(conn: Repo, id: String) -> service.Result(Nil) {
@@ -952,7 +1017,9 @@ pub fn delete_group(conn: Repo, id: String) -> service.Result(Nil) {
 pub fn group_members(conn: Repo, id: String) -> service.Result(List(User)) {
   db.query(
     conn,
-    "SELECT id, email, group_id FROM howdy_auth_users WHERE group_id = $1 ORDER BY email, id",
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_users u WHERE u.group_id = $1 ORDER BY u.email, u.id",
     [sql.string(id)],
     user.row(),
   )
@@ -973,7 +1040,9 @@ pub fn users_outside_group(conn: Repo, id: String) -> service.Result(Bool) {
 pub fn find_user(conn: Repo, user_id: String) -> service.Result(List(User)) {
   db.query(
     conn,
-    "SELECT u.id, u.email, u.group_id FROM howdy_auth_users u WHERE u.id = $1"
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_users u WHERE u.id = $1"
       <> db.for_update(conn, "u"),
     [sql.string(user_id)],
     user.row(),
@@ -991,14 +1060,181 @@ pub fn move_user(
   use _ <- result.try(
     db.execute(
       conn,
-      "UPDATE howdy_auth_users SET group_id = $1, login_key = $2 WHERE id = $3",
-      [sql.string(group_id), sql.string(login_key), sql.string(user_id)],
+      "UPDATE howdy_auth_users SET group_id = $1, login_key = $2, updated_at = "
+        <> db.write_time(conn, "$3")
+        <> " WHERE id = $4",
+      [
+        sql.string(group_id),
+        sql.string(login_key),
+        sql.int(token.now()),
+        sql.string(user_id),
+      ],
     ),
   )
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "UPDATE howdy_auth_identities SET subject = $1 WHERE issuer = 'email' AND user_id = $2",
+      [sql.string(login_key), sql.string(user_id)],
+    ),
+  )
+  // Keys unique within a group name the group, so they follow the user.
   db.execute(
     conn,
-    "UPDATE howdy_auth_identities SET subject = $1 WHERE issuer = 'email' AND user_id = $2",
-    [sql.string(login_key), sql.string(user_id)],
+    "UPDATE howdy_auth_user_fields SET unique_key = $1 || value WHERE user_id = $2 AND substr(unique_key, 1, 2) = 'g:'",
+    [sql.string(field.group_key(group_id, "")), sql.string(user_id)],
+  )
+}
+
+/// Whether a field the user holds uniquely within their group is already
+/// held in `group_id`, so moving them there would collide.
+pub fn fields_taken_in_group(
+  conn: Repo,
+  user_id: String,
+  group_id: String,
+) -> service.Result(Bool) {
+  db.query(
+    conn,
+    "SELECT f.name FROM howdy_auth_user_fields f JOIN howdy_auth_user_fields o ON o.name = f.name AND o.unique_key = $1 || f.value WHERE f.user_id = $2 AND substr(f.unique_key, 1, 2) = 'g:' LIMIT 1",
+    [sql.string(field.group_key(group_id, "")), sql.string(user_id)],
+    decode.field(0, decode.string, decode.success),
+  )
+  |> result.map(fn(rows) { rows != [] })
+}
+
+// --- Fields -----------------------------------------------------------------
+
+/// Whose fields a statement touches. The names are trusted query text.
+pub type Owner {
+  Owner(table: String, fields: String, column: String)
+}
+
+pub const of_user = Owner(
+  "howdy_auth_users",
+  "howdy_auth_user_fields",
+  "user_id",
+)
+
+pub const of_group = Owner(
+  "howdy_auth_groups",
+  "howdy_auth_group_fields",
+  "group_id",
+)
+
+pub fn fields(
+  conn: Repo,
+  owner: Owner,
+  id: String,
+) -> service.Result(List(#(String, String))) {
+  let row = {
+    use name <- decode.field(0, decode.string)
+    use value <- decode.field(1, decode.string)
+    decode.success(#(name, value))
+  }
+  db.query(
+    conn,
+    "SELECT name, value FROM "
+      <> owner.fields
+      <> " WHERE "
+      <> owner.column
+      <> " = $1 ORDER BY name",
+    [sql.string(id)],
+    row,
+  )
+}
+
+/// Apply field writes and move the owner's `updated_at`. Conflict when a
+/// unique value is held by another owner: the insert steps aside for the
+/// unique index rather than failing, so a concurrent claim reads as taken.
+pub fn write_fields(
+  conn: Repo,
+  owner: Owner,
+  id: String,
+  writes: List(field.Write),
+) -> service.Result(Int) {
+  use _ <- result.try(
+    list.try_fold(writes, Nil, fn(_, write) {
+      use _ <- result.try(
+        db.execute(
+          conn,
+          "DELETE FROM "
+            <> owner.fields
+            <> " WHERE "
+            <> owner.column
+            <> " = $1 AND name = $2",
+          [sql.string(id), sql.string(write.name)],
+        ),
+      )
+      case write {
+        field.Remove(_) -> Ok(Nil)
+        field.Put(name:, value:, key:) -> {
+          use stored <- result.try(db.query(
+            conn,
+            "INSERT INTO "
+              <> owner.fields
+              <> "("
+              <> owner.column
+              <> ", name, value, unique_key) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING RETURNING name",
+            [
+              sql.string(id),
+              sql.string(name),
+              sql.string(value),
+              sql.nullable(sql.string, key),
+            ],
+            decode.field(0, decode.string, decode.success),
+          ))
+          case stored {
+            [_] -> Ok(Nil)
+            _ -> Error(service.Conflict(name <> " is already taken"))
+          }
+        }
+      }
+    }),
+  )
+  let now = token.now()
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "UPDATE "
+        <> owner.table
+        <> " SET updated_at = "
+        <> db.write_time(conn, "$1")
+        <> " WHERE id = $2",
+      [sql.int(now), sql.string(id)],
+    ),
+  )
+  Ok(now)
+}
+
+/// Users holding `value` in the field `name`, in one group or in any.
+pub fn users_with_field(
+  conn: Repo,
+  name: String,
+  value: String,
+  group: Option(String),
+) -> service.Result(List(User)) {
+  db.query(
+    conn,
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_user_fields f JOIN howdy_auth_users u ON u.id = f.user_id WHERE f.name = $1 AND f.value = $2 AND ($3 = '' OR u.group_id = $4) ORDER BY u.email, u.id",
+    [sql.string(name), sql.string(value), ..in_group(group)],
+    user.row(),
+  )
+}
+
+pub fn groups_with_field(
+  conn: Repo,
+  name: String,
+  value: String,
+) -> service.Result(List(Group)) {
+  db.query(
+    conn,
+    "SELECT "
+      <> group_columns(conn)
+      <> " FROM howdy_auth_group_fields f JOIN howdy_auth_groups g ON g.id = f.group_id WHERE f.name = $1 AND f.value = $2 ORDER BY g.name, g.id",
+    [sql.string(name), sql.string(value)],
+    group.row(),
   )
 }
 

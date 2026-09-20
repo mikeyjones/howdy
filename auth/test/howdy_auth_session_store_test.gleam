@@ -200,7 +200,8 @@ pub fn provisioning_creates_users_without_public_registration_test() {
   assert auth.registration_enabled(closed) == False
   let assert Ok(ada) =
     auth.provision(closed, " ADA@Example.com ", by: user.System)
-  assert ada == user.User(ada.id, "ada@example.com", group.default_id)
+  assert ada
+    == user.User(..ada, email: "ada@example.com", group_id: group.default_id)
   let assert Error(service.Conflict(_)) =
     auth.provision(closed, "ada@example.com", by: user.System)
   let assert Error(service.Invalid(_)) =

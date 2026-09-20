@@ -2,6 +2,7 @@
 
 import gleam/erlang/process
 import gleam/list
+import gleam/time/timestamp
 import gloo/migration as gloo_migration
 import gloo/repo
 import gloo/sql
@@ -30,7 +31,7 @@ pub fn migrations_are_idempotent_and_reject_changed_or_newer_history_test() {
       name,
       list.append(existing, [
         gloo_migration.new(
-          8,
+          list.length(existing) + 1,
           "future",
           "CREATE TABLE howdy_auth_future (id INT)",
         ),
@@ -128,7 +129,7 @@ pub fn concurrent_migrators_apply_new_version_once_test() {
       name,
       list.append(existing, [
         gloo_migration.new(
-          8,
+          list.length(existing) + 1,
           "future",
           "CREATE TABLE howdy_auth_future (id INT)",
         ),
@@ -246,8 +247,10 @@ pub fn password_migration_preserves_existing_accounts_and_sessions_test() {
   let assert Ok(identity) =
     auth.new(database, "https://example.test", fn(_) { Ok(Nil) })
   let assert Ok(principal) = auth.authenticate(identity, secret)
+  // Nothing in the audit trail says when this user was created.
+  let epoch = timestamp.from_unix_seconds(0)
   assert principal.user
-    == user.User("existing", "ada@example.com", group.default_id)
+    == user.User("existing", "ada@example.com", group.default_id, epoch, epoch)
   assert count(database, "SELECT COUNT(*) FROM howdy_auth_passwords") == 0
   assert migration.run(database, [auth.schema()]) == Ok(Nil)
 }

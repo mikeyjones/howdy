@@ -1,5 +1,6 @@
 //// Email-token and optional password authentication. This package owns its tables; applications
-//// extend profiles in their own tables. Authorization lives in howdy/authorization.
+//// keep small facts in `howdy/auth/field` and anything relational in their own tables.
+//// Authorization lives in howdy/authorization.
 
 import howdy/auth/secret
 
@@ -12,6 +13,7 @@ import gleam/order
 import gleam/result
 import gleam/string
 import gloo/repo.{type Repo}
+import howdy/auth/field.{type Change}
 import howdy/auth/group.{type Mode, AccountPerGroup, OneGroupPerUser, Single}
 import howdy/auth/internal/address
 import howdy/auth/internal/cache
@@ -258,6 +260,12 @@ pub fn in_group(auth: Auth, group_id: String) -> Auth {
 @internal
 pub fn repo(auth: Auth) -> Repo {
   auth.repo
+}
+
+/// The group chosen with `in_group`, if any.
+@internal
+pub fn bound_group(auth: Auth) -> Option(String) {
+  auth.group
 }
 
 /// The group a sign-in or registration applies to, `None` for whichever group
@@ -1043,6 +1051,17 @@ pub fn provision(
   email: String,
   by actor: Actor,
 ) -> service.Result(User) {
+  provision_with(auth, email, fields: [], by: actor)
+}
+
+/// As `provision`, setting fields on the new user in the same transaction;
+/// see `howdy/auth/field`. Conflict when a unique value is taken.
+pub fn provision_with(
+  auth: Auth,
+  email: String,
+  fields changes: List(Change),
+  by actor: Actor,
+) -> service.Result(User) {
   use email <- result.try(address.normalize_email(email))
   use within <- result.try(target(auth, True))
   let group_id = option.unwrap(within, group.default_id)
@@ -1060,16 +1079,23 @@ pub fn provision(
     True ->
       Error(service.Conflict("an account already exists for this address"))
   })
+  use writes <- result.try(field.writes(changes, Some(group_id)))
   let id = token.new()
-  use _ <- result.try(store.insert_user(
+  use created <- result.try(store.insert_user(
     conn,
     id:,
     email:,
     group_id:,
     login_key:,
   ))
+  use _ <- result.try(case writes {
+    [] -> Ok(Nil)
+    _ ->
+      store.write_fields(conn, store.of_user, id, writes)
+      |> result.replace(Nil)
+  })
   use _ <- result.try(event(conn, id, "user.provisioned", actor, group_id))
-  Ok(user.User(id, email, group_id))
+  Ok(created)
 }
 
 fn valid_token(secret: String) -> service.Result(Nil) {

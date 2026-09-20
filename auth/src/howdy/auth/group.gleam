@@ -3,11 +3,16 @@
 
 import gleam/dynamic/decode
 import gleam/json
+import gleam/time/timestamp.{type Timestamp}
+import howdy/auth/user
 
-/// The least a group is: application data about it belongs in application
-/// tables keyed by its id.
+/// The least a group is. Small facts about it, such as a billing id, fit
+/// `howdy/auth/field`; anything relational belongs in application tables
+/// keyed by its id. `updated_at` moves when the group is renamed or has a
+/// field changed, not when its membership does. Both are whole seconds, and
+/// `created_at` is the epoch for a group that predates it.
 pub type Group {
-  Group(id: String, name: String)
+  Group(id: String, name: String, created_at: Timestamp, updated_at: Timestamp)
 }
 
 /// How users relate to groups. Choose one with `auth.with_groups`.
@@ -31,6 +36,8 @@ pub fn to_json(group: Group) -> json.Json {
   json.object([
     #("id", json.string(group.id)),
     #("name", json.string(group.name)),
+    #("created_at", user.time_to_json(group.created_at)),
+    #("updated_at", user.time_to_json(group.updated_at)),
   ])
 }
 
@@ -38,7 +45,14 @@ pub fn to_json(group: Group) -> json.Json {
 pub fn row() -> decode.Decoder(Group) {
   use id <- decode.field(0, decode.string)
   use name <- decode.field(1, decode.string)
-  decode.success(Group(id, name))
+  use created_at <- decode.field(2, decode.int)
+  use updated_at <- decode.field(3, decode.int)
+  decode.success(Group(
+    id,
+    name,
+    timestamp.from_unix_seconds(created_at),
+    timestamp.from_unix_seconds(updated_at),
+  ))
 }
 
 @internal

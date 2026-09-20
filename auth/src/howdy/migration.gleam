@@ -20,6 +20,41 @@ pub type Package {
   Package(name: String, migrations: List(gloo_migration.Migration))
 }
 
+const postgres_marker = "\n-- howdy:postgres\n"
+
+const sqlite_marker = "\n-- howdy:sqlite\n"
+
+/// SQL that differs by database, for a migration's `up`. Append it to any
+/// statements both databases share. The checksum covers both variants, so a
+/// migration is the same migration wherever it runs.
+///
+/// ```gleam
+/// gloo_migration.new(2, "add_seen", "CREATE TABLE app_notes (id TEXT);"
+///   <> migration.per_database(
+///     postgres: "ALTER TABLE app_notes ADD COLUMN seen TIMESTAMPTZ",
+///     sqlite: "ALTER TABLE app_notes ADD COLUMN seen BIGINT",
+///   ))
+/// ```
+pub fn per_database(
+  postgres postgres: String,
+  sqlite sqlite: String,
+) -> String {
+  postgres_marker <> postgres <> sqlite_marker <> sqlite
+}
+
+/// The statements of `up` that apply to this database.
+fn statements(up: String, backend: db.Backend) -> String {
+  case string.split_once(up, postgres_marker) {
+    Error(Nil) -> up
+    Ok(#(shared, variants)) ->
+      case string.split_once(variants, sqlite_marker), backend {
+        Ok(#(postgres, _)), db.Postgres -> shared <> postgres
+        Ok(#(_, sqlite)), db.Sqlite -> shared <> sqlite
+        Error(Nil), _ -> up
+      }
+  }
+}
+
 const ledger = "CREATE TABLE IF NOT EXISTS howdy_migrations (package TEXT NOT NULL, version BIGINT NOT NULL, checksum TEXT NOT NULL, PRIMARY KEY(package, version)); CREATE TABLE IF NOT EXISTS howdy_migration_schemas (package TEXT PRIMARY KEY NOT NULL, fingerprint TEXT NOT NULL)"
 
 pub fn run(database: Repo, packages: List(Package)) -> service.Result(Nil) {
@@ -147,9 +182,10 @@ fn apply(conn: Repo, package: Package) -> service.Result(Nil) {
       ))
     True -> {
       let pending = list.drop(package.migrations, list.length(applied))
+      use backend <- result.try(db.backend(conn))
       use _ <- result.try(
         list.try_fold(pending, Nil, fn(_, m) {
-          use _ <- result.try(db.exec(conn, m.up))
+          use _ <- result.try(db.exec(conn, statements(m.up, backend)))
           db.execute(
             conn,
             "INSERT INTO howdy_migrations(package, version, checksum) VALUES ($1, $2, $3)",

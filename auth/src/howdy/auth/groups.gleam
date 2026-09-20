@@ -3,10 +3,12 @@
 //// how users relate to groups with `auth.with_groups`.
 
 import gleam/list
+import gleam/option.{None}
 import gleam/result
 import gleam/string
 import howdy/auth.{type Auth}
-import howdy/auth/group.{type Group, AccountPerGroup, Group, Single}
+import howdy/auth/field.{type Change, type Field, type Fields}
+import howdy/auth/group.{type Group, AccountPerGroup, Single}
 import howdy/auth/internal/cache
 import howdy/auth/internal/database as db
 import howdy/auth/internal/store
@@ -20,7 +22,7 @@ pub fn create(
   name name: String,
   by actor: Actor,
 ) -> service.Result(Group) {
-  create_with_id(identity, id: token.new(), name:, by: actor)
+  create_with(identity, id: token.new(), name:, fields: [], by: actor)
 }
 
 /// Create a group under an id of your choosing, such as a tenant's slug: 1 to
@@ -29,6 +31,19 @@ pub fn create_with_id(
   identity: Auth,
   id id: String,
   name name: String,
+  by actor: Actor,
+) -> service.Result(Group) {
+  create_with(identity, id:, name:, fields: [], by: actor)
+}
+
+/// As `create_with_id`, setting fields on the new group in the same
+/// transaction; see `howdy/auth/field`. Pass `token.new`-style ids of your
+/// own, or use `create` and `update` when the id should be generated.
+pub fn create_with(
+  identity: Auth,
+  id id: String,
+  name name: String,
+  fields changes: List(Change),
   by actor: Actor,
 ) -> service.Result(Group) {
   use _ <- result.try(case auth.group_mode(identity) {
@@ -40,6 +55,7 @@ pub fn create_with_id(
   })
   use _ <- result.try(valid_id(id))
   use name <- result.try(valid_name(name))
+  use writes <- result.try(field.writes(changes, None))
   use conn <- db.write_transaction(
     auth.repo(identity),
     touching: "howdy_auth_groups",
@@ -49,9 +65,15 @@ pub fn create_with_id(
     [] -> Ok(Nil)
     _ -> Error(service.Conflict("a group with this id already exists"))
   })
-  use _ <- result.try(store.insert_group(conn, id, name))
+  use created <- result.try(store.insert_group(conn, id, name))
+  use _ <- result.try(case writes {
+    [] -> Ok(Nil)
+    _ ->
+      store.write_fields(conn, store.of_group, id, writes)
+      |> result.replace(Nil)
+  })
   use _ <- result.try(auth.event(conn, "", "group.created", actor, id))
-  Ok(Group(id, name))
+  Ok(created)
 }
 
 pub fn get(identity: Auth, id: String) -> service.Result(Group) {
@@ -82,7 +104,44 @@ pub fn rename(
   use _ <- result.try(require(conn, id))
   use _ <- result.try(store.rename_group(conn, id, name))
   use _ <- result.try(auth.event(conn, "", "group.renamed", actor, id))
-  Ok(Group(id, name))
+  require(conn, id)
+}
+
+/// The fields the group holds; read them with `field.get`.
+pub fn fields(identity: Auth, id: String) -> service.Result(Fields) {
+  use conn <- db.connect(auth.repo(identity))
+  use _ <- result.try(require(conn, id))
+  store.fields(conn, store.of_group, id) |> result.map(field.from_rows)
+}
+
+/// Set and clear fields on a group, all or nothing. Conflict when a unique
+/// value is held by another group.
+pub fn update(
+  identity: Auth,
+  id: String,
+  changes: List(Change),
+  by actor: Actor,
+) -> service.Result(Group) {
+  use writes <- result.try(field.writes(changes, None))
+  use conn <- db.write_transaction(
+    auth.repo(identity),
+    touching: "howdy_auth_groups",
+  )
+  use _ <- result.try(require(conn, id))
+  use _ <- result.try(store.write_fields(conn, store.of_group, id, writes))
+  use _ <- result.try(auth.event(conn, "", "group.fields_changed", actor, id))
+  require(conn, id)
+}
+
+/// The groups holding `value` in a field, by name: at most one when the
+/// field is unique.
+pub fn find(
+  identity: Auth,
+  where field: Field(a),
+  is value: a,
+) -> service.Result(List(Group)) {
+  use conn <- db.connect(auth.repo(identity))
+  store.groups_with_field(conn, field.name(field), field.encoded(field, value))
 }
 
 /// Delete an empty group. Conflict while it has users: move them first. The
@@ -160,17 +219,29 @@ pub fn move(
             "the group already has an account for this address",
           ))
       })
+      use held <- result.try(store.fields_taken_in_group(conn, user_id, id))
+      use _ <- result.try(case held {
+        False -> Ok(Nil)
+        True ->
+          Error(service.Conflict(
+            "the group already has a user holding one of this user's unique fields",
+          ))
+      })
       use _ <- result.try(store.move_user(conn, user_id, id, login_key))
       use _ <- result.try(auth.event(conn, user_id, "user.moved", actor, id))
-      Ok(user.User(..member, group_id: id))
+      use moved <- result.try(store.find_user(conn, user_id))
+      case moved {
+        [value] -> Ok(value)
+        _ -> Error(service.NotFound("user"))
+      }
     }
   }
 }
 
-fn require(conn, id: String) -> service.Result(Nil) {
+fn require(conn, id: String) -> service.Result(Group) {
   use found <- result.try(store.find_group(conn, id))
   case found {
-    [_] -> Ok(Nil)
+    [value] -> Ok(value)
     _ -> Error(service.NotFound("group"))
   }
 }

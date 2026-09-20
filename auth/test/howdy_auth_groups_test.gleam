@@ -35,7 +35,8 @@ pub fn single_is_the_default_and_everyone_shares_one_group_test() {
   assert auth.group_mode(identity) == group.Single
   let session = signup(identity, mailbox, "ada@example.com")
   assert session.user.group_id == group.default_id
-  assert groups.list(identity) == Ok([group.Group("default", "Default")])
+  let assert Ok([group.Group(id: "default", name: "Default", ..)]) =
+    groups.list(identity)
   let assert Ok([member]) = groups.members(identity, group.default_id)
   assert member == session.user
   // There is nowhere else to be.
@@ -47,8 +48,8 @@ pub fn single_is_the_default_and_everyone_shares_one_group_test() {
       auth.Register,
     )
     == Error(service.NotFound("group"))
-  assert groups.rename(identity, "default", to: " Everyone ", by: user.System)
-    == Ok(group.Group("default", "Everyone"))
+  let assert Ok(group.Group(id: "default", name: "Everyone", ..)) =
+    groups.rename(identity, "default", to: " Everyone ", by: user.System)
   let assert Error(service.Invalid(_)) =
     groups.delete(identity, "default", by: user.System)
 }

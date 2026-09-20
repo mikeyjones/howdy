@@ -140,6 +140,25 @@ pub fn for_update(repo: Repo, alias: String) -> String {
   }
 }
 
+/// SQL reading an instant column as unix seconds. PostgreSQL keeps instants
+/// as TIMESTAMPTZ; SQLite has no such type and keeps the seconds themselves.
+/// `column` is trusted query text.
+pub fn read_time(repo: Repo, column: String) -> String {
+  case backend(repo) {
+    Ok(Postgres) -> "EXTRACT(EPOCH FROM " <> column <> ")::bigint"
+    _ -> column
+  }
+}
+
+/// SQL writing the unix seconds bound to `placeholder`, such as `$2`, to an
+/// instant column.
+pub fn write_time(repo: Repo, placeholder: String) -> String {
+  case backend(repo) {
+    Ok(Postgres) -> "to_timestamp(" <> placeholder <> "::bigint)"
+    _ -> placeholder
+  }
+}
+
 /// Serialize migration processes before they inspect or change the ledger.
 pub fn lock_migrations(repo: Repo) -> service.Result(Nil) {
   use backend <- result.try(backend(repo))

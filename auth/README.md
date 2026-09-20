@@ -78,7 +78,15 @@ of the owned schema objects. SQLite uses its schema catalog; PostgreSQL checks
 relations, columns, constraints, indexes, triggers and row-security policies in
 the connection's current schema. Manual schema changes are rejected at startup
 and before an upgrade. Application tables referencing auth user IDs are allowed;
-adding application fields, unique indexes or triggers to auth tables is not.
+adding application columns, unique indexes or triggers to auth tables is not.
+Small facts about a user or a group need no table of their own: see
+[Timestamps and fields](#timestamps-and-fields).
+
+A migration whose SQL depends on the database appends
+`migration.per_database(postgres:, sqlite:)` to the statements both share; only
+the matching variant runs. Auth uses it to keep `created_at` and `updated_at` as
+`TIMESTAMPTZ` on PostgreSQL, and as unix seconds on SQLite, which has no type
+for an instant.
 Operators may add a plain (non-unique) index to an auth table, provided its
 name is outside the package namespace, for example `ops_events_action`.
 
@@ -376,8 +384,8 @@ require JavaScript, and display success without choosing an application redirect
 | `POST /logout` | Cookie or bearer authentication; JSON body, e.g. `{}` | 204; revokes session |
 
 `/register`, `/login` and the three `/password/…` sign-in endpoints accept an
-optional `"group":"…"`; see [Groups](#groups). User JSON is `id`, `email` and
-`group_id`.
+optional `"group":"…"`; see [Groups](#groups). User JSON is `id`, `email`,
+`group_id`, and `created_at` and `updated_at` as RFC 3339 strings.
 
 Password starter pages are at `/password/register` and `/password/login`,
 relative to the page mount. They use the same JSON API as custom pages. There
@@ -428,8 +436,8 @@ must not perform writes on GET routes.
 ## Groups
 
 Every user belongs to exactly one group: a workspace, a tenant, an
-organization. A group is an `id` and a `name`; anything more belongs in your own
-tables keyed by the id. Choose how users relate to groups once, at startup:
+organization. A group is an `id`, a `name` and two timestamps; keep more about
+it in [fields](#timestamps-and-fields), or in your own tables keyed by the id. Choose how users relate to groups once, at startup:
 
 ```gleam
 import howdy/auth
@@ -512,6 +520,83 @@ running node keeps the mode it started with.
 Uniqueness is enforced by the database through `howdy_auth_users.login_key`:
 the address, or `group_id:address` under `AccountPerGroup`. Read
 `howdy_auth_users.email` for the address, as before.
+
+## Timestamps and fields
+
+`user.User` and `group.Group` carry `created_at` and `updated_at` as
+`gleam/time` timestamps, in whole seconds, and their JSON carries them as
+RFC 3339 strings. PostgreSQL stores them as `TIMESTAMPTZ`; SQLite stores unix
+seconds. A user's `updated_at` moves when they are suspended or resumed, change
+group, or have a field changed; a group's when it is renamed or has a field
+changed. Credentials, sessions and membership do not move it. For rows that
+predate these columns, `created_at` comes from the audit trail
+(`user.registered`, `user.provisioned`, `group.created`) and is the unix epoch
+where those events have been pruned.
+
+A field is a small fact your application keeps about a user or a group: a
+username, a plan, a billing id. Declare it once, then use the declaration to
+write and to read, so the two cannot disagree about the type:
+
+```gleam
+import howdy/auth/field
+import howdy/auth/groups
+import howdy/auth/users
+
+pub fn username() {
+  field.text("username")
+  |> field.unique
+  |> field.check(fn(name) {
+    case string.length(name) >= 3 {
+      True -> Ok(Nil)
+      False -> Error("must be at least 3 characters")
+    }
+  })
+}
+
+pub fn seats() { field.int("seats") }
+
+let assert Ok(_) =
+  users.update(identity, id, [field.set(username(), "ada")], by: user.Acting(principal))
+
+use data <- result.try(users.fields(identity, principal.user.id))
+let name = field.get(data, username()) |> result.unwrap(principal.user.email)
+
+let assert Ok([ada]) = users.find(identity, where: username(), is: "ada")
+```
+
+| Declare | Holds |
+| --- | --- |
+| `field.text`, `field.int`, `field.bool` | the obvious |
+| `field.time` | a `Timestamp`, as RFC 3339 text |
+| `field.custom(name, encode:, decode:)` | your own type, as text |
+
+| Modifier | Effect |
+| --- | --- |
+| `field.unique` | one holder per value across the installation |
+| `field.unique_in_group` | one holder per value within a group; user fields only |
+| `field.check(with:)` | refuse values; the message comes back as `Invalid` |
+
+`users.update` and `groups.update` take `field.set` and `field.clear` changes
+and apply them all or nothing. `auth.provision_with(identity, email, fields:,
+by:)` and `groups.create_with(identity, id:, name:, fields:, by:)` set fields in
+the transaction that creates the row. `users.get`, `users.fields` and
+`users.find` called through `auth.in_group` see only that group's users. Like
+the rest of user administration these are privileged and not exposed over HTTP:
+authorize the caller first.
+
+Uniqueness is enforced by the database, so a taken value is `Conflict` even
+under concurrent writes. Declare a field unique before it is first written:
+values stored while it was not are not checked against. Values unique within a
+group follow a user through `groups.move`, which is `Conflict` if the
+destination already holds one. Changes are audited as `user.fields_changed`,
+with the field names as detail, and `group.fields_changed`; values never reach
+the audit trail.
+
+Fields are not loaded when a request is authenticated; call `users.fields`
+where you need them. Names are 1 to 64 lowercase letters, digits and
+underscores, user and group fields are named separately, and an encoded value
+is at most 1024 bytes. Anything relational, or that you query by range, still
+belongs in your own tables keyed by the id.
 
 ## Session storage
 
