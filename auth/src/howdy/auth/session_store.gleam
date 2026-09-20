@@ -30,6 +30,9 @@ pub type Entry {
     /// suits a native expiry such as a Redis TTL.
     expires_at: Int,
     client: String,
+    /// Account session generation. Preserve it unchanged; older generations
+    /// are refused against the database even when store cleanup fails.
+    version: Int,
   )
 }
 
@@ -132,6 +135,7 @@ pub fn check(store: SessionStore) -> Result(Nil, String) {
       last_seen_at: 200 + n,
       expires_at:,
       client: "client-" <> int.to_string(n),
+      version: n,
     )
   }
   let first = entry(1, ada, far)

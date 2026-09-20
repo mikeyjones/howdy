@@ -255,7 +255,7 @@ fn page(
   <> credentials
   <> "<p><a href=\""
   <> prefix
-  <> "/account\">Manage password and sessions</a></p>"
+  <> "/account\">Manage your account</a></p>"
   <> "<p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>Email and account management require JavaScript. Provider sign-in works without it.</noscript></main></body></html>"
 }
 
@@ -269,6 +269,16 @@ fn account_page(identity: Auth, prefix: String, api: String) -> String {
     True ->
       "<h2>Set or reset password</h2><p>First sign in using a fresh email token. Changing your password signs out every other session.</p><form id=\"password-change\"><label>New password <input name=\"password\" type=\"password\" autocomplete=\"new-password\" required></label><button>Save password</button></form>"
   }
+  let email_forms = case auth.email_tokens_enabled(identity) {
+    False -> ""
+    True ->
+      "<h2>Change email</h2><p>Sign in again first. Confirm the token sent to your new address in this session. Confirming signs out all sessions.</p><form id=\"email-change\"><label>New email <input name=\"email\" type=\"email\" required maxlength=\"254\" autocomplete=\"email\"></label><button>Send confirmation</button></form><form id=\"email-confirm\" hidden><label>Confirmation token <input name=\"token\" required autocomplete=\"one-time-code\"></label><button>Confirm new email</button></form>"
+  }
+  let deletion_form = case auth.account_deletion_enabled(identity) {
+    False -> ""
+    True ->
+      "<h2>Delete account</h2><p>This permanently deletes your account. Sign in again first, then enter your current email to confirm.</p><form id=\"account-delete\"><label>Current email <input name=\"email\" type=\"email\" required autocomplete=\"email\"></label><button>Permanently delete account</button></form>"
+  }
   "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Your account</title><script src=\""
   <> prefix
   <> "/client.js\" defer></script></head><body><main id=\"account\" data-api=\""
@@ -278,6 +288,9 @@ fn account_page(identity: Auth, prefix: String, api: String) -> String {
   <> "/login\">Sign in</a></p>"
   <> provider_forms(identity, prefix, "link", None)
   <> password_form
+  <> email_forms
+  <> "<h2>Linked sign-in providers</h2><p>To unlink a provider, first sign in again using another method. Unlinking signs out all sessions.</p><ul id=\"linked-providers\"></ul>"
+  <> deletion_form
   <> "<h2>Active sessions</h2><ul id=\"sessions\"></ul><button id=\"refresh-sessions\">Refresh sessions</button><button id=\"logout\">Sign out</button><p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>Account management requires JavaScript.</noscript></main></body></html>"
 }
 
@@ -347,7 +360,58 @@ async function refreshSessions() {
     item.append(revoke); list.append(item);
   }
 }
+function signedOut(message) {
+  status.textContent = message;
+  document.getElementById('sessions').replaceChildren();
+  document.getElementById('linked-providers')?.replaceChildren();
+  account.querySelectorAll('button').forEach(button => button.disabled = true);
+}
+async function refreshProviders() {
+  const list = document.getElementById('linked-providers');
+  if (!list) return;
+  const links = await call('providers');
+  list.replaceChildren();
+  for (const link of links) {
+    const item = document.createElement('li');
+    item.textContent = link.provider + ' ';
+    const button = document.createElement('button');
+    button.textContent = 'Unlink';
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        await call('providers/unlink', {issuer: link.issuer});
+        signedOut('Provider unlinked. You are signed out. Sign in using your remaining method.');
+      } catch (error) { status.textContent = error.message; button.disabled = false; }
+    });
+    item.append(button); list.append(item);
+  }
+}
+function accountForm(id, endpoint, field, message) {
+  document.getElementById(id)?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button');
+    button.disabled = true;
+    let completed = false;
+    try {
+      const result = await call(endpoint, {[field]: form.elements[field].value.trim()});
+      form.reset();
+      if (id === 'email-change') {
+        status.textContent = result.message;
+        const confirmation = document.getElementById('email-confirm');
+        confirmation.hidden = false; confirmation.elements.token.focus();
+      } else {
+        completed = true; signedOut(message);
+      }
+    } catch (error) { status.textContent = error.message; }
+    finally { if (!completed) button.disabled = false; }
+  });
+}
 if (account) {
+  refreshProviders().catch(error => status.textContent = error.message);
+  accountForm('email-change', 'email/change', 'email', '');
+  accountForm('email-confirm', 'email/confirm', 'token', 'Email changed. You are signed out. Sign in using your new address.');
+  accountForm('account-delete', 'account/delete', 'email', 'Your account has been deleted.');
   refreshSessions().catch(error => status.textContent = error.message);
   document.getElementById('refresh-sessions').addEventListener('click', () =>
     refreshSessions().catch(error => status.textContent = error.message));

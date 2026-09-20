@@ -144,18 +144,20 @@ pub fn attach(
   subject: String,
   scope: String,
   user_id: String,
+  provider: String,
 ) -> service.Result(Nil) {
   // ON CONFLICT + readback makes concurrent first sign-ins/linking fail closed.
   // A user has at most one identity per issuer.
   use _ <- result.try(
     db.execute(
       conn,
-      "INSERT INTO howdy_auth_provider_identities(issuer, subject, scope, user_id) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING",
+      "INSERT INTO howdy_auth_provider_identities(issuer, subject, scope, user_id, provider) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
       [
         sql.string(issuer),
         sql.string(subject),
         sql.string(scope),
         sql.string(user_id),
+        sql.string(provider),
       ],
     ),
   )

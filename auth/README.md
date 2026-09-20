@@ -270,6 +270,45 @@ let assert Ok(identity) = auth.with_policy(
 `with_policy` rejects nonsensical values. Last use of a session is recorded at
 most once a minute, so authenticating a request is normally a single read.
 
+## Facebook, GitHub and Microsoft Entra
+
+Install these with `auth.with_provider`, using the same provider routes as Google:
+
+```gleam
+import howdy/auth/providers/facebook
+import howdy/auth/providers/github
+import howdy/auth/providers/entra
+
+facebook.new(client_id: facebook_app_id, client_secret: facebook_app_secret)
+github.new(client_id: github_client_id, client_secret: github_client_secret)
+entra.new(
+  client_id: entra_client_id,
+  client_secret: entra_client_secret,
+  tenant: "organizations",
+)
+```
+
+Register the corresponding callback URL with each provider:
+`https://app.example.com/auth/providers/facebook/callback`,
+`https://app.example.com/auth/providers/github/callback`, or
+`https://app.example.com/auth/providers/entra/callback`.
+These assume the provider controller is mounted under `/auth`.
+
+Entra accepts a directory tenant ID, a tenant domain such as
+`example.onmicrosoft.com`, or `common`, `organizations`, or `consumers`.
+The app registration must allow the account types selected by that tenant.
+The provider validates the token's signature, signing-key issuer, tenant,
+audience, lifetime and nonce, and identifies accounts by the actual issuer
+and subject. GitHub uses PKCE and obtains verified email addresses from
+`/user/emails`, preferring the primary address.
+
+Facebook and Entra email claims are not treated as proof of mailbox ownership.
+Users first create/verify a local account through the email flow, sign in,
+and explicitly link the provider. Subsequent provider sign-ins work even when
+no email is returned. GitHub can register a new local account when it supplies
+a verified email and local registration is enabled; existing local accounts
+must explicitly link. Provider access and refresh tokens are not stored.
+
 ## Google and built-in providers
 
 Google sign-in uses the same users, sessions, groups, suspension rules and guards
@@ -487,6 +526,87 @@ installed credentials and pending registration hashes. Authorization migration 2
 adds an index. Deploy them with the same namespaced migration runner before
 starting this version.
 
+## Email changes, account deletion and provider unlinking
+
+The account page includes these controls. Their headless operations also work
+with custom transports. Each mutation rechecks the live session and active user
+under the user row lock, including idle expiry, group scope and the enabled login
+method. A recent sign-in means within `policy.fresh_session_seconds`; ordinary
+session activity does not renew that proof.
+
+```gleam
+// Sign in again, then request a token at the NEW address.
+auth.request_email_change(identity, principal, "new@example.com")
+// Paste the token in the SAME signed-in session.
+auth.confirm_email_change(identity, principal, token)
+
+// Returns #(provider id, issuer) pairs, without external subjects or tokens.
+auth.linked_providers(identity, principal)
+// Sign in through a DIFFERENT enabled method before unlinking.
+auth.unlink_provider(identity, principal, "https://accounts.google.com")
+```
+
+Email changes require email delivery to be enabled. Handle the new
+`Delivery.purpose` variant `EmailChange`: send its token to `delivery.email`,
+telling the reader to confirm the new address on the account page. This is a
+separate, single-use token that cannot sign in, register or reset a password.
+The old address remains unchanged until confirmation. Both steps require recent
+sign-in; confirmation also rechecks address uniqueness under the installation's
+group mode. Changing group or group mode invalidates pending changes. Requests
+back off both per user and per target mailbox using the configured email cooldown.
+Delivery failure invalidates the pending token. The new flow verifies the new
+mailbox; it does not separately email a confirmation to the old mailbox.
+
+Successful email changes and unlinking sign out **every** session, including the
+caller, and cancel pending email changes/provider links. Email changes invalidate
+login/registration challenges for both the old and new addresses. Passwords,
+user IDs, fields, roles and other linked identities are preserved. Provider login
+continues to use the linked subject, independently of the changed recovery email.
+After unlinking, sign in through a remaining method. Signing in through the
+provider being removed is insufficient proof, even if another method exists:
+use that other method first. Disabled methods do not count as alternatives.
+
+Account deletion is disabled until the application supplies its cleanup policy:
+
+```gleam
+let identity = auth.with_account_deletion(identity, fn(transaction, user) {
+  // Delete/anonymize application-owned rows using this transaction's Repo.
+  // Return an error to refuse deletion. For an app with no related data:
+  Ok(Nil)
+})
+
+// Recent sign-in plus explicit confirmation of the current email address.
+auth.delete_account(identity, principal, confirm_email: "ada@example.com")
+```
+
+The callback runs inside the same transaction as deletion. Use the supplied Repo;
+do not call other auth operations or perform network/filesystem side effects
+there. A callback error or restrictive application foreign key rolls back the
+whole database operation. Auth removes the user, passwords, identities, fields,
+sessions, pending challenges and scoped role assignments. Roles, groups and
+**audit events are retained**; apply the application's audit retention policy
+separately. Deletion is not a permanent ban: if registration is open, the person
+can subsequently create a new account. External resources should be cleaned up
+through an application-owned transactional outbox or equivalent retryable work.
+
+Migration 10 adds pending email changes, records the provider ID on identity
+links (existing links were Google), and adds a per-user session version. Run the
+normal migrations before starting the new code. `session_store.Entry` now has a
+required `version: Int`; custom adapters must persist and return it unchanged.
+Pre-upgrade serialized entries can be read as version 0, or cleared on deployment.
+The store contract checker includes this field. `Delivery.purpose` exhaustive
+matches must also handle `EmailChange`.
+
+Email changes and unlinking advance that version in the database. Authentication
+rejects external entries from older versions, including delayed writes after a
+change. Deletion rejects them because the user no longer exists. Physical cleanup
+of an external store still happens after commit: if it fails, the operation returns
+an error **after the account change has committed**, but the old sessions cannot
+authenticate. For a surviving account, trusted administration can retry
+`auth.revoke_sessions`; deleted users' orphan entries can expire by TTL or be
+removed by the adapter. These guarantees concern these new account operations;
+other operations retain the external-store semantics described below.
+
 ## Custom pages and API clients
 
 Omit `pages.routes` to supply all your own pages. Mounting `routes.api` does not
@@ -508,6 +628,11 @@ require JavaScript, and display success without choosing an application redirect
 | `GET /sessions` | Cookie or bearer authentication | The caller's live sessions: `id`, `method`, `created_at`, `last_seen_at`, `expires_at`, `current` |
 | `POST /sessions/revoke` | Cookie or bearer authentication; `{"id":"…"}` | 204; revokes that session if it is the caller's |
 | `POST /logout` | Cookie or bearer authentication; JSON body, e.g. `{}` | 204; revokes session |
+| `POST /email/change` | Recent authentication; `{"email":"new@example.com"}` | 202; emails confirmation token to new address |
+| `POST /email/confirm` | Same recent session; `{"token":"…"}` | 204; changes email, signs out all sessions and clears cookie |
+| `GET /providers` | Authentication | Linked provider/issuer pairs |
+| `POST /providers/unlink` | Recent authentication through another method; `{"issuer":"…"}` | 204; unlinks, signs out all sessions and clears cookie |
+| `POST /account/delete` | Recent authentication; `{"email":"current@example.com"}` | 204; deletes account and clears cookie; application opt-in required |
 
 `/register`, `/login` and the three `/password/…` sign-in endpoints accept an
 optional `"group":"…"`; see [Groups](#groups). User JSON is `id`, `email`,

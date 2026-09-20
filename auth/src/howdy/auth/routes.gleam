@@ -228,6 +228,72 @@ pub fn api_limited_by(
     }),
   )
   |> controller.post(
+    "/email/change",
+    strict(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      use email <- body.json_with_limit(ctx, body_limit, field("email"))
+      case auth.request_email_change(identity, principal, email) {
+        Ok(Nil) ->
+          controller.json(
+            ctx,
+            json.object([
+              #(
+                "message",
+                json.string(
+                  "Check your new email address for a confirmation token.",
+                ),
+              ),
+            ]),
+          )
+          |> controller.with_status(202)
+        Error(error) -> service.error_response(ctx, error)
+      }
+    }),
+  )
+  |> controller.post(
+    "/email/confirm",
+    strict(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      use token <- body.json_with_limit(ctx, body_limit, field("token"))
+      auth.confirm_email_change(identity, principal, token)
+      |> account_response(ctx, identity)
+    }),
+  )
+  |> controller.get(
+    "/providers",
+    signed_in(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      auth.linked_providers(identity, principal)
+      |> service.respond(
+        ctx,
+        json.array(_, fn(link) {
+          json.object([
+            #("provider", json.string(link.0)),
+            #("issuer", json.string(link.1)),
+          ])
+        }),
+      )
+    }),
+  )
+  |> controller.post(
+    "/providers/unlink",
+    strict(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      use issuer <- body.json_with_limit(ctx, body_limit, field("issuer"))
+      auth.unlink_provider(identity, principal, issuer)
+      |> account_response(ctx, identity)
+    }),
+  )
+  |> controller.post(
+    "/account/delete",
+    strict(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      use email <- body.json_with_limit(ctx, body_limit, field("email"))
+      auth.delete_account(identity, principal, email)
+      |> account_response(ctx, identity)
+    }),
+  )
+  |> controller.post(
     "/logout",
     signed_in(fn(ctx) {
       use principal <- guard.require(ctx, required)
@@ -240,6 +306,15 @@ pub fn api_limited_by(
 
 /// Request bodies hold an address, a token or a password; nothing larger.
 const body_limit = 4096
+
+fn account_response(answer: service.Result(Nil), ctx, identity: Auth) {
+  case answer {
+    Ok(Nil) ->
+      service.no_content(answer, ctx)
+      |> cookie.delete(auth.cookie_name(identity), options(identity))
+    Error(error) -> service.error_response(ctx, error)
+  }
+}
 
 fn options(identity: Auth) -> cookie.Options {
   cookie.defaults()

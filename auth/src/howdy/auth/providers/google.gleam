@@ -112,15 +112,19 @@ pub fn with_transport(
 @external(erlang, "howdy_auth_oidc_ffi", "protect")
 fn protect(
   run: fn() -> service.Result(Response(String)),
+  message: String,
 ) -> service.Result(Response(String))
 
 fn send(req: Request(String)) -> service.Result(Response(String)) {
-  protect(fn() {
-    httpc.configure()
-    |> httpc.timeout(10_000)
-    |> httpc.dispatch(req)
-    |> result.replace_error(service.Internal("Google request failed"))
-  })
+  protect(
+    fn() {
+      httpc.configure()
+      |> httpc.timeout(10_000)
+      |> httpc.dispatch(req)
+      |> result.replace_error(service.Internal("Google request failed"))
+    },
+    "Google request failed",
+  )
 }
 
 fn post(send, fields) {

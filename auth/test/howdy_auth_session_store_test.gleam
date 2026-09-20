@@ -105,6 +105,7 @@ pub fn expiry_idleness_and_pruning_are_enforced_by_the_package_test() {
       last_seen_at:,
       expires_at:,
       client: "",
+      version: 0,
     )
   }
   let expired = token.new()

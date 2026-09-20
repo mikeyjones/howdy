@@ -14,6 +14,7 @@ import gloo/sql
 import gloo/value.{type GlooValue}
 import howdy/auth/field
 import howdy/auth/group.{type Group}
+import howdy/auth/internal/account_store
 import howdy/auth/internal/database as db
 import howdy/auth/internal/provider_store
 import howdy/auth/internal/token
@@ -760,6 +761,7 @@ pub fn delete_expired(
   policy: Policy,
 ) -> service.Result(Nil) {
   use _ <- result.try(provider_store.prune(conn))
+  use _ <- result.try(account_store.prune(conn))
   use _ <- result.try(
     db.execute(conn, "DELETE FROM howdy_auth_sessions WHERE expires_at <= $1", [
       sql.int(now),
@@ -1089,6 +1091,7 @@ pub fn move_user(
   )
   // In-flight sign-ins must not follow an account into a different group.
   use _ <- result.try(provider_store.invalidate(conn))
+  use _ <- result.try(account_store.clear_pending(conn, user_id))
   // Keys unique within a group name the group, so they follow the user.
   db.execute(
     conn,

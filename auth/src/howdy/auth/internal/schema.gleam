@@ -230,6 +230,25 @@ ALTER TABLE howdy_auth_sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'email' 
 UPDATE howdy_auth_sessions SET method = legacy_method;
 ",
     )),
+    gloo_migration.new(
+      10,
+      "add_account_management",
+      "
+ALTER TABLE howdy_auth_users ADD COLUMN session_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE howdy_auth_provider_identities ADD COLUMN provider TEXT NOT NULL DEFAULT 'google';
+CREATE TABLE howdy_auth_email_changes (
+  digest TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL UNIQUE REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL,
+  old_email TEXT NOT NULL,
+  new_email TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+CREATE INDEX howdy_auth_email_changes_expiry ON howdy_auth_email_changes(expires_at);
+",
+    ),
   ])
 }
 

@@ -15,6 +15,7 @@ import gleam/string
 import gloo/repo.{type Repo}
 import howdy/auth/field.{type Change}
 import howdy/auth/group.{type Mode, AccountPerGroup, OneGroupPerUser, Single}
+import howdy/auth/internal/account_store
 import howdy/auth/internal/address
 import howdy/auth/internal/cache
 import howdy/auth/internal/database as db
@@ -50,6 +51,8 @@ pub type Purpose {
   /// rather than inviting them to register again: redeeming the token signs
   /// that existing account in, and no password from the request was kept.
   AlreadyRegistered
+  /// Confirm a change of the signed-in account’s email, not a login token.
+  EmailChange
 }
 
 /// Deliver the token privately. Never log it or expose it in a public response.
@@ -75,6 +78,7 @@ pub opaque type Auth {
     /// The group this value acts in, chosen with `in_group`.
     group: Option(String),
     sessions: Sessions,
+    before_delete: Option(fn(Repo, User) -> service.Result(Nil)),
   )
 }
 
@@ -151,6 +155,7 @@ pub fn new(
     groups,
     None,
     InDatabase,
+    None,
   ))
 }
 
@@ -244,6 +249,7 @@ fn convert_groups(conn: Repo, from: Mode, to: Mode) -> service.Result(Nil) {
     _, _ -> Ok(Nil)
   })
   use _ <- result.try(provider_store.invalidate(conn))
+  use _ <- result.try(account_store.invalidate_email_changes(conn))
   use _ <- result.try(store.set_setting(conn, "groups", group.mode_name(to)))
   event(conn, "", "groups.mode", System, group.mode_name(to))
 }
@@ -601,6 +607,7 @@ fn purpose_name(purpose: Purpose) -> String {
     SignIn -> "sign-in"
     Registration -> "registration"
     AlreadyRegistered -> "already-registered"
+    EmailChange -> "email-change"
   }
 }
 
@@ -722,6 +729,7 @@ fn issue_session(
   let now = token.now()
   let session =
     Session(user, secret.wrap(token.new()), now + auth.policy.session_seconds)
+  use version <- result.try(account_store.version(conn, user.id))
   let entry =
     Entry(
       digest: token.digest(secret.reveal(session.token)),
@@ -731,6 +739,7 @@ fn issue_session(
       last_seen_at: now,
       expires_at: session.expires_at,
       client:,
+      version:,
     )
   use _ <- result.try(case auth.sessions {
     InDatabase ->
@@ -874,8 +883,10 @@ fn verify_password(
         encoded,
         normalized,
       ))
+      // The login identifier may have changed while Argon2 was running.
       use user <- result.try(case users {
-        [user] -> Ok(user)
+        [user] if user.email == email && user.group_id == candidate.group_id ->
+          Ok(user)
         _ -> Error(service.Unauthorized)
       })
       use _ <- result.try(store.clear_password_attempts(conn, address_key))
@@ -965,9 +976,11 @@ pub fn set_password(
           principal.user.id,
           locking: True,
         ))
+        use version <- result.try(account_store.version(conn, principal.user.id))
         Ok(case entry, users {
           Some(entry), [_] ->
-            entry.user_id == principal.user.id
+            entry.version == version
+            && entry.user_id == principal.user.id
             && entry.method == method_name(EmailToken)
             && entry.expires_at > now
             && entry.created_at > created_after
@@ -1176,6 +1189,13 @@ fn authenticate_digest(
           locking: False,
         )),
       )
+      use version <- result.try(
+        db.connect(auth.repo, account_store.version(_, entry.user_id)),
+      )
+      use _ <- result.try(case version == entry.version {
+        True -> Ok(Nil)
+        False -> Error(service.Unauthorized)
+      })
       case users {
         [user] ->
           case touch_due(entry.last_seen_at) {
@@ -1266,8 +1286,13 @@ pub fn sessions(
       db.connect(auth.repo, store.sessions_for_user(_, principal.user.id, now))
     External(external) -> {
       use entries <- result.try(external.list(principal.user.id))
+      use version <- result.try(
+        db.connect(auth.repo, account_store.version(_, principal.user.id)),
+      )
       entries
-      |> list.filter(fn(entry) { entry.expires_at > now })
+      |> list.filter(fn(entry) {
+        entry.expires_at > now && entry.version == version
+      })
       |> list.sort(fn(a, b) {
         int.compare(b.created_at, a.created_at)
         |> order.break_tie(string.compare(a.digest, b.digest))
@@ -1348,6 +1373,7 @@ pub fn suspend(
   use _ <- result.try(store.set_suspended(conn, user_id, True))
   use _ <- result.try(store.delete_sessions(conn, user_id))
   use _ <- result.try(store.delete_challenges_for_user(conn, user_id))
+  use _ <- result.try(account_store.clear_pending(conn, user_id))
   event(conn, user_id, "user.suspended", actor, "")
 }
 
@@ -1673,27 +1699,14 @@ pub fn finish_provider(
           Some(g) if g == user.group_id -> Ok(Nil)
           _ -> Error(service.Unauthorized)
         })
-        use _ <- result.try(case auth.sessions {
-          InDatabase -> {
-            use found <- result.try(store.session_user(
-              conn,
-              p.session_id,
-              token.now(),
-              -1,
-            ))
-            case found {
-              [#(u, _)] if u.id == user.id -> Ok(Nil)
-              _ -> Error(service.Unauthorized)
-            }
-          }
-          External(_) -> Ok(Nil)
-        })
+        use _ <- result.try(current_account(conn, auth, p, True))
         use _ <- result.try(provider_store.attach(
           conn,
           identity.issuer,
           identity.subject,
           scope,
           user.id,
+          id,
         ))
         use _ <- result.try(event(
           conn,
@@ -1712,9 +1725,17 @@ pub fn finish_provider(
               user_id,
               locking: True,
             ))
-            case users {
-              [u] -> Ok(u)
-              _ -> Error(service.Unauthorized)
+            // Unlink may have won the user lock after the first owner lookup.
+            // Never recreate a link from a callback that observed its old owner.
+            use still_owner <- result.try(provider_store.owner(
+              conn,
+              identity.issuer,
+              identity.subject,
+              scope,
+            ))
+            case users, still_owner {
+              [u], Some(current) if current == user_id -> Ok(u)
+              _, _ -> Error(service.Unauthorized)
             }
           }
           None -> register_provider_user(conn, auth, attempt, identity)
@@ -1730,6 +1751,7 @@ pub fn finish_provider(
           identity.subject,
           scope,
           user.id,
+          id,
         ))
         issue_session(conn, auth, user, Provider(id), attempt.client)
         |> result.map(Some)
@@ -1783,4 +1805,299 @@ pub fn provider_path(path: String) -> Bool {
       c,
     )
   })
+}
+
+/// Enable self-service deletion. The callback runs inside the deletion
+/// transaction with its Repo and current user. Clean up application-owned rows
+/// there, or return an error to veto deletion. Use only that Repo, not another
+/// auth operation or external side effect. Foreign-key failures roll back all
+/// database changes. Auth audit events are retained under the retention policy.
+pub fn with_account_deletion(
+  auth: Auth,
+  before_delete: fn(Repo, User) -> service.Result(Nil),
+) -> Auth {
+  Auth(..auth, before_delete: Some(before_delete))
+}
+
+pub fn account_deletion_enabled(auth: Auth) -> Bool {
+  option.is_some(auth.before_delete)
+}
+
+/// Request proof of the new mailbox. Requires an enabled email delivery flow
+/// and a recent, live sign-in. The confirmation must use the same session.
+/// Only a digest is stored; the email change token cannot sign anyone in.
+pub fn request_email_change(
+  auth: Auth,
+  principal: Principal,
+  email: String,
+) -> service.Result(Nil) {
+  use _ <- result.try(require_email_tokens(auth))
+  use email <- result.try(address.normalize_email(email))
+  let secret = token.new()
+  use _ <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+    use _ <- result.try(available_email(conn, auth, user, email))
+    // Bound both a caller changing destinations and many callers targeting one
+    // mailbox. Reservations and the pending change commit together.
+    use _ <- result.try(store.reserve_email(
+      conn,
+      token.keyed_digest(auth.throttle_key, "email-change-user:" <> user.id),
+      token.now(),
+      auth.policy,
+    ))
+    use _ <- result.try(store.reserve_email(
+      conn,
+      token.keyed_digest(auth.throttle_key, "email-change-target:" <> email),
+      token.now(),
+      auth.policy,
+    ))
+    use _ <- result.try(account_store.request_email(
+      conn,
+      user.id,
+      principal.session_id,
+      token.digest(secret),
+      account_store.EmailChange(
+        user.email,
+        email,
+        user.group_id,
+        group.mode_name(auth.groups),
+      ),
+      token.now() + auth.policy.challenge_seconds,
+    ))
+    event(conn, user.id, "email.change_requested", Acting(principal), "")
+  })
+  case auth.deliver(Delivery(email, secret.wrap(secret), EmailChange)) {
+    Ok(Nil) -> Ok(Nil)
+    Error(Nil) -> {
+      let _ =
+        db.connect(auth.repo, account_store.discard_email(
+          _,
+          token.digest(secret),
+        ))
+      Error(service.Internal("auth email delivery failed"))
+    }
+  }
+}
+
+fn available_email(
+  conn: Repo,
+  auth: Auth,
+  user: User,
+  email: String,
+) -> service.Result(Nil) {
+  use _ <- result.try(case user.email == email {
+    True -> Error(service.Invalid("choose a different email address"))
+    False -> Ok(Nil)
+  })
+  use taken <- result.try(store.login_key_taken(
+    conn,
+    group.login_key(auth.groups, user.group_id, email),
+  ))
+  case taken {
+    True -> Error(service.Conflict("email address is unavailable"))
+    False -> Ok(Nil)
+  }
+}
+
+/// Confirm the new mailbox from the requesting session. Revalidates freshness,
+/// account/group state and uniqueness, then signs out every session, including
+/// this one. A correctly bound token is single-use even on a later failure.
+pub fn confirm_email_change(
+  auth: Auth,
+  principal: Principal,
+  secret: String,
+) -> service.Result(Nil) {
+  use _ <- result.try(require_email_tokens(auth))
+  use _ <- result.try(valid_token(secret))
+  use change <- result.try({
+    use conn <- db.transaction(auth.repo)
+    account_store.consume_email(
+      conn,
+      principal.user.id,
+      principal.session_id,
+      token.digest(secret),
+    )
+  })
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(principal.user.id, None)
+  })
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+  use _ <- result.try(
+    case
+      user.email == change.old_email
+      && user.group_id == change.group_id
+      && group.mode_name(auth.groups) == change.mode
+    {
+      True -> Ok(Nil)
+      False -> Error(service.Forbidden)
+    },
+  )
+  use _ <- result.try(available_email(conn, auth, user, change.new_email))
+  use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
+  use _ <- result.try(account_store.change_email(
+    conn,
+    user.id,
+    change.new_email,
+    group.login_key(auth.groups, user.group_id, change.new_email),
+  ))
+  // Challenges for the new address may predate this change too.
+  use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
+  use _ <- result.try(account_store.clear_pending(conn, user.id))
+  use _ <- result.try(account_store.revoke(conn, user.id))
+  event(conn, user.id, "email.changed", Acting(principal), "")
+}
+
+/// The caller's linked providers as #(provider id, issuer). Subjects and
+/// provider tokens are not disclosed. Also includes disabled providers so
+/// obsolete links can be removed using a different enabled sign-in method.
+pub fn linked_providers(
+  auth: Auth,
+  principal: Principal,
+) -> service.Result(List(#(String, String))) {
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, False))
+  account_store.linked(conn, user.id)
+}
+
+/// Remove a provider by issuer. First sign in recently with a DIFFERENT enabled
+/// method; that proves an alternative works, and prevents last-method lockout.
+/// All sessions are revoked, including this one. A missing own link is NotFound.
+pub fn unlink_provider(
+  auth: Auth,
+  principal: Principal,
+  issuer: String,
+) -> service.Result(Nil) {
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(principal.user.id, None)
+  })
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, method) <- result.try(current_account(conn, auth, principal, True))
+  use links <- result.try(account_store.linked(conn, user.id))
+  use removed <- result.try(
+    list.find(links, fn(link) { link.1 == issuer })
+    |> result.replace_error(service.NotFound("provider link")),
+  )
+  use _ <- result.try(case method == Provider(removed.0) {
+    True -> Error(service.Forbidden)
+    False -> Ok(Nil)
+  })
+  use _ <- result.try(account_store.unlink(conn, user.id, issuer))
+  use _ <- result.try(account_store.clear_pending(conn, user.id))
+  use _ <- result.try(account_store.revoke(conn, user.id))
+  event(conn, user.id, "provider.unlinked", Acting(principal), removed.0)
+}
+
+/// Delete the caller after a recent sign-in and explicit confirmation of their
+/// current address. Disabled until `with_account_deletion` is configured.
+/// Credentials, fields, provider links, sessions and authz assignments cascade;
+/// pending challenges are removed, and audit records follow their own retention.
+pub fn delete_account(
+  auth: Auth,
+  principal: Principal,
+  confirm_email confirm_email: String,
+) -> service.Result(Nil) {
+  use cleanup <- result.try(case auth.before_delete {
+    Some(cleanup) -> Ok(cleanup)
+    None -> Error(service.Forbidden)
+  })
+  use confirm_email <- result.try(address.normalize_email(confirm_email))
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(principal.user.id, None)
+  })
+  use <- cache.changing
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+  use _ <- result.try(case user.email == confirm_email {
+    True -> Ok(Nil)
+    False -> Error(service.Invalid("confirm your current email address"))
+  })
+  use _ <- result.try(cleanup(conn, user))
+  use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
+  use _ <- result.try(account_store.clear_pending(conn, user.id))
+  use _ <- result.try(account_store.delete(conn, user.id))
+  event(conn, user.id, "user.deleted", Acting(principal), "")
+}
+
+/// Re-read the account under its row lock, then check the exact session against
+/// current state. A Principal is a snapshot, not authority to mutate forever.
+fn current_account(
+  conn: Repo,
+  auth: Auth,
+  principal: Principal,
+  fresh: Bool,
+) -> service.Result(#(User, Method)) {
+  use users <- result.try(store.active_user(
+    conn,
+    principal.user.id,
+    locking: True,
+  ))
+  use user <- result.try(case users {
+    [user] -> Ok(user)
+    _ -> Error(service.Unauthorized)
+  })
+  use _ <- result.try(in_bound_group(auth, user.group_id))
+  let now = token.now()
+  use row <- result.try(case auth.sessions {
+    InDatabase -> {
+      use rows <- result.try(store.sessions_for_user(conn, user.id, now))
+      list.find(rows, fn(row) { row.digest == principal.session_id })
+      |> result.replace_error(service.Unauthorized)
+    }
+    External(external) -> {
+      use found <- result.try(external.get(principal.session_id))
+      use version <- result.try(account_store.version(conn, user.id))
+      case found {
+        Some(entry) if entry.user_id == user.id && entry.version == version ->
+          Ok(store.SessionRow(
+            entry.digest,
+            entry.method,
+            entry.created_at,
+            entry.last_seen_at,
+            entry.expires_at,
+            entry.client,
+          ))
+        _ -> Error(service.Unauthorized)
+      }
+    }
+  })
+  use _ <- result.try(
+    case
+      row.expires_at > now
+      && {
+        auth.policy.session_idle_seconds == 0
+        || row.last_seen_at > now - auth.policy.session_idle_seconds
+      }
+    {
+      True -> Ok(Nil)
+      False -> Error(service.Unauthorized)
+    },
+  )
+  use _ <- result.try(
+    case !fresh || row.created_at > now - auth.policy.fresh_session_seconds {
+      True -> Ok(Nil)
+      False -> Error(service.Forbidden)
+    },
+  )
+  let method = method_from(row.method)
+  use enabled <- result.try(case method {
+    EmailToken -> Ok(auth.email_tokens)
+    Password ->
+      case auth.passwords {
+        None -> Ok(False)
+        Some(_) -> account_store.has_password(conn, user.id)
+      }
+    Provider(id) -> {
+      use links <- result.try(account_store.linked(conn, user.id))
+      Ok(
+        list.any(auth.providers, fn(p) { provider.id(p) == id })
+        && list.any(links, fn(link) { link.0 == id }),
+      )
+    }
+  })
+  case enabled {
+    True -> Ok(#(user, method))
+    False -> Error(service.Forbidden)
+  }
 }

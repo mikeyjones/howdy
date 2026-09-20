@@ -50,6 +50,7 @@ pub fn main() {
       // address that already has an account arrives as AlreadyRegistered, so
       // say so rather than inviting them to register again.
       let subject = case delivery.purpose {
+        auth.EmailChange -> "Confirm your new email address"
         auth.SignIn -> "Your sign-in token"
         auth.Registration -> "Confirm your new account"
         auth.AlreadyRegistered ->
@@ -73,6 +74,9 @@ pub fn main() {
       identity
     }
   }
+  // This example has no application-owned user data to clean up.
+  let identity =
+    auth.with_account_deletion(identity, fn(_repo, _user) { Ok(Nil) })
   let identity = auth.allow_registration(identity)
   let assert Ok(identity) = auth.with_passwords(identity)
   let assert Ok(permissions) = access.new(db)

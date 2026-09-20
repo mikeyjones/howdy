@@ -1,5 +1,5 @@
 -module(howdy_auth_oidc_ffi).
--export([verify/2, protect/1, keys_new/0, keys_read/1, keys_write/3]).
+-export([verify_entra/2, verify/2, protect/2, keys_new/0, keys_read/1, keys_write/3]).
 -include_lib("public_key/include/public_key.hrl").
 
 %% Fixed Google RS256 compact-JWS verifier using OTP's public_key primitive.
@@ -31,9 +31,9 @@ verify(_, _) -> {error, nil}.
 
 unbase64(Value) -> base64:decode(Value, #{mode => url, padding => false}).
 
-protect(Run) ->
+protect(Run, Message) ->
     try Run()
-    catch _:_ -> {error, {internal, <<"Google request failed">>}} end.
+    catch _:_ -> {error, {internal, Message}} end.
 
 %% The startup process owns this bounded cache. If it has exited, requests
 %% continue without caching rather than crashing or trusting stale keys.
@@ -46,3 +46,19 @@ keys_read(Table) ->
 keys_write(Table, Body, Until) ->
     try ets:insert(Table, {keys, Body, Until}) catch error:badarg -> ok end,
     nil.
+
+%% Microsoft keys are scoped to either one issuer or the tenant template.
+%% Filter before the shared signature verifier so an unrelated tenant key
+%% cannot establish an identity even if its signature is otherwise valid.
+verify_entra(Signed, Keys) when byte_size(Signed) =< 32768, byte_size(Keys) =< 1048576 ->
+    try
+        [_, Encoded, _] = binary:split(Signed, <<".">>, [global]),
+        #{<<"iss">> := Issuer, <<"tid">> := Tenant} = json:decode(unbase64(Encoded)),
+        true = is_binary(Issuer) andalso is_binary(Tenant),
+        #{<<"keys">> := Candidates} = json:decode(Keys),
+        Scoped = [K || K = #{<<"issuer">> := Scope} <- Candidates,
+                       is_binary(Scope),
+                       binary:replace(Scope, <<"{tenantid}">>, Tenant, [global]) =:= Issuer],
+        verify(Signed, iolist_to_binary(json:encode(#{<<"keys">> => Scoped})))
+    catch _:_ -> {error, nil} end;
+verify_entra(_, _) -> {error, nil}.
