@@ -92,11 +92,31 @@ pub fn patch(path: String, body: Json) -> Request(Body) {
   request(http.Patch, path) |> json_body(body)
 }
 
+/// A `POST` of an HTML form: the pairs are urlencoded and the content type
+/// set, as a browser would submit them.
+pub fn post_form(
+  path: String,
+  pairs: List(#(String, String)),
+) -> Request(Body) {
+  request(http.Post, path) |> form_body(pairs)
+}
+
 /// Replace the body with JSON and set the content type.
 pub fn json_body(req: Request(Body), body: Json) -> Request(Body) {
   req
   |> bytes_body(<<json.to_string(body):utf8>>)
   |> request.set_header("content-type", "application/json")
+}
+
+/// Replace the body with urlencoded form fields and set the content type.
+/// Repeat a name for multi-value fields such as multi-selects.
+pub fn form_body(
+  req: Request(Body),
+  pairs: List(#(String, String)),
+) -> Request(Body) {
+  req
+  |> bytes_body(<<uri.query_to_string(pairs):utf8>>)
+  |> request.set_header("content-type", "application/x-www-form-urlencoded")
 }
 
 /// Replace the body with text and set the content type.

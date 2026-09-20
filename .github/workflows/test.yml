@@ -18,6 +18,7 @@ jobs:
           gleam-version: "1.18.1"
           rebar3-version: "3"
           # elixir-version: "1"
+      - run: scripts/check-auth-namespace.sh
       - run: gleam deps download
       - run: gleam test
       - run: gleam run -m rate_limit_benchmark
@@ -79,3 +80,47 @@ jobs:
       - if: matrix.example == 'live'
         run: gleam run -m tasks/css
       - run: gleam format --check src test
+
+  auth:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [sqlite, postgres]
+        implementation: [ref, opt]
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: howdy_auth_test
+          POSTGRES_DB: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U howdy_auth_test -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      HOWDY_AUTH_TEST_BACKEND: ${{ matrix.backend }}
+    defaults:
+      run:
+        working-directory: auth
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: node --test test/pages_client_test.mjs
+      - run: vendor/jargon/verify.sh
+      - run: make -C vendor/jargon/c_src ARGON2_IMPL=${{ matrix.implementation }}
+      - run: gleam deps download
+      - run: gleam test
+      - run: gleam format --check src test
+      - run: gleam check
+        working-directory: examples/auth
+      - run: gleam format --check src
+        working-directory: examples/auth

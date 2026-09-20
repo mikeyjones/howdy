@@ -29,6 +29,9 @@ pub type Error {
   Unauthorized
   /// 403.
   Forbidden
+  /// 415. The message names the content type that was expected. Usually
+  /// produced by `howdy/form`.
+  UnsupportedMediaType(String)
   /// 500. The message is logged and never sent to the client.
   Internal(String)
   /// 422. Input was well formed but failed validation. Usually produced by
@@ -93,6 +96,7 @@ pub fn status_code(error: Error) -> Int {
     Conflict(_) -> 409
     Unauthorized -> 401
     Forbidden -> 403
+    UnsupportedMediaType(_) -> 415
     Internal(_) -> 500
     Validation(_) -> 422
     TooManyRequests(_) -> 429
@@ -107,6 +111,7 @@ pub fn message(error: Error) -> String {
     Conflict(message) -> message
     Unauthorized -> "unauthorized"
     Forbidden -> "forbidden"
+    UnsupportedMediaType(message) -> message
     Internal(_) -> "internal server error"
     Validation(_) -> "validation failed"
     TooManyRequests(_) -> "too many requests"

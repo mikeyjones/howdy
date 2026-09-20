@@ -1,0 +1,11 @@
+import database
+import gloo/repo
+import howdy/auth
+import howdy/authorization
+import howdy/migration
+
+pub fn main() {
+  let db = database.connect()
+  let assert Ok(_) = migration.run(db, [auth.schema(), authorization.schema()])
+  let assert Ok(_) = repo.close(db)
+}

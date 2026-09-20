@@ -88,6 +88,67 @@ Empty strings are preserved. Booleans accept only `true` and `false`. Singular
 helpers reject duplicate keys, and all helpers reject invalid query encoding.
 Use `howdy/validate` for constraints such as a minimum page number.
 
+## Forms
+
+Use `howdy/form` for HTML forms posted as `application/x-www-form-urlencoded`.
+`form.read` reads the body once into a `Form`; fields are then taken from that
+value. Field problems come back as `howdy/validate` errors rather than
+responses, so a page can be rendered again with its errors and the values the
+user typed:
+
+```gleam
+import howdy/controller
+import howdy/form.{type Form}
+import howdy/validate
+
+fn signup(fields: Form) -> validate.Result(Signup) {
+  use email <- form.string(fields, "email", [validate.trim(), validate.email()])
+  use age <- form.int(fields, "age", [validate.min(13)])
+  use nickname <- form.optional_string(fields, "nickname", [validate.trim()])
+  use newsletter <- form.checkbox(fields, "newsletter")
+  validate.ok(Signup(email:, age:, nickname:, newsletter:))
+}
+
+pub fn signup_controller() {
+  controller.new("/signup")
+  |> controller.post("/", fn(ctx) {
+    use fields <- form.read(ctx)
+    case signup(fields) {
+      Ok(signup) -> welcome(ctx, signup)
+      Error(errors) ->
+        controller.html(ctx, signup_page(fields, errors))
+        |> controller.with_status(422)
+    }
+  })
+}
+```
+
+- `string` and `int` require the field; a missing one reports `is required`.
+  `optional_string` and `optional_int` return `Option` values. Every field is
+  checked, so all errors are reported together.
+- `checkbox` is `True` when the field was submitted at all, since browsers
+  leave unticked checkboxes out. `strings` collects repeated values such as a
+  multi-select, in order.
+- When rendering the page again, `form.value(fields, "email")` gives the
+  submitted value or `""`, and `form.error(errors, "email")` the field's
+  message, if any. Escape submitted values like any other user input.
+- `get`, `all` and `fields` give raw access. `form.validated(ctx, signup)`
+  answers a failed validation with the JSON `422` of `body.validated`, for
+  endpoints that are not pages.
+
+Browsers submit an empty input as `name=`. `string` keeps the empty string, so
+pair it with `validate.not_empty()`; `int` treats it as missing and the
+`optional_*` helpers as `None`. Singular helpers reject repeated fields.
+
+`read` returns `415` unless the content type is
+`application/x-www-form-urlencoded`, and `400` for a body that is badly encoded
+or over one mebibyte; `read_with_limit` changes the limit. Multipart forms,
+and so file uploads, are not supported yet. A local variable named `form`
+would shadow the module, so call the value something else, such as `fields`.
+
+Form posts skip CORS preflight, so cookie-authenticated forms need CSRF
+protection such as the `Origin` check in [`howdy_auth`](auth/README.md).
+
 ## Cookies
 
 Read cookies with `use` and write them through response pipelines:
@@ -141,6 +202,20 @@ the [browser cookie deletion rules](https://developer.mozilla.org/en-US/docs/Web
 
 These helpers read and write cookies; they do not sign them or validate sessions.
 For authentication, let a guard validate the session and return `401` when needed.
+
+## Authentication and authorization
+
+[`howdy_auth`](auth/README.md) is an optional package with email-token and opt-in Argon2id password
+login and registration, browser cookie sessions, bearer-token API routes, and optional
+starter pages. Custom pages can call the same JSON endpoints or use the headless
+operations directly. Separate role-based authorization supports simple role
+checks and permissions scoped to an application or organization.
+
+The package accepts a configured Gloo Repo (PostgreSQL or SQLite), owns its
+schema, and ships explicit, checksummed migrations.
+See [the runnable example](examples/auth/README.md) and the package documentation
+for setup and current scope; enterprise federation is not yet
+implemented.
 
 ## Static files
 
@@ -471,9 +546,10 @@ pub fn blank_name_is_rejected_test() {
 ```
 
 - Build requests with `get`, `delete`, or `post`, `put` and `patch` taking JSON.
-  `request(method, path)` covers the rest. A query string in the path is kept.
-- Adjust them with `header`, `query`, `cookie`, `json_body`, `text_body`,
-  `bytes_body` and `from_ip`, which makes `rate_limit.by_ip` count the request.
+  `post_form` takes form fields. `request(method, path)` covers the rest. A
+  query string in the path is kept.
+- Adjust them with `header`, `query`, `cookie`, `json_body`, `form_body`,
+  `text_body`, `bytes_body` and `from_ip`, which makes `rate_limit.by_ip` count the request.
   Requests are plain `gleam/http/request` values, so its functions work too.
 - Read responses with `text`, `bytes`, `json` with a decoder, `error` for the
   message in `{"error": "..."}`, `field_errors` for a `422`, and `cookies` for
@@ -503,3 +579,12 @@ and `gleam run -m rate_limit_benchmark` for identity-cardinality scaling.
 [rate-limit measurements](docs/benchmarks/rate-limit-cardinality.md) describe the
 fixtures, results and limitations. CI tests all four examples and retains both
 benchmarks. Generated `build/` directories are ignored throughout the repository.
+
+### Reserved optional-package modules
+
+The core package reserves `howdy/auth`, every `howdy/auth/*` module,
+`howdy/authorization` and `howdy/migration` for the optional `howdy_auth`
+package. Core must not define these modules: Gleam/BEAM module names are
+global across dependencies. CI runs `scripts/check-auth-namespace.sh` to
+reject collisions. Applications should put their own modules in their own
+namespace.
