@@ -1,4 +1,4 @@
-//// Email-token and optional password authentication. This package owns its tables; applications
+//// Email-token, password and built-in provider authentication. This package owns its tables; applications
 //// keep small facts in `howdy/auth/field` and anything relational in their own tables.
 //// Authorization lives in howdy/authorization.
 
@@ -19,10 +19,12 @@ import howdy/auth/internal/address
 import howdy/auth/internal/cache
 import howdy/auth/internal/database as db
 import howdy/auth/internal/password as password_hash
+import howdy/auth/internal/provider_store
 import howdy/auth/internal/schema
 import howdy/auth/internal/store
 import howdy/auth/internal/token
 import howdy/auth/policy.{type Policy}
+import howdy/auth/provider
 import howdy/auth/session_store.{type Entry, type SessionStore, Entry}
 import howdy/auth/user.{
   type Actor, type Principal, type User, Acting, Principal, System,
@@ -63,6 +65,8 @@ pub opaque type Auth {
     origin: String,
     deliver: fn(Delivery) -> Result(Nil, Nil),
     registration: Bool,
+    email_tokens: Bool,
+    providers: List(provider.Provider),
     passwords: Option(password_hash.Passwords),
     policy: Policy,
     password_check: fn(String) -> service.Result(Nil),
@@ -86,9 +90,10 @@ type Sessions {
 pub type Method {
   EmailToken
   Password
+  Provider(id: String)
 }
 
-/// Returned only by a successful token exchange or password login. Keep the token secret. Browser
+/// Returned by a successful sign-in. Keep the token secret. Browser
 /// routes put it in an HttpOnly cookie; native API clients use Bearer auth.
 pub type Session {
   Session(user: User, token: secret.Secret, expires_at: Int)
@@ -137,6 +142,8 @@ pub fn new(
     origin,
     deliver,
     False,
+    True,
+    [],
     None,
     policy.default(),
     fn(_) { Ok(Nil) },
@@ -236,6 +243,7 @@ fn convert_groups(conn: Repo, from: Mode, to: Mode) -> service.Result(Nil) {
     _, AccountPerGroup -> store.rekey_users(conn, True)
     _, _ -> Ok(Nil)
   })
+  use _ <- result.try(provider_store.invalidate(conn))
   use _ <- result.try(store.set_setting(conn, "groups", group.mode_name(to)))
   event(conn, "", "groups.mode", System, group.mode_name(to))
 }
@@ -459,6 +467,7 @@ fn request_challenge(
   client: String,
   preparation: Preparation,
 ) -> service.Result(Nil) {
+  use _ <- result.try(require_email_tokens(auth))
   use email <- result.try(address.normalize_email(email))
   use _ <- result.try(case intent == Register && !auth.registration {
     True -> Error(service.Forbidden)
@@ -614,12 +623,14 @@ fn method_name(method: Method) -> String {
   case method {
     EmailToken -> "email"
     Password -> "password"
+    Provider(id) -> "provider:" <> id
   }
 }
 
 fn method_from(name: String) -> Method {
   case name {
     "password" -> Password
+    "provider:" <> id -> Provider(id)
     _ -> EmailToken
   }
 }
@@ -656,6 +667,7 @@ fn redeem(
     [value] -> Ok(value)
     _ -> Error(service.Unauthorized)
   })
+  use _ <- result.try(require_email_tokens(auth))
   use intent <- result.try(intent_from(challenge.intent))
   use _ <- result.try(case challenge.group_id {
     Some(id) -> in_bound_group(auth, id)
@@ -1120,7 +1132,14 @@ pub fn authenticate_from(
   client: String,
 ) -> service.Result(Principal) {
   use _ <- result.try(valid_token(secret))
-  let digest = token.digest(secret)
+  authenticate_digest(auth, token.digest(secret), client)
+}
+
+fn authenticate_digest(
+  auth: Auth,
+  digest: String,
+  client: String,
+) -> service.Result(Principal) {
   let now = token.now()
   let seen_after = case auth.policy.session_idle_seconds {
     0 -> -1
@@ -1399,4 +1418,369 @@ pub fn event_from(
     detail:,
     client:,
   )
+}
+
+/// Construct auth without email tokens. Add built-in providers with
+/// `with_provider`. Registration remains disabled until explicitly enabled.
+pub fn new_without_email(
+  repo repo: Repo,
+  origin origin: String,
+) -> service.Result(Auth) {
+  use auth <- result.try(new(repo, origin, fn(_) { Error(Nil) }))
+  Ok(Auth(..auth, email_tokens: False))
+}
+
+/// Enable email tokens on a runtime constructed without email.
+pub fn with_email_tokens(
+  auth: Auth,
+  deliver deliver: fn(Delivery) -> Result(Nil, Nil),
+) -> Auth {
+  Auth(..auth, deliver:, email_tokens: True)
+}
+
+pub fn email_tokens_enabled(auth: Auth) -> Bool {
+  auth.email_tokens
+}
+
+fn require_email_tokens(auth: Auth) -> service.Result(Nil) {
+  case auth.email_tokens {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
+  }
+}
+
+/// Install a built-in provider once at startup. Duplicate IDs are rejected.
+pub fn with_provider(
+  auth: Auth,
+  provider: provider.Provider,
+) -> service.Result(Auth) {
+  use _ <- result.try(provider.validate(provider))
+  case
+    list.any(auth.providers, fn(p) { provider.id(p) == provider.id(provider) })
+  {
+    True -> Error(service.Invalid("provider is already configured"))
+    False ->
+      Ok(Auth(..auth, providers: list.append(auth.providers, [provider])))
+  }
+}
+
+/// The enabled provider IDs and display names, for custom sign-in pages.
+pub fn providers(auth: Auth) -> List(#(String, String)) {
+  list.map(auth.providers, fn(p) { #(provider.id(p), provider.name(p)) })
+}
+
+fn configured_provider(
+  auth: Auth,
+  id: String,
+) -> service.Result(provider.Provider) {
+  list.find(auth.providers, fn(p) { provider.id(p) == id })
+  |> result.replace_error(service.NotFound("provider"))
+}
+
+/// Store `browser_token` in a Secure, HttpOnly, SameSite=Lax cookie before
+/// redirecting to `url`. Prefer `routes.providers`, which owns these details.
+pub type ProviderStart {
+  ProviderStart(url: String, browser_token: secret.Secret)
+}
+
+pub type ProviderOutcome {
+  ProviderSession(Session)
+  ProviderLinked
+}
+
+/// Begin browser sign-in. `callback_path` is trusted application configuration,
+/// never a request parameter. The attempt captures the current group selection.
+pub fn begin_provider(
+  auth: Auth,
+  id: String,
+  callback_path: String,
+  client: String,
+) -> service.Result(ProviderStart) {
+  begin_provider_attempt(auth, id, callback_path, client, None)
+}
+
+/// Linking requires a live, recently created session. The callback must present
+/// that same session as well as the browser token and Google's response.
+pub fn begin_provider_link(
+  auth: Auth,
+  principal: Principal,
+  id: String,
+  callback_path: String,
+) -> service.Result(ProviderStart) {
+  use principal <- result.try(fresh_provider_principal(auth, principal))
+  begin_provider_attempt(
+    in_group(auth, principal.user.group_id),
+    id,
+    callback_path,
+    principal.client,
+    Some(principal),
+  )
+}
+
+fn fresh_provider_principal(
+  auth: Auth,
+  principal: Principal,
+) -> service.Result(Principal) {
+  use current <- result.try(authenticate_digest(
+    auth,
+    principal.session_id,
+    principal.client,
+  ))
+  use sessions <- result.try(sessions(auth, current))
+  case
+    current.user.id == principal.user.id
+    && list.any(sessions, fn(s) {
+      s.current
+      && s.created_at >= token.now() - auth.policy.fresh_session_seconds
+    })
+  {
+    True -> Ok(current)
+    False -> Error(service.Forbidden)
+  }
+}
+
+fn begin_provider_attempt(
+  auth: Auth,
+  id: String,
+  callback_path: String,
+  client: String,
+  linking: Option(Principal),
+) -> service.Result(ProviderStart) {
+  use provider <- result.try(configured_provider(auth, id))
+  use _ <- result.try(case provider_path(callback_path) {
+    True -> Ok(Nil)
+    False -> Error(service.Invalid("invalid provider callback path"))
+  })
+  use within <- result.try(target(auth, False))
+  use _ <- result.try(existing(auth, within))
+  let state = token.new()
+  let browser = token.new()
+  let nonce = token.new()
+  let verifier = token.new()
+  let redirect_uri = auth.origin <> callback_path
+  let #(link_user, link_session) = case linking {
+    Some(principal) -> #(principal.user.id, principal.session_id)
+    None -> #("", "")
+  }
+  let attempt =
+    provider_store.Attempt(
+      id,
+      token.digest(nonce),
+      secret.wrap(verifier),
+      redirect_uri,
+      within,
+      group.mode_name(auth.groups),
+      link_user,
+      link_session,
+      client,
+    )
+  use _ <- result.try({
+    use conn <- db.write_transaction(
+      auth.repo,
+      touching: "howdy_auth_provider_attempts",
+    )
+    provider_store.insert(conn, state, browser, attempt)
+  })
+  Ok(ProviderStart(
+    provider.authorization_url(
+      provider,
+      provider.Authorization(redirect_uri, state, nonce, token.digest(verifier)),
+    ),
+    secret.wrap(browser),
+  ))
+}
+
+/// Consume a browser-bound attempt, verify the external identity, and apply
+/// local policy. `None` code means cancelled/denied consent and still spends the
+/// attempt. Custom transports must enforce request limits. No Google token is
+/// returned. Linking never changes the current session.
+pub fn finish_provider(
+  auth: Auth,
+  id: String,
+  callback_path: String,
+  state: String,
+  browser_token: String,
+  code: Option(String),
+  principal: Option(Principal),
+) -> service.Result(ProviderOutcome) {
+  use provider <- result.try(configured_provider(auth, id))
+  use _ <- result.try(valid_token(state))
+  use _ <- result.try(valid_token(browser_token))
+  use attempt <- result.try({
+    use conn <- db.transaction(auth.repo)
+    provider_store.consume(
+      conn,
+      state,
+      browser_token,
+      id,
+      auth.origin <> callback_path,
+    )
+  })
+  use _ <- result.try(case attempt.mode == group.mode_name(auth.groups) {
+    True -> Ok(Nil)
+    False -> Error(service.Unauthorized)
+  })
+  use _ <- result.try(case attempt.group_id {
+    Some(g) -> in_bound_group(auth, g)
+    None -> Ok(Nil)
+  })
+  use code <- result.try(case code {
+    Some(code) if code != "" -> Ok(code)
+    _ -> Error(service.Unauthorized)
+  })
+  use identity <- result.try(provider.exchange(
+    provider,
+    provider.Exchange(
+      secret.wrap(code),
+      attempt.redirect_uri,
+      attempt.verifier,
+      attempt.nonce_digest,
+    ),
+  ))
+  // Revalidate after the network request: revocation while at Google must not
+  // authorize linking, nor may another browser session take over.
+  use linking <- result.try(case attempt.link_user, principal {
+    "", _ -> Ok(None)
+    user_id, Some(p)
+      if p.user.id == user_id && p.session_id == attempt.link_session
+    -> fresh_provider_principal(auth, p) |> result.map(Some)
+    _, _ -> Error(service.Unauthorized)
+  })
+  let scope = case auth.groups {
+    AccountPerGroup -> option.unwrap(attempt.group_id, "")
+    _ -> ""
+  }
+  use completed <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use owner <- result.try(provider_store.owner(
+      conn,
+      identity.issuer,
+      identity.subject,
+      scope,
+    ))
+    case linking {
+      Some(p) -> {
+        use users <- result.try(store.active_user(
+          conn,
+          p.user.id,
+          locking: True,
+        ))
+        use user <- result.try(case users {
+          [u] if u.group_id == p.user.group_id -> Ok(u)
+          _ -> Error(service.Unauthorized)
+        })
+        use _ <- result.try(case attempt.group_id {
+          Some(g) if g == user.group_id -> Ok(Nil)
+          _ -> Error(service.Unauthorized)
+        })
+        use _ <- result.try(case auth.sessions {
+          InDatabase -> {
+            use found <- result.try(store.session_user(
+              conn,
+              p.session_id,
+              token.now(),
+              -1,
+            ))
+            case found {
+              [#(u, _)] if u.id == user.id -> Ok(Nil)
+              _ -> Error(service.Unauthorized)
+            }
+          }
+          External(_) -> Ok(Nil)
+        })
+        use _ <- result.try(provider_store.attach(
+          conn,
+          identity.issuer,
+          identity.subject,
+          scope,
+          user.id,
+        ))
+        use _ <- result.try(event(
+          conn,
+          user.id,
+          "provider.linked",
+          Acting(p),
+          id,
+        ))
+        Ok(None)
+      }
+      None -> {
+        use user <- result.try(case owner {
+          Some(user_id) -> {
+            use users <- result.try(store.active_user(
+              conn,
+              user_id,
+              locking: True,
+            ))
+            case users {
+              [u] -> Ok(u)
+              _ -> Error(service.Unauthorized)
+            }
+          }
+          None -> register_provider_user(conn, auth, attempt, identity)
+        })
+        use _ <- result.try(in_bound_group(auth, user.group_id))
+        use _ <- result.try(case attempt.group_id {
+          Some(g) if g != user.group_id -> Error(service.Unauthorized)
+          _ -> Ok(Nil)
+        })
+        use _ <- result.try(provider_store.attach(
+          conn,
+          identity.issuer,
+          identity.subject,
+          scope,
+          user.id,
+        ))
+        issue_session(conn, auth, user, Provider(id), attempt.client)
+        |> result.map(Some)
+      }
+    }
+  })
+  case completed {
+    Some(issued) -> publish(auth, issued) |> result.map(ProviderSession)
+    None -> Ok(ProviderLinked)
+  }
+}
+
+fn register_provider_user(
+  conn: Repo,
+  auth: Auth,
+  attempt: provider_store.Attempt,
+  identity: provider.Identity,
+) -> service.Result(User) {
+  // Third-party Google addresses first register/verify by email, then link.
+  use _ <- result.try(case auth.registration && identity.email_authoritative {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
+  })
+  use email <- result.try(address.normalize_email(identity.email))
+  use _ <- result.try(register(
+    conn,
+    auth,
+    email,
+    attempt.group_id,
+    attempt.client,
+  ))
+  use users <- result.try(store.active_user_by_email(
+    conn,
+    email,
+    attempt.group_id,
+  ))
+  case users {
+    [user] -> Ok(user)
+    _ -> Error(service.Unauthorized)
+  }
+}
+
+/// Conservative paths for callback mounts and fixed post-login destinations.
+@internal
+pub fn provider_path(path: String) -> Bool {
+  string.starts_with(path, "/")
+  && !string.starts_with(path, "//")
+  && list.all(string.to_graphemes(path), fn(c) {
+    string.contains(
+      "/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-",
+      c,
+    )
+  })
 }

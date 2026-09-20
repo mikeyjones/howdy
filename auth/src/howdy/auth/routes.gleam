@@ -10,6 +10,7 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/string
 import howdy/auth.{type Auth}
+import howdy/auth/internal/provider_routes
 import howdy/auth/user
 import howdy/body
 import howdy/context
@@ -331,6 +332,7 @@ fn session_json(session: auth.SessionInfo) -> json.Json {
       json.string(case session.method {
         auth.EmailToken -> "email"
         auth.Password -> "password"
+        auth.Provider(id) -> "provider:" <> id
       }),
     ),
     #("created_at", json.int(session.created_at)),
@@ -350,4 +352,29 @@ fn token_json(identity: Auth) -> fn(auth.Session) -> json.Json {
       #("user", user.to_json(session.user)),
     ])
   }
+}
+
+/// Browser redirects for built-in identity providers. Mount once at startup.
+/// The callback URI is `auth.origin(identity) <> at <> "/providers/google/callback"`.
+/// Destinations are fixed local paths. Login/link POSTs require an exact Origin.
+pub fn providers(
+  identity: Auth,
+  at prefix: String,
+  success_path success: String,
+  failure_path failure: String,
+) -> controller.Controller {
+  provider_routes.routes(identity, prefix, success, failure, fn(ctx) {
+    context.client_ip(ctx.request)
+  })
+}
+
+/// As `providers`, with a trusted client key for proxy-aware rate limits/audit.
+pub fn providers_limited_by(
+  identity: Auth,
+  at prefix: String,
+  success_path success: String,
+  failure_path failure: String,
+  key key: fn(controller.Context) -> Option(String),
+) -> controller.Controller {
+  provider_routes.routes(identity, prefix, success, failure, key)
 }

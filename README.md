@@ -263,8 +263,8 @@ For authentication, let a guard validate the session and return `401` when neede
 
 ## Authentication and authorization
 
-[`howdy_auth`](auth/README.md) is an optional package with email-token and opt-in Argon2id password
-login and registration, browser cookie sessions, bearer-token API routes, and optional
+[`howdy_auth`](auth/README.md) is an optional package with email-token, opt-in Argon2id password
+and built-in Google login and registration, browser cookie sessions, bearer-token API routes, and optional
 starter pages. Custom pages can call the same JSON endpoints or use the headless
 operations directly. Separate role-based authorization supports simple role
 checks and permissions scoped to an application or organization.

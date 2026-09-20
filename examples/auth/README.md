@@ -37,3 +37,16 @@ and are never automatically applied during application startup.
 
 See [the package documentation](../../auth/README.md) for browser/native API
 flows, headless operations, scoped RBAC and current limitations.
+
+Google sign-in is enabled when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are
+set in the process environment. Create a Google OAuth **Web application** client
+and register this exact redirect URI:
+`http://localhost:8787/auth/providers/google/callback`. Use OTP 27 or newer.
+Run the migration command again before starting an existing demo database.
+
+The login page will display **Continue with Google**. A first sign-in with a
+Gmail/Workspace address creates an account. If that email already has a local
+account, sign into it with an email token first and use **Link Google** on
+`/auth/account`. Linking requires a session created within the last ten minutes.
+Google accounts using third-party email addresses must register/verify locally
+before linking. Google sign-in leaves existing RBAC permissions unchanged.

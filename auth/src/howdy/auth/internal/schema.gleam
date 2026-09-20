@@ -191,6 +191,45 @@ UPDATE howdy_auth_users SET updated_at = created_at;
 UPDATE howdy_auth_groups SET updated_at = created_at;
 ",
     )),
+    // SQLite cannot change a column CHECK. Keep the old column as unused
+    // migration metadata rather than rebuilding sessions and dropping indexes
+    // or cascading deletes to application tables. New writes use `method`.
+    gloo_migration.new(9, "add_identity_providers", "
+CREATE TABLE howdy_auth_provider_identities (
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  user_id TEXT NOT NULL REFERENCES howdy_auth_users(id) ON DELETE CASCADE,
+  PRIMARY KEY (issuer, subject, scope),
+  UNIQUE (issuer, user_id)
+);
+CREATE INDEX howdy_auth_provider_identities_user ON howdy_auth_provider_identities(user_id);
+CREATE TABLE howdy_auth_provider_attempts (
+  digest TEXT PRIMARY KEY NOT NULL,
+  browser_digest TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  nonce_digest TEXT NOT NULL,
+  verifier TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  group_id TEXT REFERENCES howdy_auth_groups(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  link_user TEXT NOT NULL DEFAULT '',
+  link_session TEXT NOT NULL DEFAULT '',
+  client TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX howdy_auth_provider_attempts_expiry ON howdy_auth_provider_attempts(expires_at);
+" <> migration.per_database(
+      postgres: "
+ALTER TABLE howdy_auth_sessions DROP CONSTRAINT howdy_auth_sessions_method_check;
+ALTER TABLE howdy_auth_sessions ADD CONSTRAINT howdy_auth_sessions_method_check CHECK (method IN ('email', 'password') OR method LIKE 'provider:%');
+",
+      sqlite: "
+ALTER TABLE howdy_auth_sessions RENAME COLUMN method TO legacy_method;
+ALTER TABLE howdy_auth_sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'email' CHECK (method IN ('email', 'password') OR method LIKE 'provider:%');
+UPDATE howdy_auth_sessions SET method = legacy_method;
+",
+    )),
   ])
 }
 

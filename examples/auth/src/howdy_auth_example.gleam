@@ -1,9 +1,11 @@
 import database
 import gleam/erlang/process
 import gleam/io
+import gleam/option.{None, Some}
 import howdy
 import howdy/auth
 import howdy/auth/pages
+import howdy/auth/providers/google
 import howdy/auth/routes
 import howdy/auth/secret
 import howdy/auth/user
@@ -28,6 +30,12 @@ pub fn app(identity: auth.Auth, permissions: access.Authorization) {
 
   howdy.new()
   |> howdy.controller(routes.api(identity, at: "/api/auth"))
+  |> howdy.controller(routes.providers(
+    identity,
+    at: "/auth",
+    success_path: "/auth/account",
+    failure_path: "/auth/login",
+  ))
   |> howdy.controller(pages.routes(identity, at: "/auth", api_at: "/api/auth"))
   |> howdy.controller(account)
 }
@@ -57,6 +65,14 @@ pub fn main() {
       )
       Ok(Nil)
     })
+  let identity = case google_credentials() {
+    None -> identity
+    Some(#(client_id, client_secret)) -> {
+      let assert Ok(identity) =
+        auth.with_provider(identity, google.new(client_id:, client_secret:))
+      identity
+    }
+  }
   let identity = auth.allow_registration(identity)
   let assert Ok(identity) = auth.with_passwords(identity)
   let assert Ok(permissions) = access.new(db)
@@ -74,3 +90,7 @@ pub fn main() {
     |> howdy.start()
   process.sleep_forever()
 }
+
+// Read credentials at startup, never from requests or source-controlled values.
+@external(erlang, "howdy_auth_example_ffi", "google_credentials")
+fn google_credentials() -> option.Option(#(String, String))

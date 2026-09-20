@@ -5,11 +5,14 @@ import gleam/http/request
 import gleam/http/response
 import gleam/int
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/string
+import gleam/uri
 import howdy/auth.{type Auth}
 import howdy/auth/internal/token
 import howdy/controller
 import howdy/guard
+import howdy/query
 
 pub fn routes(
   identity: Auth,
@@ -31,32 +34,33 @@ pub fn routes(
     }
     |> response.set_header(
       "content-security-policy",
-      "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self' https://accounts.google.com; base-uri 'none'; frame-ancestors 'none'",
     )
     |> response.set_header("referrer-policy", "no-referrer")
     |> response.set_header("x-content-type-options", "nosniff")
   })
   |> controller.get("/login", fn(ctx) {
-    controller.html(ctx, page(identity, prefix, api, TokenLogin))
+    login_page(ctx, identity, prefix, api, TokenLogin)
   })
   |> controller.get("/register", fn(ctx) {
     case auth.registration_enabled(identity) {
-      True -> controller.html(ctx, page(identity, prefix, api, TokenRegister))
+      True -> login_page(ctx, identity, prefix, api, TokenRegister)
       False -> controller.status(ctx, 404)
     }
   })
   |> controller.get("/password/login", fn(ctx) {
     case auth.passwords_enabled(identity) {
-      True -> controller.html(ctx, page(identity, prefix, api, PasswordLogin))
+      True -> login_page(ctx, identity, prefix, api, PasswordLogin)
       False -> controller.status(ctx, 404)
     }
   })
   |> controller.get("/password/register", fn(ctx) {
     case
-      auth.passwords_enabled(identity) && auth.registration_enabled(identity)
+      auth.passwords_enabled(identity)
+      && auth.registration_enabled(identity)
+      && auth.email_tokens_enabled(identity)
     {
-      True ->
-        controller.html(ctx, page(identity, prefix, api, PasswordRegister))
+      True -> login_page(ctx, identity, prefix, api, PasswordRegister)
       False -> controller.status(ctx, 404)
     }
   })
@@ -115,7 +119,43 @@ type Page {
   PasswordRegister
 }
 
-fn page(identity: Auth, prefix: String, api: String, page: Page) -> String {
+fn login_page(ctx, identity, prefix, api, kind) {
+  use group <- query.optional_string(ctx, "group")
+  controller.html(ctx, page(identity, prefix, api, kind, group))
+}
+
+fn provider_forms(
+  identity: Auth,
+  prefix: String,
+  action: String,
+  group: option.Option(String),
+) -> String {
+  list.map(auth.providers(identity), fn(p) {
+    let #(id, name) = p
+    let query = case group {
+      Some(g) -> "?" <> uri.query_to_string([#("group", g)])
+      None -> ""
+    }
+    "<form method=\"post\" action=\""
+    <> escape(prefix <> "/providers/" <> id <> "/" <> action <> query)
+    <> "\"><button>"
+    <> case action {
+      "link" -> "Link "
+      _ -> "Continue with "
+    }
+    <> escape(name)
+    <> "</button></form>"
+  })
+  |> string.join("")
+}
+
+fn page(
+  identity: Auth,
+  prefix: String,
+  api: String,
+  page: Page,
+  group: option.Option(String),
+) -> String {
   // The mount paths are the only values here the application supplies.
   let prefix = escape(prefix)
   let api = escape(api)
@@ -186,35 +226,45 @@ fn page(identity: Auth, prefix: String, api: String, page: Page) -> String {
       <> "\">Use a password</a></p>"
     False, False -> ""
   }
+  let credentials = case auth.email_tokens_enabled(identity) || password {
+    True -> {
+      "<p>"
+      <> explanation
+      <> "</p><form method=\"post\" id=\"request\" data-api=\""
+      <> api
+      <> "\" data-action=\""
+      <> action
+      <> "\"><label>Email address <input name=\"email\" type=\"email\" autocomplete=\"username\" required maxlength=\"254\"></label>"
+      <> password_field
+      <> "<button>"
+      <> button
+      <> "</button></form>"
+      <> exchange
+      <> alternative
+    }
+    False -> ""
+  }
   "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>"
   <> title
   <> "</title><script src=\""
   <> prefix
   <> "/client.js\" defer></script></head><body><main><h1>"
   <> title
-  <> "</h1><p>"
-  <> explanation
-  <> "</p><form method=\"post\" id=\"request\" data-api=\""
-  <> api
-  <> "\" data-action=\""
-  <> action
-  <> "\"><label>Email address <input name=\"email\" type=\"email\" autocomplete=\"username\" required maxlength=\"254\"></label>"
-  <> password_field
-  <> "<button>"
-  <> button
-  <> "</button></form>"
-  <> exchange
-  <> alternative
+  <> "</h1>"
+  <> provider_forms(identity, prefix, "login", group)
+  <> credentials
   <> "<p><a href=\""
   <> prefix
   <> "/account\">Manage password and sessions</a></p>"
-  <> "<p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>These starter pages require JavaScript. Applications can supply their own forms using the auth operations.</noscript></main></body></html>"
+  <> "<p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>Email and account management require JavaScript. Provider sign-in works without it.</noscript></main></body></html>"
 }
 
 fn account_page(identity: Auth, prefix: String, api: String) -> String {
   let prefix = escape(prefix)
   let api = escape(api)
-  let password_form = case auth.passwords_enabled(identity) {
+  let password_form = case
+    auth.passwords_enabled(identity) && auth.email_tokens_enabled(identity)
+  {
     False -> ""
     True ->
       "<h2>Set or reset password</h2><p>First sign in using a fresh email token. Changing your password signs out every other session.</p><form id=\"password-change\"><label>New password <input name=\"password\" type=\"password\" autocomplete=\"new-password\" required></label><button>Save password</button></form>"
@@ -225,7 +275,8 @@ fn account_page(identity: Auth, prefix: String, api: String) -> String {
   <> api
   <> "\"><h1>Your account</h1><p><a href=\""
   <> prefix
-  <> "/login\">Sign in with an email token</a></p>"
+  <> "/login\">Sign in</a></p>"
+  <> provider_forms(identity, prefix, "link", None)
   <> password_form
   <> "<h2>Active sessions</h2><ul id=\"sessions\"></ul><button id=\"refresh-sessions\">Refresh sessions</button><button id=\"logout\">Sign out</button><p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>Account management requires JavaScript.</noscript></main></body></html>"
 }
@@ -234,7 +285,7 @@ const script = "const requestForm = document.getElementById('request');
 const exchangeForm = document.getElementById('exchange');
 const account = document.getElementById('account');
 const status = document.getElementById('status');
-const api = (requestForm || account).dataset.api;
+const api = (requestForm || account)?.dataset.api;
 async function call(endpoint, payload) {
   const response = await fetch(api + '/' + endpoint, {
     method: payload === undefined ? 'GET' : 'POST', credentials: 'same-origin',

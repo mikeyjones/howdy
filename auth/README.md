@@ -1,14 +1,14 @@
 # howdy_auth
 
-Optional email-token and password authentication and separate role-based authorization for
+Optional email-token, password and Google authentication and separate role-based authorization for
 Howdy. The package includes JSON endpoints, optional starter pages and headless
 operations for applications supplying their own UI or transport.
 
 This is an initial implementation, not the complete enterprise identity system.
 It targets Erlang and accepts an **already-configured `gloo/repo.Repo`**, supporting
 Gloo’s PostgreSQL and SQLite adapters. The application owns connection setup,
-configuration and shutdown, and supplies email delivery. OIDC,
-SAML, MFA, SCIM, invitations, tenant lifecycle management, a hosted management
+configuration and shutdown, and supplies email delivery when email tokens are enabled.
+Google OpenID Connect is built in; arbitrary OIDC providers, SAML, MFA, SCIM, invitations, tenant lifecycle management, a hosted management
 dashboard and username login are not implemented yet. Do not advertise those capabilities.
 
 ## Install and migrate
@@ -269,6 +269,132 @@ let assert Ok(identity) = auth.with_policy(
 
 `with_policy` rejects nonsensical values. Last use of a session is recorded at
 most once a minute, so authenticating a request is normally a single read.
+
+## Google and built-in providers
+
+Google sign-in uses the same users, sessions, groups, suspension rules and guards
+as email/password authentication. Register an OAuth **Web application** client in
+Google Cloud and configure its branding/consent screen. This integration uses the
+server authorization-code flow, requests only `openid email`, and needs Erlang/OTP
+27 or newer. It does not request offline access or store Google access/refresh tokens.
+
+```gleam
+import howdy/auth/providers/google
+
+let assert Ok(identity) = auth.with_provider(
+  identity,
+  google.new(client_id: google_client_id, client_secret: google_client_secret),
+)
+let identity = auth.allow_registration(identity)
+
+howdy.new()
+|> howdy.controller(routes.api(identity, at: "/api/auth"))
+|> howdy.controller(routes.providers(
+  identity,
+  at: "/auth",
+  success_path: "/auth/account",
+  failure_path: "/auth/login",
+))
+|> howdy.controller(pages.routes(identity, at: "/auth", api_at: "/api/auth"))
+```
+
+Load credentials from your application's secret configuration. Register the exact
+callback `https://app.example.com/auth/providers/google/callback` in Google Cloud,
+substituting your configured public origin and mount prefix. Local development can
+use `http://localhost:8787/auth/providers/google/callback`. Callback URLs are derived
+from the configured origin, never Host or forwarded headers. Mount the provider
+controller at the same prefix as the starter pages; their Google buttons and account
+link forms appear automatically. `auth.providers(identity)` lists IDs/display names
+for custom pages. The provider constructor returns an opaque `provider.Provider`;
+`auth.with_provider` validates it and rejects duplicate IDs. Custom provider
+construction is an internal implementation seam, not a supported extension contract.
+
+For a Google-only installation, replace `auth.new` with:
+
+```gleam
+let assert Ok(identity) = auth.new_without_email(repo: db, origin: origin)
+```
+
+Add Google as above. Email-token requests and exchanges are disabled; the starter
+pages hide email forms. Existing `auth.new(repo:, origin:, deliver:)` callers keep
+their behaviour. `auth.with_email_tokens(identity, deliver: send_email)` enables
+email tokens later. Enabling a provider does not enable public registration.
+
+| Provider route (under `/auth`) | Behaviour |
+| --- | --- |
+| `POST /providers/google/login` | Begin login or, if enabled, registration |
+| `GET /providers/google/callback` | Validate the response, set a local session cookie, redirect |
+| `POST /providers/google/link` | Begin linking to the currently authenticated account |
+
+Start routes require an exact Origin; plain HTML POST forms work. Callbacks use
+single-use state, a separate HttpOnly SameSite=Lax browser cookie, nonce and PKCE
+S256. Attempts expire after ten minutes and are spent before contacting Google,
+including on cancellation or downstream failure. The latest start for a provider
+in a browser replaces its binding cookie; finish that attempt or start again.
+Success and failure destinations are fixed local paths (letters, numbers, slash,
+hyphen and underscore), not request-controlled return URLs. Callback failures
+redirect to `failure_path` without exposing Google's response or account existence.
+Both routes and responses disable caching and referrers. Redact callback query
+strings in any application/ingress logging; they contain Google's one-use code.
+
+The default provider-route limit is 30 requests/minute per socket address. Behind
+a trusted proxy, use `routes.providers_limited_by(..., key:)`, following the same
+trusted-key rules as `routes.api_limited_by`. Each outgoing Google request has a
+ten-second timeout and verifies TLS; HTTP redirects are not followed. Signing keys
+are cached according to Cache-Control/Age, for at most one hour, and refreshed once
+on a signature/key mismatch. Identity and session decisions are never cached here.
+
+Account rules:
+
+- An existing `(issuer, subject)` link signs into its local account even if Google's
+  email changes. It never silently changes the local recovery email.
+- A new identity creates an account only with registration enabled and an email
+  Google authoritatively verifies: Gmail or a verified Workspace hosted domain.
+- An existing local email never links automatically. Sign into that account, then
+  use the account page's **Link Google** form. The session must have been created
+  within `policy.fresh_session_seconds`; the same live session must finish linking.
+- A Google account using another email provider first registers/verifies through
+  Howdy's email flow, then explicitly links. Google-only self-registration for
+  those third-party email addresses is refused. A verified Google assertion alone
+  does not establish current ownership of that external mailbox.
+- Each local user can link one identity per issuer. Linking another subject or an
+  identity already held by another account fails; it never replaces an existing link.
+
+To restrict sign-ins to Google Workspace, pipe the constructor through
+`google.require_hosted_domain("example.com")`. This checks the signed `hd` claim,
+not just the account chooser's domain hint or the email suffix. Domains must use
+lowercase ASCII spelling. Local roles and permissions remain application-managed.
+
+Under `AccountPerGroup`, the same external subject may have distinct local accounts
+in different groups. Pass `?group=GROUP_ID` to the login start route, or mount with
+`auth.in_group`; the selected group is stored with the attempt. Under
+`OneGroupPerUser`, new registrations also need a selected group, while existing
+links can sign in without one. Link attempts always capture the user's group.
+Moving a user moves their provider links and invalidates pending attempts; group
+mode conversion refuses ambiguous identities and updates the scopes transactionally.
+
+Provider sessions appear as `auth.Provider("google")` or `"provider:google"` in the
+JSON session list. They do **not** satisfy the fresh email-token proof required to
+set/reset a password. External session stores follow the same commit/publish and
+revocation limitations as the existing login flows. Local logout ends the Howdy
+session; it does not sign the browser out of Google.
+
+Headless/custom browser transports can use `auth.begin_provider`,
+`auth.begin_provider_link` and `auth.finish_provider`. They must carry the secret
+browser token in a protected cookie, enforce Origin and rate limits on starts,
+and pass the same authenticated principal on a linking callback. The finish result
+is `ProviderSession(Session)` or `ProviderLinked`. Do not expose the internal
+provider verification/transport seam as a remotely callable operation.
+
+Migration 9 adds provider attempts and identity links and permits provider session
+methods, preserving existing users and sessions. Run `migration.run` before deploying
+and stop old instances during this upgrade, as with the package's other migrations.
+On SQLite the old constrained method column is retained as `legacy_method` to avoid
+rebuilding the session table; application-created indexes targeting the old method
+column follow that name and should be replaced if they need to index new methods.
+
+References: [Google's server flow](https://developers.google.com/identity/openid-connect/openid-connect),
+[Google identity/email verification](https://developers.google.com/identity/sign-in/web/backend-auth).
 
 ## Optional passwords
 

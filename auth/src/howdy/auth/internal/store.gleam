@@ -15,6 +15,7 @@ import gloo/value.{type GlooValue}
 import howdy/auth/field
 import howdy/auth/group.{type Group}
 import howdy/auth/internal/database as db
+import howdy/auth/internal/provider_store
 import howdy/auth/internal/token
 import howdy/auth/policy.{type Policy}
 import howdy/auth/user.{type User}
@@ -758,6 +759,7 @@ pub fn delete_expired(
   now: Int,
   policy: Policy,
 ) -> service.Result(Nil) {
+  use _ <- result.try(provider_store.prune(conn))
   use _ <- result.try(
     db.execute(conn, "DELETE FROM howdy_auth_sessions WHERE expires_at <= $1", [
       sql.int(now),
@@ -1078,6 +1080,15 @@ pub fn move_user(
       [sql.string(login_key), sql.string(user_id)],
     ),
   )
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "UPDATE howdy_auth_provider_identities SET scope = $1 WHERE user_id = $2 AND scope <> ''",
+      [sql.string(group_id), sql.string(user_id)],
+    ),
+  )
+  // In-flight sign-ins must not follow an account into a different group.
+  use _ <- result.try(provider_store.invalidate(conn))
   // Keys unique within a group name the group, so they follow the user.
   db.execute(
     conn,
@@ -1266,6 +1277,7 @@ pub fn rekey_users(conn: Repo, per_group: Bool) -> service.Result(Nil) {
       [],
     ),
   )
+  use _ <- result.try(provider_store.rekey(conn, per_group))
   // Pending tokens were issued under the old rules.
   db.execute(conn, "DELETE FROM howdy_auth_challenges", [])
 }

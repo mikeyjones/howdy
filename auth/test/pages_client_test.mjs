@@ -81,3 +81,11 @@ test('revoking the current session leaves the page signed out', async () => {
   assert.equal(ids.status.textContent, 'You are signed out.');
   assert.ok(ids.account.buttons.every(button => button.disabled));
 });
+
+test('Google-only login page works without an email form or account controls', () => {
+  const status = new Element();
+  vm.runInNewContext(script, {
+    document: { getElementById: id => id === 'status' ? status : null },
+    fetch: () => { throw Error('provider-only login must use its browser form'); },
+  });
+});
