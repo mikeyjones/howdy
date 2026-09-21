@@ -4,12 +4,14 @@ import gleam/http/response
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import gleam/uri
 import howdy/auth.{type Auth}
 import howdy/auth/internal/login_transport
 import howdy/auth/secret
 import howdy/auth/user.{type Principal}
 import howdy/controller
 import howdy/cookie
+import howdy/form
 import howdy/guard
 import howdy/middleware
 import howdy/query
@@ -100,6 +102,27 @@ pub fn routes(
           )
         complete(ctx, identity, prefix, success, failure, principal, completed)
         |> cookie.delete(cookie_name(identity, id), options(identity))
+      }),
+    )
+    // `response_mode=form_post`, which Apple requires whenever a scope is asked
+    // for. The provider posts here from its own site, so the browser withholds
+    // every SameSite=Lax cookie: neither the attempt's binding nor a session
+    // to link arrives. Nothing is decided here. The answer is handed to the
+    // GET above as a top-level navigation, which does carry those cookies, and
+    // is judged there exactly as a query-mode answer is. Anyone can cause
+    // this redirect, and it gives them nothing a link to that GET would not.
+    |> controller.post(
+      path <> "/callback",
+      wrap(fn(ctx) {
+        use submitted <- form.read_with_limit(ctx, 16_384)
+        let answer =
+          list.filter_map(["state", "code", "error"], fn(name) {
+            case form.value(submitted, name) {
+              "" -> Error(Nil)
+              value -> Ok(#(name, value))
+            }
+          })
+        redirect(ctx, callback <> "?" <> uri.query_to_string(answer))
       }),
     )
   })

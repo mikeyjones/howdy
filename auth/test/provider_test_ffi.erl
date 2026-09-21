@@ -1,5 +1,5 @@
 -module(provider_test_ffi).
--export([sign/2, jwks/0, certificate/0, saml_sign/2, saml_sign_other/2, inflate/1, instant/1]).
+-export([ec_pem/0, ec_sec1_pem/0, es256_verify/1, sign/2, jwks/0, certificate/0, saml_sign/2, saml_sign_other/2, inflate/1, instant/1]).
 -include_lib("xmerl/include/xmerl.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
@@ -90,3 +90,43 @@ inflate(Encoded) -> zlib:unzip(base64:decode(Encoded)).
 
 instant(Seconds) ->
     list_to_binary(calendar:system_time_to_rfc3339(Seconds, [{offset, "Z"}])).
+
+%% --- Apple: a P-256 client key, and a check of the ES256 JWT it signs --------
+
+ec_key() ->
+    case persistent_term:get({?MODULE, ec_key}, undefined) of
+        undefined ->
+            Key = public_key:generate_key({namedCurve, secp256r1}),
+            persistent_term:put({?MODULE, ec_key}, Key), Key;
+        Key -> Key
+    end.
+
+%% PKCS#8, as in Apple's .p8 download. OpenSSL converts, since OTP versions
+%% differ in whether they can encode a PrivateKeyInfo themselves.
+ec_pem() ->
+    case persistent_term:get({?MODULE, ec_pem}, undefined) of
+        undefined ->
+            Path = filename:join("/tmp", "howdy-apple-" ++ integer_to_list(erlang:unique_integer([positive]))),
+            ok = file:write_file(Path, ec_sec1_pem()),
+            _ = os:cmd("openssl pkcs8 -topk8 -nocrypt -in " ++ Path ++ " -out " ++ Path ++ ".p8"),
+            {ok, Pem} = file:read_file(Path ++ ".p8"),
+            file:delete(Path), file:delete(Path ++ ".p8"),
+            persistent_term:put({?MODULE, ec_pem}, Pem), Pem;
+        Pem -> Pem
+    end.
+
+ec_sec1_pem() ->
+    public_key:pem_encode([public_key:pem_entry_encode('ECPrivateKey', ec_key())]).
+
+%% Verify a compact ES256 JWS against the test key; return header and claims.
+es256_verify(Jwt) ->
+    try
+        [Header, Claims, Signature] = binary:split(Jwt, <<".">>, [global]),
+        <<R:256, S:256>> = base64:decode(Signature, #{mode => urlsafe, padding => false}),
+        Der = public_key:der_encode('ECDSA-Sig-Value', #'ECDSA-Sig-Value'{r = R, s = S}),
+        #'ECPrivateKey'{publicKey = Point, parameters = Parameters} = ec_key(),
+        true = public_key:verify(<<Header/binary, ".", Claims/binary>>, sha256, Der,
+                                 {#'ECPoint'{point = Point}, Parameters}),
+        {ok, {base64:decode(Header, #{mode => urlsafe, padding => false}),
+              base64:decode(Claims, #{mode => urlsafe, padding => false})}}
+    catch _:_ -> {error, nil} end.

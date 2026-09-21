@@ -8,7 +8,7 @@ This is an initial implementation, not the complete enterprise identity system.
 It targets Erlang and accepts an **already-configured `gloo/repo.Repo`**, supporting
 Gloo’s PostgreSQL and SQLite adapters. The application owns connection setup,
 configuration and shutdown, and supplies email delivery when email tokens are enabled.
-Google, GitHub, Facebook and Microsoft Entra adapters are built in. Passkeys and
+Google, Apple, GitHub, Facebook and Microsoft Entra adapters are built in. Passkeys and
 optional TOTP/delivered-code MFA are described below, as are enterprise single
 sign-on connections over OpenID Connect and SAML 2.0, with enforcement. SCIM,
 invitations, tenant lifecycle management, a hosted management dashboard and
@@ -523,6 +523,54 @@ and explicitly link the provider. Subsequent provider sign-ins work even when
 no email is returned. GitHub can register a new local account when it supplies
 a verified email and local registration is enabled; existing local accounts
 must explicitly link. Provider access and refresh tokens are not stored.
+
+## Sign in with Apple
+
+```gleam
+import howdy/auth/providers/apple
+
+let assert Ok(identity) =
+  auth.with_provider(
+    identity,
+    apple.new(
+      client_id: "com.example.web",      // the Services ID, not a bundle ID
+      team_id: "ABCDE12345",
+      key_id: "KEY1234567",
+      private_key: apple_p8_contents,     // the PEM text of the .p8 download
+    ),
+  )
+```
+
+In the Apple developer console, create a Services ID with Sign in with Apple
+enabled, add your domain, and register the return URL
+`https://app.example.com/auth/providers/apple/callback` (Apple requires HTTPS
+and rejects `localhost`, so test against a real or tunnelled domain). Create a
+key with Sign in with Apple enabled and keep its `.p8` with your other secrets.
+
+Apple has no shared client secret: each token request is authenticated by a
+five-minute ES256 JWT signed with that key, generated per exchange and never
+stored. `with_provider` signs once at startup, so an unusable key is an error
+there rather than at the first sign-in. The provider then verifies the
+`id_token`'s RS256 signature against Apple's published keys, and its issuer,
+audience, lifetime and nonce. Apple documents no PKCE support, so none is sent.
+
+Requesting the email scope makes Apple answer with a **cross-site POST**
+(`response_mode=form_post`), on which browsers withhold SameSite=Lax cookies:
+neither the attempt's binding cookie nor a session to link would arrive. The
+provider routes therefore accept `POST …/providers/<id>/callback` only to
+redirect (303) to the same callback as a GET carrying `state` and `code`, where
+the attempt is judged exactly as for every other provider. That POST decides
+nothing and sets nothing. If the application adds its own CSRF or Origin
+middleware in front of these routes, exempt that one path.
+
+Apple verifies every address it releases, including `privaterelay.appleid.com`
+relay addresses, so a verified email can register a new local account when
+registration is enabled; existing local accounts must explicitly link, as with
+GitHub. Mail to a relay address is delivered only from sender domains registered
+with Apple, so register yours or token and notice emails will not arrive. A user
+may share no address at all; such an identity can sign in only to an account it
+is already linked to. Apple sends the user's name once, in the POST, and it is
+discarded: this package stores no names.
 
 ## Enterprise single sign-on
 
