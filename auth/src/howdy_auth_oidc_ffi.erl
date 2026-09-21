@@ -1,5 +1,6 @@
 -module(howdy_auth_oidc_ffi).
--export([verify_entra/2, verify/2, protect/2, keys_new/0, keys_read/1, keys_write/3]).
+-export([verify_entra/2, verify/2, protect/2, keys_new/0, keys_read/1, keys_write/3,
+         keys_read/2, keys_write/4]).
 -include_lib("public_key/include/public_key.hrl").
 
 %% Fixed Google RS256 compact-JWS verifier using OTP's public_key primitive.
@@ -45,6 +46,16 @@ keys_read(Table) ->
     end catch error:badarg -> none end.
 keys_write(Table, Body, Until) ->
     try ets:insert(Table, {keys, Body, Until}) catch error:badarg -> ok end,
+    nil.
+
+%% One table for every SSO connection, keyed by the URL the body came from.
+keys_read(Table, Key) ->
+    try case ets:lookup(Table, Key) of
+        [{Key, Body, Until}] -> {some, {Body, Until}};
+        [] -> none
+    end catch error:badarg -> none end.
+keys_write(Table, Key, Body, Until) ->
+    try ets:insert(Table, {Key, Body, Until}) catch error:badarg -> ok end,
     nil.
 
 %% Microsoft keys are scoped to either one issuer or the tenant template.

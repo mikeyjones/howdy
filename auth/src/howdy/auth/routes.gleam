@@ -11,6 +11,7 @@ import howdy/auth.{type Auth}
 import howdy/auth/internal/login_transport
 import howdy/auth/internal/provider_routes
 import howdy/auth/internal/security_routes
+import howdy/auth/internal/sso_routes
 import howdy/auth/user
 import howdy/body
 import howdy/context
@@ -426,4 +427,33 @@ pub fn providers_limited_by(
   key key: fn(controller.Context) -> Option(String),
 ) -> controller.Controller {
   provider_routes.routes(identity, prefix, success, failure, key)
+}
+
+/// Browser redirects for SSO connections; see `howdy/auth/connection`. Mount
+/// once at startup: connections created later are served without remounting.
+/// A connection's redirect URI, to register at the customer's provider, is
+/// `auth.origin(identity) <> at <> "/sso/" <> connection.id <> "/callback"`.
+/// `POST at <> "/sso/login"` takes a form `email` and picks the connection by
+/// its domain. Destinations are fixed local paths. POSTs require an exact
+/// Origin.
+pub fn sso(
+  identity: Auth,
+  at prefix: String,
+  success_path success: String,
+  failure_path failure: String,
+) -> controller.Controller {
+  sso_routes.routes(identity, prefix, success, failure, fn(ctx) {
+    context.client_ip(ctx.request)
+  })
+}
+
+/// As `sso`, with a trusted client key for proxy-aware rate limits/audit.
+pub fn sso_limited_by(
+  identity: Auth,
+  at prefix: String,
+  success_path success: String,
+  failure_path failure: String,
+  key key: fn(controller.Context) -> Option(String),
+) -> controller.Controller {
+  sso_routes.routes(identity, prefix, success, failure, key)
 }

@@ -48,6 +48,46 @@ pub fn get(
   }
 }
 
+@external(erlang, "howdy_auth_oidc_ffi", "keys_read")
+fn read_keyed(cache: Cache, key: String) -> Option(#(String, Int))
+
+@external(erlang, "howdy_auth_oidc_ffi", "keys_write")
+fn write_keyed(cache: Cache, key: String, body: String, until: Int) -> Nil
+
+@external(erlang, "howdy_auth_ffi", "with_repo_lock")
+fn locked_on(
+  key: #(Cache, String),
+  run: fn() -> service.Result(String),
+) -> service.Result(String)
+
+/// As `get`, for a cache shared by many SSO connections. `key` is the URL
+/// fetched, and the lock is per URL: one customer's slow provider must not
+/// stall another's sign-ins. Enterprise discovery documents rarely carry cache
+/// headers, so a body is kept for at least `floor` seconds.
+pub fn get_keyed(
+  cache: Cache,
+  key: String,
+  refresh: Bool,
+  floor: Int,
+  fetch: fn() -> service.Result(Response(String)),
+) -> service.Result(String) {
+  use <- locked_on(#(cache, key))
+  let now = token.now()
+  case read_keyed(cache, key), refresh {
+    Some(#(body, until)), False if until > now -> Ok(body)
+    _, _ -> {
+      use res <- result.try(fetch())
+      case res.status == 200 && string.byte_size(res.body) <= 1_048_576 {
+        True -> {
+          write_keyed(cache, key, res.body, now + int.max(floor, lifetime(res)))
+          Ok(res.body)
+        }
+        False -> Error(service.Unauthorized)
+      }
+    }
+  }
+}
+
 fn lifetime(res: Response(String)) -> Int {
   let directives =
     response.get_header(res, "cache-control")

@@ -108,7 +108,8 @@ For a normal Howdy web application, prioritize:
 
 Multi-origin passkeys deserve earlier priority if deployment spans subdomains.
 Shared memberships and invitations matter if the product needs collaborative
-workspaces. Enterprise integrations remain deferred.
+workspaces. Enterprise SSO connections (OIDC and SAML) now exist in
+`howdy_auth`, with enforcement; see its README. SCIM remains deferred.
 
 ## Evidence and limits
 

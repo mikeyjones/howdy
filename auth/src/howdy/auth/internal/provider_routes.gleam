@@ -7,6 +7,7 @@ import gleam/string
 import howdy/auth.{type Auth}
 import howdy/auth/internal/login_transport
 import howdy/auth/secret
+import howdy/auth/user.{type Principal}
 import howdy/controller
 import howdy/cookie
 import howdy/guard
@@ -56,7 +57,7 @@ pub fn routes(
         start(
           ctx,
           identity,
-          id,
+          cookie_name(identity, id),
           auth.begin_provider(scoped, id, callback, option.unwrap(key(ctx), "")),
         )
       }),
@@ -69,7 +70,7 @@ pub fn routes(
         start(
           ctx,
           identity,
-          id,
+          cookie_name(identity, id),
           auth.begin_provider_link(identity, principal, id, callback),
         )
       }),
@@ -97,76 +98,88 @@ pub fn routes(
             code,
             principal,
           )
-        let res = case completed {
-          Ok(auth.ProviderSession(session)) -> {
-            // Rotate an existing local session when switching accounts.
-            case principal {
-              Some(p) -> {
-                let _ = auth.logout(identity, p)
-                Nil
-              }
-              None -> Nil
-            }
-            redirect(ctx, success)
-            |> cookie.set(
-              auth.cookie_name(identity),
-              secret.reveal(session.token),
-              options(identity)
-                |> cookie.max_age(auth.policy(identity).session_seconds),
-            )
-          }
-          Ok(auth.ProviderSecondFactor(challenge)) -> {
-            case principal {
-              Some(p) -> {
-                let _ = auth.logout(identity, p)
-                Nil
-              }
-              None -> Nil
-            }
-            case login_transport.try_trusted(identity, ctx, challenge) {
-              auth.SignedIn(session) ->
-                redirect(ctx, success)
-                |> cookie.set(
-                  auth.cookie_name(identity),
-                  secret.reveal(session.token),
-                  options(identity)
-                    |> cookie.max_age(auth.policy(identity).session_seconds),
-                )
-              auth.SecondFactor(challenge) ->
-                login_transport.pending(
-                  identity,
-                  redirect(ctx, prefix <> "/mfa"),
-                  challenge,
-                )
-            }
-          }
-          Ok(auth.ProviderLinked) -> redirect(ctx, success)
-          Error(_) -> redirect(ctx, failure)
-        }
-        res |> cookie.delete(cookie_name(identity, id), options(identity))
+        complete(ctx, identity, prefix, success, failure, principal, completed)
+        |> cookie.delete(cookie_name(identity, id), options(identity))
       }),
     )
   })
 }
 
-fn start(ctx, identity, id, started: service.Result(auth.ProviderStart)) {
+/// Turn a finished attempt into the browser's next page. Shared with the SSO
+/// routes: what happens after an identity is proven does not depend on how.
+pub fn complete(
+  ctx,
+  identity: Auth,
+  prefix: String,
+  success: String,
+  failure: String,
+  principal: Option(Principal),
+  completed: service.Result(auth.ProviderOutcome),
+) {
+  let signed_in = fn(session: auth.Session) {
+    redirect(ctx, success)
+    |> cookie.set(
+      auth.cookie_name(identity),
+      secret.reveal(session.token),
+      options(identity)
+        |> cookie.max_age(auth.policy(identity).session_seconds),
+    )
+  }
+  // Rotate an existing local session when switching accounts.
+  let rotate = fn() {
+    case principal {
+      Some(p) -> {
+        let _ = auth.logout(identity, p)
+        Nil
+      }
+      None -> Nil
+    }
+  }
+  case completed {
+    Ok(auth.ProviderSession(session)) -> {
+      rotate()
+      signed_in(session)
+    }
+    Ok(auth.ProviderSecondFactor(challenge)) -> {
+      rotate()
+      case login_transport.try_trusted(identity, ctx, challenge) {
+        auth.SignedIn(session) -> signed_in(session)
+        auth.SecondFactor(challenge) ->
+          login_transport.pending(
+            identity,
+            redirect(ctx, prefix <> "/mfa"),
+            challenge,
+          )
+      }
+    }
+    Ok(auth.ProviderLinked) -> redirect(ctx, success)
+    Error(_) -> redirect(ctx, failure)
+  }
+}
+
+pub fn start(
+  ctx,
+  identity: Auth,
+  named: String,
+  started: service.Result(auth.ProviderStart),
+) {
   case started {
     Error(error) -> service.error_response(ctx, error)
     Ok(start) ->
       redirect(ctx, start.url)
       |> cookie.set(
-        cookie_name(identity, id),
+        named,
         secret.reveal(start.browser_token),
         options(identity) |> cookie.max_age(600),
       )
   }
 }
 
-fn redirect(ctx, location) {
+pub fn redirect(ctx, location) {
   controller.status(ctx, 303) |> response.set_header("location", location)
 }
 
-fn options(identity) {
+pub fn options(identity) {
   cookie.defaults() |> cookie.secure(auth.secure(identity))
 }
 

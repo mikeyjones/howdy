@@ -9,9 +9,10 @@ It targets Erlang and accepts an **already-configured `gloo/repo.Repo`**, suppor
 Gloo’s PostgreSQL and SQLite adapters. The application owns connection setup,
 configuration and shutdown, and supplies email delivery when email tokens are enabled.
 Google, GitHub, Facebook and Microsoft Entra adapters are built in. Passkeys and
-optional TOTP/delivered-code MFA are described below. Arbitrary OIDC providers,
-SAML, SCIM, invitations, tenant lifecycle management, a hosted management
-dashboard and username login are not implemented yet.
+optional TOTP/delivered-code MFA are described below, as are enterprise single
+sign-on connections over OpenID Connect and SAML 2.0, with enforcement. SCIM,
+invitations, tenant lifecycle management, a hosted management dashboard and
+username login are not implemented yet.
 
 ## Passkeys and multi-factor authentication
 
@@ -442,6 +443,170 @@ and explicitly link the provider. Subsequent provider sign-ins work even when
 no email is returned. GitHub can register a new local account when it supplies
 a verified email and local registration is enabled; existing local accounts
 must explicitly link. Provider access and refresh tokens are not stored.
+
+## Enterprise single sign-on
+
+A **connection** is one customer's identity provider: Okta, Entra, Google
+Workspace, anything speaking OpenID Connect or SAML 2.0. Unlike the built-in
+providers, connections are data. They are created while the server runs, stored
+in the auth database, and bound to the group their users sign in to.
+
+```gleam
+import howdy/auth/connection
+import howdy/auth/connections
+
+// A stable, 32-byte base64url key kept outside the database. Client secrets
+// are sealed with it at rest. It may be the MFA key.
+let assert Ok(sso) = connection.config(sso_encryption_key)
+let identity = auth.with_sso(identity, sso)
+
+let assert Ok(acme) =
+  connections.create_with_id(
+    identity,
+    id: "acme",
+    group: "acme",
+    name: "Acme",
+    protocol: connection.oidc(
+      issuer: "https://acme.okta.com",
+      client_id: okta_client_id,
+      client_secret: okta_client_secret,
+    ),
+    domains: ["acme.com"],
+    by: user.Acting(admin),
+  )
+```
+
+For SAML, pass what the customer's administrator hands over:
+
+```gleam
+connection.Saml(
+  entity_id: "http://www.okta.com/exk1abc",
+  sso_url: "https://acme.okta.com/app/acme/exk1abc/sso/saml",
+  certificates: [signing_certificate_pem],
+)
+```
+
+`howdy/auth/connections` is privileged and is not exposed over HTTP: authorize
+the caller first, as with `howdy/auth/groups`. It also offers `get`, `list`,
+`in_group`, `rename`, `set_protocol`, `set_domains`, `enable`, `disable` and
+`delete`. Every change is audited (`sso.created`, `sso.protocol_changed`, …).
+Under `Single` a connection's group is `group.default_id`.
+
+Mount the browser routes once. Connections created later are served without
+remounting:
+
+```gleam
+routes.sso(identity, at: "/auth", success_path: "/account", failure_path: "/login")
+```
+
+| Route | Purpose |
+| --- | --- |
+| `POST /auth/sso/login` | Form field `email`; the domain picks the connection. |
+| `POST /auth/sso/:connection/login` | Begin at a known connection. |
+| `POST /auth/sso/:connection/link` | Link the signed-in user; needs a fresh session. |
+| `GET /auth/sso/:connection/callback` | OpenID Connect redirect URI. |
+| `POST /auth/sso/:connection/callback` | SAML assertion consumer service. |
+| `GET /auth/sso/:connection/metadata` | SAML service provider metadata. |
+
+A connection therefore has **one URL** to give the customer,
+`auth.origin(identity) <> "/auth/sso/acme/callback"`. It is the OIDC redirect
+URI, and for SAML it is both the ACS URL and the SP entity ID (audience). Ask
+SAML customers for a persistent NameID and an email attribute; an address used
+as the NameID also serves.
+
+### What a connection is believed about
+
+The identity provider belongs to the customer, not to a party Howdy can pin, so
+it may assert anything. Three rules contain that:
+
+- **Domains.** An asserted address is believed only inside the connection's
+  own `domains`, and a domain belongs to at most one connection. Confirm the
+  customer controls a domain before adding it: Howdy does not.
+- **Group.** A connection's users only ever sign in to, or are created in, its
+  own group. An attempt begun at one connection cannot finish at another.
+- **Identities are keyed by the connection**, not by the name the provider
+  gives itself, so one customer's provider cannot assert its way into
+  another's identities. Deleting a connection, or pointing it at a different
+  provider with `set_protocol`, forgets them; rotating a secret or a
+  certificate does not.
+
+Inside those rules the connection is the authority on who holds an address:
+the customer's administrator can read that mailbox anyway. So a first sign-in
+whose address is inside the connection's domains
+
+- **takes up the existing account** with that address in the connection's
+  group, recording `provider.linked` with no actor, or
+- **creates the account**, whether or not `allow_registration` is on: creating
+  the connection is what let those users in.
+
+Nobody links beforehand, and a customer can move to another provider without
+locking anyone out. Once taken up, an account answers to that one subject; a
+second person asserting the same address is refused. A suspended account is
+not revived, and an account with that address in *another* group is never
+touched. An address outside the domains, such as a contractor's, is believed
+about nothing: that user signs in another way and links deliberately from a
+fresh session (`POST …/sso/:connection/link`), as for the built-in providers.
+
+Local MFA still applies after SSO, and sessions record the method as
+`Provider("sso:" <> connection.id)`. Disabling or deleting a connection stops
+new sign-ins through it, and its live sessions stop counting as fresh
+authentication for sensitive operations, but they are not ended: call
+`auth.revoke_sessions` when offboarding a customer.
+
+### Enforcement
+
+```gleam
+connections.enforce(identity, "acme", by: user.Acting(admin))
+connections.stop_enforcing(identity, "acme", by: user.Acting(admin))
+```
+
+An enforced connection is the only way in for the members it **covers**: those
+of its group whose address is in one of its domains. For them email tokens,
+passwords, passkeys and the built-in providers are all refused, at the one
+place every sign-in ends, so a custom transport cannot route around it.
+Members outside the domains, such as guests, keep their ordinary sign-in.
+
+- Refusals are `Unauthorized`, exactly as for a wrong credential, so a correct
+  password is not confirmed to an account that may not use it. Send users to
+  the right place first: `auth.sso_for_email`, or `POST …/sso/login`.
+- Tokens that could never be redeemed are not emailed, to covered members or
+  to new addresses that would be covered. The reply to the caller is unchanged.
+  A token sent before enforcement began is refused when exchanged.
+- `enforce` **signs covered members out**, in the database and in an external
+  session store, so their next sign-in is the provider's. Adding a domain to an
+  enforced connection does the same for those it newly covers.
+- Local MFA still runs after the provider.
+- Enforcement needs at least one domain, lapses while the connection is
+  disabled, and is decided from the database alone: a deployment that drops
+  `with_sso` keeps enforcing, and its covered members cannot sign in until it
+  is restored. If a customer's provider breaks, `stop_enforcing` is the way
+  back in, so keep an operator account outside every enforced domain.
+
+### Protocol limits
+
+OpenID Connect: authorization code flow with PKCE, state and nonce; discovery
+at the configured issuer only, which the document must name; RS256 ID tokens;
+`client_secret_post` or `client_secret_basic` as the provider advertises.
+
+SAML: SP-initiated only, HTTP-Redirect out and HTTP-POST back, RSA signatures
+with SHA-256 or better over exclusive canonical XML. The response or its
+assertion must be signed by a **pinned** certificate (a certificate inside the
+document is ignored), and every signature present must verify. Claims are read
+only from the single assertion the signature covers; documents with a DTD, an
+encrypted assertion or more than one assertion are refused. Unsupported:
+IdP-initiated sign-in, signed AuthnRequests, encrypted assertions, single
+logout, ECDSA. Canonicalisation is esaml's `xmerl_c14n`, vendored as
+`howdy_auth_c14n` under its BSD licence; signature verification is Howdy's own
+and has not been independently audited.
+
+Requests to a customer's OIDC endpoints are HTTPS only, follow no redirects
+and refuse hosts that resolve to loopback, private or link-local addresses.
+That is a filter, not a pinned connection, which is one reason connection
+management stays a privileged, operator-side API.
+
+The SAML browser binding sets a second, `SameSite=None; Secure` cookie, since
+the provider posts back from its own site. Browsers accept it on loopback
+HTTP during development.
 
 ## Google and built-in providers
 

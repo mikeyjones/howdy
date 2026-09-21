@@ -4,6 +4,7 @@
 
 import howdy/auth/secret
 
+import gleam/bool
 import gleam/http
 import gleam/http/request
 import gleam/int
@@ -15,16 +16,20 @@ import gleam/result
 import gleam/string
 import gleam/uri
 import gloo/repo.{type Repo}
+import howdy/auth/connection
 import howdy/auth/field.{type Change}
 import howdy/auth/group.{type Mode, AccountPerGroup, OneGroupPerUser, Single}
 import howdy/auth/internal/account_store
 import howdy/auth/internal/address
 import howdy/auth/internal/cache
+import howdy/auth/internal/connection_store
 import howdy/auth/internal/database as db
 import howdy/auth/internal/password as password_hash
 import howdy/auth/internal/provider_store
 import howdy/auth/internal/schema
 import howdy/auth/internal/security_store
+import howdy/auth/internal/sso_oidc
+import howdy/auth/internal/sso_saml
 import howdy/auth/internal/store
 import howdy/auth/internal/token
 import howdy/auth/mfa
@@ -86,6 +91,7 @@ pub opaque type Auth {
     before_delete: Option(fn(Repo, User) -> service.Result(Nil)),
     mfa: Option(mfa.Config),
     passkeys: Option(String),
+    sso: Option(connection.Config),
   )
 }
 
@@ -163,6 +169,7 @@ pub fn new(
     groups,
     None,
     InDatabase,
+    None,
     None,
     None,
     None,
@@ -492,6 +499,12 @@ fn request_challenge(
   })
   use within <- result.try(target(auth, intent == Register))
   use _ <- result.try(existing(auth, within))
+  // A covered member's token could never be redeemed. The reply is the same
+  // as for any other address; the sign-in page routes them by `sso_for_email`.
+  use enforcing <- result.try(
+    db.connect(auth.repo, connection_store.enforcing(_, email, within)),
+  )
+  use <- bool.guard(option.is_some(enforcing), Ok(Nil))
   let now = token.now()
   // What the token will actually do, and so what the email must say. Asking to
   // register an address that already has an account sends a sign-in token and
@@ -741,6 +754,7 @@ fn issue_session(
   method: Method,
   client: String,
 ) -> service.Result(Issued) {
+  use _ <- result.try(sso_permits(conn, user, method_name(method)))
   use factor <- result.try(security_store.factor(conn, user.id))
   case factor {
     None ->
@@ -767,6 +781,28 @@ fn issue_session(
   }
 }
 
+/// A member covered by an enforced SSO connection signs in through it and no
+/// other way. Every sign-in ends at a session, so this is the one gate. The
+/// refusal is Unauthorized, as for a wrong credential: a right password must
+/// not be distinguishable from a wrong one by an account that may not use it.
+/// It reads no SSO configuration, so enforcement holds (and covered members
+/// are locked out, visibly) if a deployment forgets `with_sso`.
+fn sso_permits(conn: Repo, user: User, method: String) -> service.Result(Nil) {
+  use enforcing <- result.try(connection_store.enforcing(
+    conn,
+    user.email,
+    Some(user.group_id),
+  ))
+  case enforcing {
+    None -> Ok(Nil)
+    Some(id) ->
+      case method == method_name(Provider(connection.identity_issuer(id))) {
+        True -> Ok(Nil)
+        False -> Error(service.Unauthorized)
+      }
+  }
+}
+
 fn issue_verified_session(
   conn: Repo,
   auth: Auth,
@@ -774,6 +810,8 @@ fn issue_verified_session(
   method: String,
   client: String,
 ) -> service.Result(Issued) {
+  // Again here: a second factor may finish after enforcement began.
+  use _ <- result.try(sso_permits(conn, user, method))
   let now = token.now()
   let session =
     Session(user, secret.wrap(token.new()), now + auth.policy.session_seconds)
@@ -1089,6 +1127,17 @@ fn register(
     True -> Ok(Nil)
     False -> Error(service.Forbidden)
   })
+  enroll(conn, auth, email, within, client)
+}
+
+/// Registration itself, once the caller has decided it is allowed.
+fn enroll(
+  conn: Repo,
+  auth: Auth,
+  email: String,
+  within: Option(String),
+  client: String,
+) -> service.Result(Nil) {
   // A token from before groups existed names none.
   use group_id <- result.try(case auth.groups, within {
     _, Some(id) -> Ok(id)
@@ -1582,7 +1631,8 @@ pub fn begin_provider(
   callback_path: String,
   client: String,
 ) -> service.Result(ProviderStart) {
-  begin_provider_attempt(auth, id, callback_path, client, None)
+  use provider <- result.try(configured_provider(auth, id))
+  begin_provider_attempt(auth, provider, callback_path, client, None)
 }
 
 /// Linking requires a live, recently created session. The callback must present
@@ -1594,9 +1644,10 @@ pub fn begin_provider_link(
   callback_path: String,
 ) -> service.Result(ProviderStart) {
   use principal <- result.try(fresh_provider_principal(auth, principal))
+  use provider <- result.try(configured_provider(auth, id))
   begin_provider_attempt(
     in_group(auth, principal.user.group_id),
-    id,
+    provider,
     callback_path,
     principal.client,
     Some(principal),
@@ -1627,12 +1678,12 @@ fn fresh_provider_principal(
 
 fn begin_provider_attempt(
   auth: Auth,
-  id: String,
+  provider: provider.Provider,
   callback_path: String,
   client: String,
   linking: Option(Principal),
 ) -> service.Result(ProviderStart) {
-  use provider <- result.try(configured_provider(auth, id))
+  let id = provider.id(provider)
   use _ <- result.try(case provider_path(callback_path) {
     True -> Ok(Nil)
     False -> Error(service.Invalid("invalid provider callback path"))
@@ -1690,6 +1741,38 @@ pub fn finish_provider(
   principal: Option(Principal),
 ) -> service.Result(ProviderOutcome) {
   use provider <- result.try(configured_provider(auth, id))
+  use attempt <- result.try(consume_attempt(
+    auth,
+    id,
+    callback_path,
+    state,
+    browser_token,
+  ))
+  use code <- result.try(case code {
+    Some(code) if code != "" -> Ok(code)
+    _ -> Error(service.Unauthorized)
+  })
+  use identity <- result.try(provider.exchange(
+    provider,
+    provider.Exchange(
+      secret.wrap(code),
+      attempt.redirect_uri,
+      attempt.verifier,
+      attempt.nonce_digest,
+    ),
+  ))
+  complete_identity(auth, id, attempt, identity, principal, Public)
+}
+
+/// Spend the browser-bound attempt, whatever happens next, and confirm it was
+/// begun under the group configuration that is finishing it.
+fn consume_attempt(
+  auth: Auth,
+  id: String,
+  callback_path: String,
+  state: String,
+  browser_token: String,
+) -> service.Result(provider_store.Attempt) {
   use _ <- result.try(valid_token(state))
   use _ <- result.try(valid_token(browser_token))
   use attempt <- result.try({
@@ -1710,19 +1793,20 @@ pub fn finish_provider(
     Some(g) -> in_bound_group(auth, g)
     None -> Ok(Nil)
   })
-  use code <- result.try(case code {
-    Some(code) if code != "" -> Ok(code)
-    _ -> Error(service.Unauthorized)
-  })
-  use identity <- result.try(provider.exchange(
-    provider,
-    provider.Exchange(
-      secret.wrap(code),
-      attempt.redirect_uri,
-      attempt.verifier,
-      attempt.nonce_digest,
-    ),
-  ))
+  Ok(attempt)
+}
+
+/// Apply local account policy to an identity the external party has already
+/// proven. Nothing here depends on how it was proven, so every sign-in
+/// protocol ends in this one place.
+fn complete_identity(
+  auth: Auth,
+  id: String,
+  attempt: provider_store.Attempt,
+  identity: provider.Identity,
+  principal: Option(Principal),
+  admission: Admission,
+) -> service.Result(ProviderOutcome) {
   // Revalidate after the network request: revocation while at Google must not
   // authorize linking, nor may another browser session take over.
   use linking <- result.try(case attempt.link_user, principal {
@@ -1798,7 +1882,8 @@ pub fn finish_provider(
               _, _ -> Error(service.Unauthorized)
             }
           }
-          None -> register_provider_user(conn, auth, attempt, identity)
+          None ->
+            admit_provider_user(conn, auth, attempt, identity, admission, id)
         })
         use _ <- result.try(in_bound_group(auth, user.group_id))
         use _ <- result.try(case attempt.group_id {
@@ -1825,34 +1910,264 @@ pub fn finish_provider(
   }
 }
 
-fn register_provider_user(
+/// What an identity nobody owns yet may become.
+type Admission {
+  /// A built-in provider: a new account if public registration is open, and
+  /// never an existing one. Equal addresses alone attach nothing.
+  Public
+  /// An SSO connection, believed only about its own domains and group, which
+  /// the attempt is already bound to. There it is the authority on who holds
+  /// an address: the customer's administrator can read that mailbox anyway.
+  /// So it takes up the existing account, and otherwise creates one whether
+  /// or not registration is public. Without this, turning enforcement on, or
+  /// moving to another provider, would lock out everyone who had not linked.
+  Connection
+}
+
+fn admit_provider_user(
   conn: Repo,
   auth: Auth,
   attempt: provider_store.Attempt,
   identity: provider.Identity,
+  admission: Admission,
+  id: String,
 ) -> service.Result(User) {
   // Third-party Google addresses first register/verify by email, then link.
-  use _ <- result.try(case auth.registration && identity.email_authoritative {
+  let open = case admission {
+    Public -> auth.registration
+    Connection -> True
+  }
+  use _ <- result.try(case identity.email_authoritative {
     True -> Ok(Nil)
     False -> Error(service.Forbidden)
   })
   use email <- result.try(address.normalize_email(identity.email))
-  use _ <- result.try(register(
-    conn,
-    auth,
-    email,
-    attempt.group_id,
-    attempt.client,
-  ))
-  use users <- result.try(store.active_user_by_email(
-    conn,
-    email,
-    attempt.group_id,
-  ))
-  case users {
-    [user] -> Ok(user)
-    _ -> Error(service.Unauthorized)
+  use existing <- result.try(case admission {
+    Public -> Ok([])
+    Connection -> store.active_user_by_email(conn, email, attempt.group_id)
+  })
+  case existing, open {
+    [user], _ -> {
+      use _ <- result.try(event_from(
+        conn,
+        user.id,
+        "provider.linked",
+        System,
+        id,
+        attempt.client,
+      ))
+      Ok(user)
+    }
+    [], True -> {
+      use _ <- result.try(enroll(
+        conn,
+        auth,
+        email,
+        attempt.group_id,
+        attempt.client,
+      ))
+      use users <- result.try(store.active_user_by_email(
+        conn,
+        email,
+        attempt.group_id,
+      ))
+      case users {
+        [user] -> Ok(user)
+        _ -> Error(service.Unauthorized)
+      }
+    }
+    _, _ -> Error(service.Forbidden)
   }
+}
+
+/// Enable enterprise single sign-on connections; see `howdy/auth/connection`.
+/// Construct once at startup, then manage them with `howdy/auth/connections`.
+pub fn with_sso(auth: Auth, config: connection.Config) -> Auth {
+  Auth(..auth, sso: Some(config))
+}
+
+pub fn sso_enabled(auth: Auth) -> Bool {
+  option.is_some(auth.sso)
+}
+
+@internal
+pub fn sso_config(auth: Auth) -> service.Result(connection.Config) {
+  option.to_result(auth.sso, service.Forbidden)
+}
+
+/// Sign out every member a newly enforced connection covers, in the caller's
+/// transaction and then in an external session store. Their next sign-in is
+/// through the connection.
+@internal
+pub fn end_covered_sessions(
+  auth: Auth,
+  connection_id: String,
+  commit: fn(Repo) -> service.Result(a),
+) -> service.Result(a) {
+  use #(value, users) <- result.try({
+    use conn <- db.write_transaction(
+      auth.repo,
+      touching: "howdy_auth_sso_connections",
+    )
+    use value <- result.try(commit(conn))
+    use users <- result.try(connection_store.covered(conn, connection_id))
+    use _ <- result.try(list.try_each(users, store.delete_sessions(conn, _)))
+    Ok(#(value, users))
+  })
+  use _ <- result.try(
+    externally(auth, fn(external) {
+      list.try_each(users, external.delete_for_user(_, None))
+    }),
+  )
+  Ok(value)
+}
+
+/// Whether a session's provider method can still sign in: a built-in provider
+/// that is configured, or an SSO connection that exists and is enabled.
+fn provider_enabled(
+  conn: Repo,
+  auth: Auth,
+  id: String,
+) -> service.Result(Bool) {
+  case id, auth.sso {
+    "sso:" <> connection_id, Some(config) ->
+      connection_store.find(conn, config, connection_id)
+      |> result.map(fn(found) {
+        case found {
+          Some(c) -> c.enabled
+          None -> False
+        }
+      })
+    "sso:" <> _, None -> Ok(False)
+    _, _ -> Ok(list.any(auth.providers, fn(p) { provider.id(p) == id }))
+  }
+}
+
+fn sso_connection(
+  auth: Auth,
+  id: String,
+) -> service.Result(#(connection.Config, connection.Connection)) {
+  use config <- result.try(sso_config(auth))
+  use found <- result.try(
+    db.connect(auth.repo, connection_store.find(_, config, id)),
+  )
+  case found {
+    Some(c) if c.enabled -> Ok(#(config, c))
+    _ -> Error(service.NotFound("SSO connection"))
+  }
+}
+
+fn sso_provider(
+  config: connection.Config,
+  conn: connection.Connection,
+) -> service.Result(provider.Provider) {
+  case conn.protocol {
+    connection.Oidc(issuer, client_id, client_secret) ->
+      sso_oidc.provider(config, conn, issuer, client_id, client_secret)
+    connection.Saml(entity_id, sso_url, certificates) ->
+      Ok(sso_saml.provider(conn, entity_id, sso_url, certificates))
+  }
+}
+
+/// The enabled connection that serves an address's domain, for a sign-in page
+/// that asks for the address first. Which domains use SSO is not a secret: the
+/// redirect that follows reveals it to anyone who asks.
+pub fn sso_for_email(
+  auth: Auth,
+  email: String,
+) -> service.Result(Option(String)) {
+  use _ <- result.try(sso_config(auth))
+  use email <- result.try(address.normalize_email(email))
+  let assert [_, domain] = string.split(email, "@")
+  db.connect(auth.repo, connection_store.id_for_domain(_, domain))
+}
+
+/// Begin browser sign-in through an SSO connection, as `begin_provider` does
+/// for a built-in provider. The user signs in to the connection's group.
+pub fn begin_sso(
+  auth: Auth,
+  connection_id: String,
+  callback_path: String,
+  client: String,
+) -> service.Result(ProviderStart) {
+  use #(config, conn) <- result.try(sso_connection(auth, connection_id))
+  use _ <- result.try(in_bound_group(auth, conn.group_id))
+  use provider <- result.try(sso_provider(config, conn))
+  begin_provider_attempt(
+    in_group(auth, conn.group_id),
+    provider,
+    callback_path,
+    client,
+    None,
+  )
+}
+
+/// As `begin_provider_link`. Only a member of the connection's group can link
+/// to it.
+pub fn begin_sso_link(
+  auth: Auth,
+  principal: Principal,
+  connection_id: String,
+  callback_path: String,
+) -> service.Result(ProviderStart) {
+  use principal <- result.try(fresh_provider_principal(auth, principal))
+  use #(config, conn) <- result.try(sso_connection(auth, connection_id))
+  use _ <- result.try(case conn.group_id == principal.user.group_id {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
+  })
+  use provider <- result.try(sso_provider(config, conn))
+  begin_provider_attempt(
+    in_group(auth, conn.group_id),
+    provider,
+    callback_path,
+    principal.client,
+    Some(principal),
+  )
+}
+
+/// As `finish_provider`. An identity the connection has not seen before
+/// becomes a new account in the connection's group when its address is in the
+/// connection's domains, whether or not public registration is enabled. It is
+/// never attached to an existing account: that takes `begin_sso_link`.
+pub fn finish_sso(
+  auth: Auth,
+  connection_id: String,
+  callback_path: String,
+  state: String,
+  browser_token: String,
+  code: Option(String),
+  principal: Option(Principal),
+) -> service.Result(ProviderOutcome) {
+  let id = connection.identity_issuer(connection_id)
+  use attempt <- result.try(consume_attempt(
+    auth,
+    id,
+    callback_path,
+    state,
+    browser_token,
+  ))
+  use #(config, conn) <- result.try(sso_connection(auth, connection_id))
+  // The connection may have moved group while the user was at the provider.
+  use _ <- result.try(case attempt.group_id == Some(conn.group_id) {
+    True -> Ok(Nil)
+    False -> Error(service.Unauthorized)
+  })
+  use code <- result.try(case code {
+    Some(code) if code != "" -> Ok(code)
+    _ -> Error(service.Unauthorized)
+  })
+  use provider <- result.try(sso_provider(config, conn))
+  use identity <- result.try(provider.exchange(
+    provider,
+    provider.Exchange(
+      secret.wrap(code),
+      attempt.redirect_uri,
+      attempt.verifier,
+      attempt.nonce_digest,
+    ),
+  ))
+  complete_identity(auth, id, attempt, identity, principal, Connection)
 }
 
 /// Conservative paths for callback mounts and fixed post-login destinations.
@@ -2158,10 +2473,8 @@ fn current_account(
       }
     Provider(id) -> {
       use links <- result.try(account_store.linked(conn, user.id))
-      Ok(
-        list.any(auth.providers, fn(p) { provider.id(p) == id })
-        && list.any(links, fn(link) { link.0 == id }),
-      )
+      use enabled <- result.try(provider_enabled(conn, auth, id))
+      Ok(enabled && list.any(links, fn(link) { link.0 == id }))
     }
   })
   case enabled {
@@ -2767,7 +3080,13 @@ fn pending_user(
     EmailToken -> require_email_tokens(auth)
     Password -> passwords(auth) |> result.map(fn(_) { Nil })
     Passkey -> passkey_config(auth) |> result.map(fn(_) { Nil })
-    Provider(id) -> configured_provider(auth, id) |> result.map(fn(_) { Nil })
+    Provider(id) -> {
+      use enabled <- result.try(provider_enabled(conn, auth, id))
+      case enabled {
+        True -> Ok(Nil)
+        False -> Error(service.NotFound("provider"))
+      }
+    }
   })
   Ok(#(pending, user, factor))
 }

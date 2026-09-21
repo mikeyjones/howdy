@@ -324,6 +324,38 @@ ALTER TABLE howdy_auth_sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'email' 
 UPDATE howdy_auth_sessions SET method = pre_mfa_method;
 ",
     )),
+    // `config` is sealed with the application's SSO key: it holds the OIDC
+    // client secret. A domain routes to at most one connection installation
+    // wide, so an address can never be claimed by two customers' IdPs.
+    gloo_migration.new(
+      12,
+      "add_sso_connections",
+      "
+CREATE TABLE howdy_auth_sso_connections (
+  id TEXT PRIMARY KEY NOT NULL,
+  group_id TEXT NOT NULL REFERENCES howdy_auth_groups(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('oidc', 'saml')),
+  name TEXT NOT NULL,
+  config TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL
+);
+CREATE INDEX howdy_auth_sso_connections_group ON howdy_auth_sso_connections(group_id);
+CREATE TABLE howdy_auth_sso_domains (
+  domain TEXT PRIMARY KEY NOT NULL,
+  connection_id TEXT NOT NULL REFERENCES howdy_auth_sso_connections(id) ON DELETE CASCADE
+);
+CREATE INDEX howdy_auth_sso_domains_connection ON howdy_auth_sso_domains(connection_id);
+",
+    ),
+    gloo_migration.new(
+      13,
+      "add_sso_enforcement",
+      "
+ALTER TABLE howdy_auth_sso_connections ADD COLUMN enforced INTEGER NOT NULL DEFAULT 0;
+",
+    ),
   ])
 }
 
