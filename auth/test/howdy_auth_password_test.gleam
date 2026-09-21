@@ -4,7 +4,9 @@ import argus
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
+import gleam/json
 import gleam/list
+import gleam/result
 import gleam/string
 import gloo/repo
 import howdy/auth
@@ -293,4 +295,196 @@ pub fn argus_matches_standard_argon2id_test() {
       strong_password,
     )
     == Ok(True)
+}
+
+const replacement = "a second unlikely harbour phrase 512!"
+
+fn principal(identity, session: auth.Session) {
+  let assert Ok(p) = auth.authenticate(identity, secret.reveal(session.token))
+  p
+}
+
+pub fn current_password_changes_the_password_without_a_fresh_email_login_test() {
+  use database, identity, _, mailbox <- fixture
+  let assert Ok(identity) = auth.with_passwords(identity)
+  let _ = password_signup(identity, mailbox, "ada@example.com", strong_password)
+  let assert Ok(other) =
+    auth.login_password(identity, "ada@example.com", strong_password)
+  let assert Ok(session) =
+    auth.login_password(identity, "ada@example.com", strong_password)
+  // A password session is no fresh email login, so set_password refuses it.
+  exec(
+    database,
+    "UPDATE howdy_auth_sessions SET created_at = created_at - 9000",
+  )
+  let p = principal(identity, session)
+  assert auth.set_password(identity, p, replacement) == Error(service.Forbidden)
+
+  assert auth.change_password(identity, p, current: "wrong", new: replacement)
+    == Error(service.Invalid("current password is incorrect"))
+  assert auth.change_password(identity, p, current: "", new: replacement)
+    == Error(service.Invalid("current password is incorrect"))
+  assert auth.change_password(
+      identity,
+      p,
+      current: strong_password,
+      new: strong_password,
+    )
+    == Error(service.Invalid("new password must differ from the current"))
+  assert result.is_error(auth.change_password(
+    identity,
+    p,
+    current: strong_password,
+    new: "short",
+  ))
+  assert process.receive(mailbox, 0) == Error(Nil)
+  assert count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'password.change_failed'",
+    )
+    == 1
+
+  assert auth.change_password(
+      identity,
+      p,
+      current: strong_password,
+      new: replacement,
+    )
+    == Ok(Nil)
+  let assert Ok(notice) = process.receive(mailbox, 1000)
+  assert notice.purpose == auth.PasswordChanged
+  assert notice.email == "ada@example.com"
+  assert secret.reveal(notice.token) == ""
+  assert count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'password.changed'",
+    )
+    == 1
+  // This session survives; every other one is gone, as is the old password.
+  assert result.is_ok(auth.authenticate(identity, secret.reveal(session.token)))
+  assert auth.authenticate(identity, secret.reveal(other.token))
+    == Error(service.Unauthorized)
+  assert auth.login_password(identity, "ada@example.com", strong_password)
+    == Error(service.Unauthorized)
+  assert result.is_ok(auth.login_password(
+    identity,
+    "ada@example.com",
+    replacement,
+  ))
+}
+
+pub fn current_password_guesses_share_the_login_budget_test() {
+  use database, identity, _, mailbox <- fixture
+  let assert Ok(identity) = auth.with_passwords(identity)
+  let session =
+    password_signup(identity, mailbox, "ada@example.com", strong_password)
+  let p = principal(identity, session)
+  list.each(list.repeat(Nil, 5), fn(_) {
+    assert auth.change_password(identity, p, current: "wrong", new: replacement)
+      == Error(service.Invalid("current password is incorrect"))
+  })
+  let assert Error(service.TooManyRequests(wait)) =
+    auth.change_password(
+      identity,
+      p,
+      current: strong_password,
+      new: replacement,
+    )
+  assert wait > 0 && wait <= 60
+  // The same budget: the login form is closed to this client as well.
+  let assert Error(service.TooManyRequests(_)) =
+    auth.login_password(identity, "ada@example.com", strong_password)
+  exec(database, "UPDATE howdy_auth_password_attempts SET window_start = 0")
+  exec(database, "UPDATE howdy_auth_password_clients SET next_at = 0")
+  assert auth.change_password(
+      identity,
+      p,
+      current: strong_password,
+      new: replacement,
+    )
+    == Ok(Nil)
+  // Success clears the back-off, as a successful login does.
+  assert result.is_ok(auth.login_password(
+    identity,
+    "ada@example.com",
+    replacement,
+  ))
+}
+
+pub fn password_change_needs_a_password_a_live_session_and_the_method_test() {
+  use _, identity, _, mailbox <- fixture
+  let session = signup(identity, mailbox, "ada@example.com")
+  assert auth.change_password(
+      identity,
+      principal(identity, session),
+      current: strong_password,
+      new: replacement,
+    )
+    == Error(service.Forbidden)
+  let assert Ok(identity) = auth.with_passwords(identity)
+  // An email-only account has no current password to prove.
+  let p = principal(identity, session)
+  assert auth.change_password(
+      identity,
+      p,
+      current: strong_password,
+      new: replacement,
+    )
+    == Error(service.Forbidden)
+  assert auth.set_password(identity, p, strong_password) == Ok(Nil)
+  assert auth.logout(identity, p) == Ok(Nil)
+  assert auth.change_password(
+      identity,
+      p,
+      current: strong_password,
+      new: replacement,
+    )
+    == Error(service.Unauthorized)
+  assert result.is_ok(auth.login_password(
+    identity,
+    "ada@example.com",
+    strong_password,
+  ))
+}
+
+pub fn password_change_endpoint_requires_session_origin_and_both_fields_test() {
+  use _, identity, permissions, mailbox <- fixture
+  let assert Ok(identity) = auth.with_passwords(identity)
+  let session =
+    password_signup(identity, mailbox, "ada@example.com", strong_password)
+  let app = app(identity, permissions)
+  let body =
+    json.object([
+      #("current", json.string(strong_password)),
+      #("password", json.string(replacement)),
+    ])
+  let send = fn(request) {
+    request
+    |> testing.header("origin", "https://example.test")
+    |> testing.send(app)
+    |> fn(r) { r.status }
+  }
+  assert send(testing.post("/api/auth/password/change", body)) == 401
+  let signed_in = fn(body) {
+    testing.post("/api/auth/password/change", body)
+    |> testing.cookie("__Host-howdy_session", secret.reveal(session.token))
+  }
+  assert signed_in(body) |> testing.send(app) |> fn(r) { r.status } == 403
+  assert send(signed_in(json.object([#("password", json.string(replacement))])))
+    != 204
+  assert send(
+      signed_in(
+        json.object([
+          #("current", json.string("wrong")),
+          #("password", json.string(replacement)),
+        ]),
+      ),
+    )
+    == 400
+  assert send(signed_in(body)) == 204
+  assert result.is_ok(auth.login_password(
+    identity,
+    "ada@example.com",
+    replacement,
+  ))
 }

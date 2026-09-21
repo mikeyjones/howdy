@@ -23,7 +23,7 @@ class Element {
 }
 
 function accountPage({ lifecycle = false, fail = null } = {}) {
-  const ids = Object.fromEntries(['account', 'status', 'sessions', 'refresh-sessions', 'password-change', 'logout'].map(id => [id, new Element()]));
+  const ids = Object.fromEntries(['account', 'status', 'sessions', 'refresh-sessions', 'password-change', 'password-current', 'logout'].map(id => [id, new Element()]));
   if (lifecycle) {
     for (const id of ['linked-providers', 'email-change', 'email-confirm', 'account-delete']) ids[id] = new Element();
     for (const id of ['email-change', 'email-confirm', 'account-delete']) {
@@ -36,6 +36,9 @@ function accountPage({ lifecycle = false, fail = null } = {}) {
   ids.account.dataset.api = '/api/auth';
   ids['password-change'].button = new Element();
   ids['password-change'].elements.password = { value: 'new synthetic test password' };
+  ids['password-current'].button = new Element();
+  ids['password-current'].elements.current = { value: 'old synthetic test password' };
+  ids['password-current'].elements.password = { value: 'new synthetic test password' };
   ids.account.buttons = [ids['logout'], ids['refresh-sessions'], ids['password-change'].button];
   if (lifecycle) ids.account.buttons.push(...['email-change', 'email-confirm', 'account-delete'].map(id => ids[id].button));
   const calls = [];
@@ -58,6 +61,21 @@ function accountPage({ lifecycle = false, fail = null } = {}) {
   });
   return { ids, calls };
 }
+
+test('account password change sends the current and new password', async () => {
+  const { ids, calls } = accountPage();
+  await settle();
+  await ids['password-current'].fire('submit');
+  assert.equal(ids['password-current'].elements.current.value, '');
+  assert.equal(ids['password-current'].elements.password.value, '');
+  assert.match(ids.status.textContent, /Password saved/);
+  const post = calls.find(call => call.url.endsWith('/password/change'));
+  assert.equal(post.method, 'POST');
+  assert.deepEqual(JSON.parse(post.body), {
+    current: 'old synthetic test password',
+    password: 'new synthetic test password',
+  });
+});
 
 test('account password reset handles 204, clears the input and refreshes sessions', async () => {
   const { ids, calls } = accountPage();

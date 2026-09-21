@@ -346,6 +346,13 @@ fn account_page(identity: Auth, prefix: String, api: String) -> String {
     True ->
       "<h2>Set or reset password</h2><p>First sign in using a fresh email token. Changing your password signs out every other session.</p><form id=\"password-change\"><label>New password <input name=\"password\" type=\"password\" autocomplete=\"new-password\" required></label><button>Save password</button></form>"
   }
+  let password_form =
+    case auth.passwords_enabled(identity) {
+      False -> ""
+      True ->
+        "<h2>Change password</h2><p>Changing your password signs out every other session.</p><form id=\"password-current\"><label>Current password <input name=\"current\" type=\"password\" autocomplete=\"current-password\" required></label><label>New password <input name=\"password\" type=\"password\" autocomplete=\"new-password\" required></label><button>Change password</button></form>"
+    }
+    <> password_form
   let email_forms = case auth.email_tokens_enabled(identity) {
     False -> ""
     True ->
@@ -495,17 +502,20 @@ if (account) {
   refreshSessions().catch(error => status.textContent = error.message);
   document.getElementById('refresh-sessions').addEventListener('click', () =>
     refreshSessions().catch(error => status.textContent = error.message));
-  document.getElementById('password-change')?.addEventListener('submit', async event => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = form.querySelector('button'); button.disabled = true;
-    try {
-      await call('password', {password: form.elements.password.value});
-      form.reset(); status.textContent = 'Password saved. Other sessions have been signed out.';
-      await refreshSessions();
-    } catch (error) { status.textContent = error.message; }
-    finally { button.disabled = false; }
-  });
+  const passwordForm = (id, endpoint, fields) =>
+    document.getElementById(id)?.addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button'); button.disabled = true;
+      try {
+        await call(endpoint, Object.fromEntries(fields.map(name => [name, form.elements[name].value])));
+        form.reset(); status.textContent = 'Password saved. Other sessions have been signed out.';
+        await refreshSessions();
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+  passwordForm('password-change', 'password', ['password']);
+  passwordForm('password-current', 'password/change', ['current', 'password']);
   document.getElementById('logout').addEventListener('click', async () => {
     try {
       await call('logout', {}); status.textContent = 'You are signed out.';

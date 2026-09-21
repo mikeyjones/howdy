@@ -204,6 +204,19 @@ pub fn api_limited_by(
       |> service.no_content(ctx)
     }),
   )
+  |> controller.post(
+    "/password/change",
+    strict(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      use #(current, new) <- body.json_with_limit(ctx, body_limit, {
+        use current <- decode.field("current", decode.string)
+        use new <- decode.field("password", decode.string)
+        decode.success(#(current, new))
+      })
+      auth.change_password_from(identity, principal, current, new, client(ctx))
+      |> service.no_content(ctx)
+    }),
+  )
   |> controller.get(
     "/sessions",
     signed_in(fn(ctx) {

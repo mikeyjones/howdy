@@ -23,7 +23,7 @@ equal production maturity or prove that either library is more secure.
 
 | Area | Howdy working tree | Comparison |
 | --- | --- | --- |
-| Passwords and recovery | Argon2id, verified registration, persistent throttling, configurable breach check; replacement/recovery through a fresh email-token session | Core capability present; Better Auth also offers current-password changes and a dedicated reset-link flow. [Password docs](https://better-auth.com/docs/authentication/email-password) |
+| Passwords and recovery | Argon2id, verified registration, persistent throttling, configurable breach check; current-password changes with a notice to the mailbox; setting/recovery through a fresh email-token session | Core capability present; Better Auth also offers a dedicated reset-link flow. [Password docs](https://better-auth.com/docs/authentication/email-password) |
 | Account lifecycle | New-email verification, recent-session checks, deletion cleanup hook, safe provider unlinking and session revocation | Major gap closed. Better Auth additionally offers confirmation through the old email before proceeding. [Account docs](https://better-auth.com/docs/concepts/users-accounts) |
 | Passkeys | Discoverable enrollment/login, naming/removal, signature counters, backup metadata, required user verification | Core lifecycle present. RP ID and further origins are configurable. Better Auth additionally exposes conditional autofill, extensions and pre-authentication enrollment hooks. [Passkey plugin](https://better-auth.com/docs/plugins/passkey) |
 | MFA | TOTP, callback-delivered OTP, one-use recovery codes, recovery replacement, disablement and remembered devices | Core lifecycle present. Trust lifetime, renewal on use and recovery-code count are configurable. Better Auth exposes more settings; Howdy fixes TOTP/OTP formats and timings. [2FA plugin](https://better-auth.com/docs/plugins/2fa) |
@@ -52,8 +52,7 @@ explicitly explain. [Howdy storage](../auth/README.md#session-storage),
    Delivered second-factor OTP does not fill that primary-login gap. Username,
    phone and anonymous-to-registered accounts are also absent. Better Auth offers
    these as optional [authentication plugins](https://better-auth.com/docs/plugins).
-   Password changes in Howdy require another email login, even when the user
-   knows the current password. Its authenticator page displays a manual key;
+   Howdy's authenticator page displays a manual key;
    custom pages can render the supplied URI as a QR code.
 2. **Client tooling.** Typed Gleam server APIs, JSON endpoints and starter pages
    exist, but no reusable typed browser SDK, reactive session client or supported
@@ -100,8 +99,8 @@ explicitly explain. [Howdy storage](../auth/README.md#session-storage),
 For a normal Howdy web application, prioritize:
 
 1. Release/dependency hardening and real-browser/device interoperability checks.
-2. Smoother existing workflows: magic-link or short email-OTP login, current-password
-   changes, local authenticator QR rendering, and passkey autofill.
+2. Smoother existing workflows: magic-link or short email-OTP login, local
+   authenticator QR rendering, and passkey autofill.
 3. A small reusable auth client with explicit signed-out, pending-MFA and signed-in
    states; configurable session renewal if the application needs persistent login.
 4. Shared HTTP rate limiting before deploying multiple application instances.

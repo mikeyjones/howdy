@@ -805,7 +805,24 @@ the last ten minutes** (`policy.fresh_session_seconds`). A password session, or
 an older one, receives `Forbidden`. So to change or recover a password, or to
 add one to an email-only account: request a login token, exchange it, then set
 the password. Every other session of that user is revoked. Over HTTP this is
-`POST /password`. A built-in common-password list rejects obvious compromised
+`POST /password`.
+
+A user who knows the current password needs no email round trip:
+`auth.change_password(identity, principal, current:, new:)` (over HTTP,
+`POST /password/change` with `{"current":"…","password":"…"}`) replaces it from
+any live session, and also serves deployments without email tokens. A wrong
+current password is `Invalid` (HTTP 400), not `Unauthorized`: the session is
+still good. Guesses spend the same per-client and per-address budget as password
+logins, so a borrowed session cannot search for the password faster than the
+login form allows; custom transports pass their client identity to
+`auth.change_password_from`. An account without a password receives `Forbidden`
+and uses `set_password` instead. Every other session and remembered device is
+revoked, and the address receives a best-effort notice: handle the
+`Delivery.purpose` variant `PasswordChanged`, whose `token` is empty, by telling
+the reader to sign in by email and reset the password if the change was not
+theirs. A failed notice does not undo the change.
+
+A built-in common-password list rejects obvious compromised
 choices (including the widely published “correct horse battery staple” example).
 For a production breach corpus, configure `auth.with_password_check(identity,
 check)` at startup. The callback receives the normalized **new** password and
@@ -942,7 +959,7 @@ normal migrations before starting the new code. `session_store.Entry` now has a
 required `version: Int`; custom adapters must persist and return it unchanged.
 Pre-upgrade serialized entries can be read as version 0, or cleared on deployment.
 The store contract checker includes this field. `Delivery.purpose` exhaustive
-matches must also handle `EmailChange`.
+matches must also handle `EmailChange` and the tokenless `PasswordChanged` notice.
 
 Email changes and unlinking advance that version in the database. Authentication
 rejects external entries from older versions, including delayed writes after a
@@ -971,6 +988,7 @@ require JavaScript, and display success without choosing an application redirect
 | `POST /password/session` | Email and password | User JSON and browser session cookie |
 | `POST /password/token` | Email and password | Bearer access token, expiry and user JSON |
 | `POST /password` | Authentication from a fresh email-token session; `{"password":"…"}` | 204; sets or replaces the password, revokes other sessions |
+| `POST /password/change` | Authentication; `{"current":"…","password":"…"}` | 204; replaces the password, revokes other sessions; 400 for a wrong current password |
 | `GET /me` | Cookie or bearer authentication | User JSON |
 | `GET /sessions` | Cookie or bearer authentication | The caller's live sessions: `id`, `method`, `created_at`, `last_seen_at`, `expires_at`, `current` |
 | `POST /sessions/revoke` | Cookie or bearer authentication; `{"id":"…"}` | 204; revokes that session if it is the caller's |

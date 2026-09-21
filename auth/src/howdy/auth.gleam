@@ -63,6 +63,10 @@ pub type Purpose {
   AlreadyRegistered
   /// Confirm a change of the signed-in account’s email, not a login token.
   EmailChange
+  /// A notice, not a request: the account's password was just replaced using
+  /// its current password. `token` is empty. Tell the reader to reset the
+  /// password from a fresh email login if this was not them.
+  PasswordChanged
 }
 
 /// Deliver the token privately. Never log it or expose it in a public response.
@@ -632,6 +636,7 @@ fn purpose_name(purpose: Purpose) -> String {
     Registration -> "registration"
     AlreadyRegistered -> "already-registered"
     EmailChange -> "email-change"
+    PasswordChanged -> "password-changed"
   }
 }
 
@@ -1139,6 +1144,121 @@ pub fn set_password(
   ))
   use _ <- result.try(security_store.clear(conn, principal.user.id))
   event(conn, principal.user.id, "password.set", Acting(principal), "")
+}
+
+/// Replace the caller's password by proving the current one. Unlike
+/// `set_password` this needs no fresh email login, so it also serves
+/// deployments without email tokens. A wrong current password is Invalid, not
+/// Unauthorized: the session itself is still good. Guesses spend the same
+/// per-client and per-address budget as password logins, so a borrowed session
+/// cannot search for the password faster than the login form could. An account
+/// without a password receives Forbidden and must use `set_password`.
+///
+/// Every other session and remembered device of the user is revoked, and the
+/// address is sent a `PasswordChanged` notice on a best-effort basis.
+pub fn change_password(
+  auth: Auth,
+  principal: Principal,
+  current current: String,
+  new new: String,
+) -> service.Result(Nil) {
+  change_password_from(auth, principal, current, new, "headless")
+}
+
+/// As `change_password`, isolating back-off by a trusted client identity; see
+/// `login_password_from`.
+pub fn change_password_from(
+  auth: Auth,
+  principal: Principal,
+  current current: String,
+  new new: String,
+  client client: String,
+) -> service.Result(Nil) {
+  use hasher <- result.try(passwords(auth))
+  let wrong = service.Invalid("current password is incorrect")
+  use _ <- result.try(
+    case
+      string.byte_size(current) > 0
+      && string.byte_size(current) <= policy.password_max_bytes
+    {
+      True -> Ok(Nil)
+      False -> Error(wrong)
+    },
+  )
+  use _ <- result.try(case current == new {
+    True -> Error(service.Invalid("new password must differ from the current"))
+    False -> Ok(Nil)
+  })
+  use _ <- result.try(validate_new_password(auth, new))
+  let user = principal.user
+  let within = Some(user.group_id)
+  let address_key = address_key(auth, within, user.email)
+  let client_key =
+    token.keyed_digest(
+      auth.throttle_key,
+      account_key(auth, within, user.email) <> "\u{0}" <> client,
+    )
+  use found <- result.try(
+    db.connect(auth.repo, store.password_candidates(_, user.email, within)),
+  )
+  use #(encoded, normalized) <- result.try(case found {
+    [#(candidate, encoded, normalized)] if candidate.id == user.id ->
+      Ok(#(encoded, normalized))
+    _ -> Error(service.Forbidden)
+  })
+  use _ <- result.try(password_attempt(auth, address_key, client_key))
+  use #(valid, _) <- result.try(password_hash.verify(
+    encoded,
+    current,
+    normalized,
+  ))
+  use _ <- result.try(case valid {
+    True -> Ok(Nil)
+    False -> {
+      let _ =
+        db.connect(auth.repo, event_from(
+          _,
+          user.id,
+          "password.change_failed",
+          Acting(principal),
+          "",
+          client,
+        ))
+      Error(wrong)
+    }
+  })
+  use replacement <- result.try(password_hash.hash(hasher, new))
+  use _ <- result.try({
+    use <- after_commit(auth, fn(external) {
+      external.delete_for_user(user.id, Some(principal.session_id))
+    })
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    // Lock the account and recheck both proofs after hashing: the session may
+    // have been revoked, or the password replaced, while Argon2 was running.
+    use _ <- result.try(current_account(conn, auth, principal, False))
+    use users <- result.try(store.active_user_with_password(
+      conn,
+      user.id,
+      encoded,
+      normalized,
+    ))
+    use _ <- result.try(case users {
+      [_] -> Ok(Nil)
+      _ -> Error(wrong)
+    })
+    use _ <- result.try(store.replace_password(conn, user.id, replacement))
+    use _ <- result.try(store.delete_other_sessions(
+      conn,
+      user.id,
+      principal.session_id,
+    ))
+    use _ <- result.try(store.clear_password_attempts(conn, address_key))
+    use _ <- result.try(store.clear_password_clients(conn, address_key))
+    use _ <- result.try(security_store.clear(conn, user.id))
+    event_from(conn, user.id, "password.changed", Acting(principal), "", client)
+  })
+  let _ = auth.deliver(Delivery(user.email, secret.wrap(""), PasswordChanged))
+  Ok(Nil)
 }
 
 fn register(
