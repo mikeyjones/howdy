@@ -93,6 +93,9 @@ pub type Connection {
     /// Whether the members it covers may sign in only through it; see
     /// `connections.enforce`.
     enforced: Bool,
+    /// Whether a sign-in through it skips Howdy's own second factor; see
+    /// `connections.trust_provider_mfa`.
+    trusts_provider_mfa: Bool,
     created_at: Timestamp,
     updated_at: Timestamp,
   )
@@ -128,6 +131,7 @@ pub fn to_json(connection: Connection) -> json.Json {
     #("domains", json.array(connection.domains, json.string)),
     #("enabled", json.bool(connection.enabled)),
     #("enforced", json.bool(connection.enforced)),
+    #("trusts_provider_mfa", json.bool(connection.trusts_provider_mfa)),
     #("created_at", user.time_to_json(connection.created_at)),
     #("updated_at", user.time_to_json(connection.updated_at)),
   ])

@@ -21,6 +21,7 @@ import howdy/auth/connections
 import howdy/auth/group
 import howdy/auth/groups
 import howdy/auth/internal/token
+import howdy/auth/mfa
 import howdy/auth/routes
 import howdy/auth/secret
 import howdy/auth/user
@@ -771,4 +772,121 @@ pub fn enforcement_follows_the_connections_domains_and_group_test() {
   assert live(identity, elsewhere)
   assert auth.request_token(identity, "eve@partner.test", auth.Login) == Ok(Nil)
   assert nothing_sent(mailbox)
+}
+
+// --- Second factors ----------------------------------------------------------
+
+@external(erlang, "howdy_auth_test_ffi", "totp_code")
+fn totp_code(seed: String, seconds: Int) -> String
+
+fn with_mfa(identity: auth.Auth) -> auth.Auth {
+  let assert Ok(config) = mfa.new("Howdy tests", token.new())
+  auth.with_mfa(identity, config)
+}
+
+/// Enrol TOTP on the session's account; the recovery codes.
+fn enroll(identity: auth.Auth, session: auth.Session) -> List(secret.Secret) {
+  let principal = principal_of(identity, session)
+  let assert Ok(setup) = auth.begin_mfa(identity, principal, auth.Totp)
+  let assert Some(key) = setup.key
+  let assert Ok(codes) =
+    auth.confirm_mfa(
+      identity,
+      principal,
+      secret.reveal(setup.challenge),
+      totp_code(secret.reveal(key), token.now()),
+    )
+  codes
+}
+
+pub fn howdys_second_factor_follows_the_provider_unless_it_is_trusted_test() {
+  use database, identity, _ <- acme
+  let identity = with_mfa(identity)
+  let assert Ok(auth.ProviderSession(first)) =
+    finish(identity, "acme", begin(identity, "acme"), [], None)
+  let assert [code, ..] = enroll(identity, first)
+  let trusted_events = fn() {
+    count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'mfa.provider_trusted' AND detail = 'sso:acme'",
+    )
+  }
+  // By default the provider is the first factor and Howdy's is still asked.
+  let assert Ok(auth.ProviderSecondFactor(challenge)) =
+    finish(identity, "acme", begin(identity, "acme"), [], None)
+  let assert Ok(completed) =
+    auth.verify_mfa(
+      identity,
+      secret.reveal(challenge.token),
+      auth.RecoveryCode,
+      secret.reveal(code),
+      False,
+    )
+  let proven = principal_of(identity, completed.session)
+  assert trusted_events() == 0
+  let assert Ok(trusting) =
+    connections.trust_provider_mfa(identity, "acme", by: user.System)
+  assert trusting.trusts_provider_mfa
+  let assert Ok(auth.ProviderSession(session)) =
+    finish(identity, "acme", begin(identity, "acme"), [], None)
+  assert session.user.id == first.user.id
+  assert trusted_events() == 1
+  // The factor was skipped, not proven: this session cannot manage it, and
+  // the one that did prove it still can.
+  let skipped = principal_of(identity, session)
+  let assert Error(service.Forbidden) =
+    auth.regenerate_recovery_codes(identity, skipped)
+  let assert Error(service.Forbidden) = auth.disable_mfa(identity, skipped)
+  let assert Ok(_) = auth.regenerate_recovery_codes(identity, proven)
+  // A member without a factor is simply signed in, and nothing is recorded.
+  let assert Ok(auth.ProviderSession(_)) =
+    finish(
+      identity,
+      "acme",
+      begin(identity, "acme"),
+      [
+        #("sub", json.string("00u-grace")),
+        #("email", json.string("grace@acme.com")),
+      ],
+      None,
+    )
+  assert trusted_events() == 1
+  let assert Ok(asking) =
+    connections.require_local_mfa(identity, "acme", by: user.System)
+  assert !asking.trusts_provider_mfa
+  let assert Ok(auth.ProviderSecondFactor(_)) =
+    finish(identity, "acme", begin(identity, "acme"), [], None)
+}
+
+pub fn trusting_one_connection_changes_no_other_way_in_test() {
+  use _, identity, mailbox <- acme
+  let identity = with_mfa(identity)
+  let local = signup(identity, mailbox, "ada@acme.com")
+  let _ = enroll(identity, local)
+  let assert Ok(_) =
+    connections.trust_provider_mfa(identity, "acme", by: user.System)
+  let assert Ok(Nil) = auth.request_token(identity, "ada@acme.com", auth.Login)
+  let assert Ok(delivery) = process.receive(mailbox, 1000)
+  let assert Ok(auth.SecondFactor(_)) =
+    auth.exchange_step(identity, secret.reveal(delivery.token), "test")
+}
+
+pub fn a_covered_member_with_a_factor_completes_sign_in_under_enforcement_test() {
+  use _, identity, mailbox <- acme
+  let identity = with_mfa(identity)
+  let local = signup(identity, mailbox, "ada@acme.com")
+  let assert [code, ..] = enroll(identity, local)
+  let assert Ok(_) = connections.enforce(identity, "acme", by: user.System)
+  let assert Ok(auth.ProviderSecondFactor(challenge)) =
+    finish(identity, "acme", begin(identity, "acme"), [], None)
+  let assert Ok(completed) =
+    auth.verify_mfa(
+      identity,
+      secret.reveal(challenge.token),
+      auth.RecoveryCode,
+      secret.reveal(code),
+      False,
+    )
+  assert completed.session.user.id == local.user.id
+  assert live(identity, completed.session)
 }

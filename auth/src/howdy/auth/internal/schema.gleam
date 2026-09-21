@@ -356,6 +356,13 @@ CREATE INDEX howdy_auth_sso_domains_connection ON howdy_auth_sso_domains(connect
 ALTER TABLE howdy_auth_sso_connections ADD COLUMN enforced INTEGER NOT NULL DEFAULT 0;
 ",
     ),
+    gloo_migration.new(
+      14,
+      "add_sso_provider_mfa_trust",
+      "
+ALTER TABLE howdy_auth_sso_connections ADD COLUMN trusts_mfa INTEGER NOT NULL DEFAULT 0;
+",
+    ),
   ])
 }
 

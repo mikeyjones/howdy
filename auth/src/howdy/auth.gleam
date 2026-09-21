@@ -781,6 +781,25 @@ fn issue_session(
   }
 }
 
+/// A session for a connection whose provider's MFA is trusted. The method is
+/// the provider alone, never "mfa:": the Howdy factor was not proven, so the
+/// session cannot manage it. Skipping a factor the user has is audited.
+fn issue_trusting_provider(
+  conn: Repo,
+  auth: Auth,
+  user: User,
+  id: String,
+  client: String,
+) -> service.Result(Issued) {
+  use factor <- result.try(security_store.factor(conn, user.id))
+  use _ <- result.try(case factor {
+    None -> Ok(Nil)
+    Some(_) ->
+      event_from(conn, user.id, "mfa.provider_trusted", System, id, client)
+  })
+  issue_verified_session(conn, auth, user, method_name(Provider(id)), client)
+}
+
 /// A member covered by an enforced SSO connection signs in through it and no
 /// other way. Every sign-in ends at a session, so this is the one gate. The
 /// refusal is Unauthorized, as for a wrong credential: a right password must
@@ -795,11 +814,17 @@ fn sso_permits(conn: Repo, user: User, method: String) -> service.Result(Nil) {
   ))
   case enforcing {
     None -> Ok(Nil)
-    Some(id) ->
-      case method == method_name(Provider(connection.identity_issuer(id))) {
+    Some(id) -> {
+      // After a second factor the method is recorded as "mfa:" <> the first.
+      let first = case method {
+        "mfa:" <> first -> first
+        first -> first
+      }
+      case first == method_name(Provider(connection.identity_issuer(id))) {
         True -> Ok(Nil)
         False -> Error(service.Unauthorized)
       }
+    }
   }
 }
 
@@ -1898,7 +1923,11 @@ fn complete_identity(
           user.id,
           id,
         ))
-        issue_session(conn, auth, user, Provider(id), attempt.client)
+        case admission {
+          Connection(trusts_mfa: True) ->
+            issue_trusting_provider(conn, auth, user, id, attempt.client)
+          _ -> issue_session(conn, auth, user, Provider(id), attempt.client)
+        }
         |> result.map(Some)
       }
     }
@@ -1921,7 +1950,8 @@ type Admission {
   /// So it takes up the existing account, and otherwise creates one whether
   /// or not registration is public. Without this, turning enforcement on, or
   /// moving to another provider, would lock out everyone who had not linked.
-  Connection
+  /// `trusts_mfa` is whether its sign-ins stand without Howdy's second factor.
+  Connection(trusts_mfa: Bool)
 }
 
 fn admit_provider_user(
@@ -1935,7 +1965,7 @@ fn admit_provider_user(
   // Third-party Google addresses first register/verify by email, then link.
   let open = case admission {
     Public -> auth.registration
-    Connection -> True
+    Connection(_) -> True
   }
   use _ <- result.try(case identity.email_authoritative {
     True -> Ok(Nil)
@@ -1944,7 +1974,7 @@ fn admit_provider_user(
   use email <- result.try(address.normalize_email(identity.email))
   use existing <- result.try(case admission {
     Public -> Ok([])
-    Connection -> store.active_user_by_email(conn, email, attempt.group_id)
+    Connection(_) -> store.active_user_by_email(conn, email, attempt.group_id)
   })
   case existing, open {
     [user], _ -> {
@@ -2167,7 +2197,14 @@ pub fn finish_sso(
       attempt.nonce_digest,
     ),
   ))
-  complete_identity(auth, id, attempt, identity, principal, Connection)
+  complete_identity(
+    auth,
+    id,
+    attempt,
+    identity,
+    principal,
+    Connection(conn.trusts_provider_mfa),
+  )
 }
 
 /// Conservative paths for callback mounts and fixed post-login destinations.

@@ -14,7 +14,7 @@ import howdy/auth/internal/database as db
 import howdy/auth/internal/token
 import howdy/service
 
-const columns = "c.id, c.group_id, c.kind, c.name, c.config, c.enabled, c.enforced, c.created_at, c.updated_at"
+const columns = "c.id, c.group_id, c.kind, c.name, c.config, c.enabled, c.enforced, c.trusts_mfa, c.created_at, c.updated_at"
 
 type Row {
   Row(
@@ -25,6 +25,7 @@ type Row {
     sealed: String,
     enabled: Bool,
     enforced: Bool,
+    trusts_mfa: Bool,
     created_at: Int,
     updated_at: Int,
   )
@@ -38,8 +39,9 @@ fn row() -> decode.Decoder(Row) {
   use sealed <- decode.field(4, decode.string)
   use enabled <- decode.field(5, decode.int)
   use enforced <- decode.field(6, decode.int)
-  use created_at <- decode.field(7, decode.int)
-  use updated_at <- decode.field(8, decode.int)
+  use trusts_mfa <- decode.field(7, decode.int)
+  use created_at <- decode.field(8, decode.int)
+  use updated_at <- decode.field(9, decode.int)
   decode.success(Row(
     id,
     group_id,
@@ -48,6 +50,7 @@ fn row() -> decode.Decoder(Row) {
     sealed,
     enabled == 1,
     enforced == 1,
+    trusts_mfa == 1,
     created_at,
     updated_at,
   ))
@@ -69,6 +72,7 @@ fn open(conn: Repo, config: Config, row: Row) -> service.Result(Connection) {
     domains,
     row.enabled,
     row.enforced,
+    row.trusts_mfa,
     timestamp.from_unix_seconds(row.created_at),
     timestamp.from_unix_seconds(row.updated_at),
   ))
@@ -344,5 +348,24 @@ pub fn covered(conn: Repo, id: String) -> service.Result(List(String)) {
     "SELECT u.id FROM howdy_auth_users u JOIN howdy_auth_sso_connections c ON c.group_id = u.group_id JOIN howdy_auth_sso_domains d ON d.connection_id = c.id WHERE c.id = $1 AND substr(u.email, length(u.email) - length(d.domain)) = '@' || d.domain",
     [sql.string(id)],
     decode.field(0, decode.string, decode.success),
+  )
+}
+
+pub fn set_trusts_mfa(
+  conn: Repo,
+  id: String,
+  trusted: Bool,
+) -> service.Result(Nil) {
+  db.execute(
+    conn,
+    "UPDATE howdy_auth_sso_connections SET trusts_mfa = $1, updated_at = $2 WHERE id = $3",
+    [
+      sql.int(case trusted {
+        True -> 1
+        False -> 0
+      }),
+      sql.int(token.now()),
+      sql.string(id),
+    ],
   )
 }

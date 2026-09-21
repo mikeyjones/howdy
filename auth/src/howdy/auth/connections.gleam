@@ -238,6 +238,36 @@ pub fn stop_enforcing(
   connection_store.set_enforced(conn, id, False)
 }
 
+/// Let a sign-in through this connection stand without Howdy's own second
+/// factor, for a customer whose provider already demands one. Off by default.
+///
+/// This is trust, not verification: providers report how a user authenticated
+/// too inconsistently to check, so Howdy takes the customer's word that their
+/// policy requires MFA. It also means the provider's administrator can reach an
+/// account in the connection's domains and group that has a Howdy factor,
+/// without that factor. Each such sign-in is audited as `mfa.provider_trusted`.
+///
+/// Such a session has not proven the Howdy factor, so it cannot disable it or
+/// regenerate recovery codes. Other ways to sign in still ask for it.
+pub fn trust_provider_mfa(
+  identity: Auth,
+  id: String,
+  by actor: Actor,
+) -> service.Result(Connection) {
+  use conn, _ <- change(identity, id, "sso.provider_mfa_trusted", actor)
+  connection_store.set_trusts_mfa(conn, id, True)
+}
+
+/// Ask for Howdy's second factor after this connection again.
+pub fn require_local_mfa(
+  identity: Auth,
+  id: String,
+  by actor: Actor,
+) -> service.Result(Connection) {
+  use conn, _ <- change(identity, id, "sso.local_mfa_required", actor)
+  connection_store.set_trusts_mfa(conn, id, False)
+}
+
 /// Delete the connection and the identities signed in through it. The user
 /// accounts remain, with whatever other ways to sign in they have.
 pub fn delete(

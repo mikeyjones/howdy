@@ -488,8 +488,8 @@ connection.Saml(
 
 `howdy/auth/connections` is privileged and is not exposed over HTTP: authorize
 the caller first, as with `howdy/auth/groups`. It also offers `get`, `list`,
-`in_group`, `rename`, `set_protocol`, `set_domains`, `enable`, `disable` and
-`delete`. Every change is audited (`sso.created`, `sso.protocol_changed`, …).
+`in_group`, `rename`, `set_protocol`, `set_domains`, `enable`, `disable`,
+`enforce`, `trust_provider_mfa` and `delete`. Every change is audited (`sso.created`, `sso.protocol_changed`, …).
 Under `Single` a connection's group is `group.default_id`.
 
 Mount the browser routes once. Connections created later are served without
@@ -547,11 +547,34 @@ touched. An address outside the domains, such as a contractor's, is believed
 about nothing: that user signs in another way and links deliberately from a
 fresh session (`POST …/sso/:connection/link`), as for the built-in providers.
 
-Local MFA still applies after SSO, and sessions record the method as
-`Provider("sso:" <> connection.id)`. Disabling or deleting a connection stops
-new sign-ins through it, and its live sessions stop counting as fresh
-authentication for sensitive operations, but they are not ended: call
-`auth.revoke_sessions` when offboarding a customer.
+Sessions record the method as `Provider("sso:" <> connection.id)`. Disabling
+or deleting a connection stops new sign-ins through it, and its live sessions
+stop counting as fresh authentication for sensitive operations, but they are
+not ended: call `auth.revoke_sessions` when offboarding a customer.
+
+### Second factors
+
+By default the provider is the first factor and Howdy's own, where the user
+has one, is still asked for afterwards. A customer whose provider already
+demands MFA can be spared the second prompt, per connection:
+
+```gleam
+connections.trust_provider_mfa(identity, "acme", by: user.Acting(admin))
+connections.require_local_mfa(identity, "acme", by: user.Acting(admin))
+```
+
+This is **trust, not verification**. Providers report how a user authenticated
+too inconsistently to check (`amr`, SAML authentication contexts and vendor
+claims all differ), so Howdy takes the customer's word about their policy.
+Weigh it with auto-linking: the provider's administrator can then reach an
+account in the connection's domains and group that has a Howdy factor, without
+that factor. Every sign-in that skips a factor the user has is audited as
+`mfa.provider_trusted`.
+
+A session issued this way has not proven the Howdy factor, so it cannot
+disable it or regenerate recovery codes; a session that did prove it still
+can. Trust applies to that connection only: email tokens, passwords, passkeys
+and other providers keep asking.
 
 ### Enforcement
 
@@ -575,7 +598,8 @@ Members outside the domains, such as guests, keep their ordinary sign-in.
 - `enforce` **signs covered members out**, in the database and in an external
   session store, so their next sign-in is the provider's. Adding a domain to an
   enforced connection does the same for those it newly covers.
-- Local MFA still runs after the provider.
+- Local MFA still runs after the provider, unless the connection trusts the
+  provider's; see above.
 - Enforcement needs at least one domain, lapses while the connection is
   disabled, and is decided from the database alone: a deployment that drops
   `with_sso` keeps enforcing, and its covered members cannot sign in until it
