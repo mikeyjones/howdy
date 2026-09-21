@@ -190,11 +190,15 @@ prefix>/mfa`; mount the starter pages there or provide that page in your UI.
 
 ### Scope compared with Better Auth
 
-The everyday passkey and MFA lifecycle is implemented. This is not full plugin
-parity: parent-domain/multiple-origin RP configuration, browser conditional
-autofill, pre-authentication passkey signup, attestation policy, extension
-customization and Expo integration are not exposed. MFA intervals, code formats
-and trust duration are fixed; remembered devices do not renew automatically.
+The everyday passkey and MFA lifecycle is implemented, including configurable
+parent-domain RP IDs and additional ceremony origins, browser conditional
+autofill, signup with a passkey followed by email verification, configurable
+remembered-device duration/renewal and recovery-code count. This is not full
+plugin parity: WebAuthn extension and authenticator-selection configuration,
+custom onboarding hooks and Expo integration are not exposed. TOTP remains
+six digits on a 30-second interval; OTP formats and challenge lifetimes are fixed.
+Additional ceremony origins do not change the bundled HTTP routes' exact-Origin
+policy; see the deployment note above.
 The native verifier is pinned to **glasslock 1.0.0-rc1**, a recent prerelease,
 including internal metadata parsing APIs. It has not been independently audited
 as part of this work. Review upgrades explicitly; keep signed-ceremony regression
