@@ -48,15 +48,35 @@ setup displays a manual key; custom UIs can render the returned `otpauth:` URI
 locally as a QR code. Enrollment is not active until the code is verified.
 Successful enrollment/recovery replacement returns ten 80-bit recovery codes
 once and signs out all sessions. Save those codes before navigating away.
+`mfa.with_recovery_codes(config, 16)` issues a different number, from 4 to 32.
 
 Passkeys require a recently authenticated account for enrollment and management.
-The RP ID is the configured public-origin hostname; exact origin, user presence
-and user verification (PIN/biometric) are required. Credentials are discoverable,
+The RP ID defaults to the configured public-origin hostname; exact origin, user
+presence and user verification (PIN/biometric) are required. Credentials are discoverable,
 with ES256, Ed25519 and RS256 support, signature counters, AAGUID, transports and
 backup metadata. Challenges expire after five minutes and are single-use.
 Enrollment is bound to the initiating session, user, group and session version.
 Removing a passkey requires a recent login through another enabled method and
 revokes all sessions. An account may have up to 20 passkeys.
+
+To share passkeys across subdomains, name a parent domain as RP ID after
+enabling passkeys:
+
+```gleam
+let assert Ok(identity) = auth.with_passkeys(identity, "Example")
+let assert Ok(identity) =
+  auth.with_passkey_relying_party(identity, id: "example.com", origins: [
+    "https://admin.example.com",
+  ])
+```
+
+The RP ID must be the hostname of the public origin and of every listed origin,
+or a parent domain of them all. Browsers additionally refuse a public suffix such
+as `com`. Listed origins are accepted by the passkey ceremonies alongside the
+public origin; the bundled JSON routes still answer only the public origin, so
+another origin needs its own deployment (configured with the same RP ID) or its
+own transport. A passkey is bound to the RP ID it was created under: changing the
+RP ID later strands every existing passkey, so choose it before launch.
 
 An enrolled account must complete MFA after **every primary login method**,
 including email, password, provider and passkey login. A pending MFA token cannot
@@ -74,8 +94,12 @@ cannot use delivered OTP, so two codes to the same mailbox do not become two
 factors. They can still use TOTP or recovery codes. Delivery failures fail closed;
 sends and enrollment starts use the existing persistent cooldown policy.
 
-Remembered devices require a successful primary login, have a fixed 30-day
-lifetime, and are bound to the account/session version. Tokens are hashed at
+Remembered devices require a successful primary login, last 30 days by default,
+and are bound to the account/session version. `mfa.with_device_trust(config,
+seconds: 604_800, renew: True)` sets the lifetime (five minutes to a year) and
+whether each use restarts it; without renewal, trust ends that long after the
+second factor was last verified. Devices already remembered keep the expiry they
+were issued with until they are next renewed. Tokens are hashed at
 rest; browser cookies are HttpOnly and Secure outside loopback development.
 Account security changes invalidate them. Forgetting a remembered device stops
 future MFA bypass on that device; separately revoke its existing sessions to

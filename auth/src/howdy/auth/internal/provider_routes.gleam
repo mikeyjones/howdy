@@ -143,8 +143,9 @@ pub fn complete(
     Ok(auth.ProviderSecondFactor(challenge)) -> {
       rotate()
       case login_transport.try_trusted(identity, ctx, challenge) {
-        auth.SignedIn(session) -> signed_in(session)
-        auth.SecondFactor(challenge) ->
+        #(auth.SignedIn(session), remembered) ->
+          signed_in(session) |> remembered
+        #(auth.SecondFactor(challenge), _) ->
           login_transport.pending(
             identity,
             redirect(ctx, prefix <> "/mfa"),

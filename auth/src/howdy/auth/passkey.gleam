@@ -41,6 +41,7 @@ pub fn registration_options(
   rp: String,
   name: String,
   origin: String,
+  origins: List(String),
   user_id: String,
   email: String,
   existing: List(Stored),
@@ -58,6 +59,7 @@ pub fn registration_options(
       registration.Ed25519,
       registration.Rs256,
     ])
+  let builder = list.fold(origins, builder, registration.origin)
   let builder =
     list.fold(existing, builder, fn(builder, stored) {
       case bit_array.base64_url_decode(stored.info.id) {
@@ -78,10 +80,12 @@ pub fn registration_options(
 pub fn authentication_options(
   rp: String,
   origin: String,
+  origins: List(String),
 ) -> #(json.Json, String) {
   let #(options, challenge) =
     authentication.new(rp, origin)
     |> authentication.user_verification(glasslock.VerificationRequired)
+    |> list.fold(origins, _, authentication.origin)
     |> authentication.build
   #(options, authentication.encode_challenge(challenge))
 }

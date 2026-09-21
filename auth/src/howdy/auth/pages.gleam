@@ -304,9 +304,20 @@ fn mfa_login(identity: Auth, api: String, hidden: Bool) -> String {
   }
   <> "><h2>Second factor</h2><form id=\"mfa-verify\"><label>Method <select name=\"method\"><option value=\"totp\">Authenticator app</option>"
   <> delivered_option(identity)
-  <> "<option value=\"recovery\">Recovery code</option></select></label><label>Code <input name=\"code\" autocomplete=\"one-time-code\" required maxlength=\"64\"></label><label><input name=\"remember\" type=\"checkbox\">Remember this device for 30 days</label><button>Verify sign-in</button></form>"
+  <> "<option value=\"recovery\">Recovery code</option></select></label><label>Code <input name=\"code\" autocomplete=\"one-time-code\" required maxlength=\"64\"></label><label><input name=\"remember\" type=\"checkbox\">Remember this device for "
+  <> trust_period(auth.mfa_trust_seconds(identity))
+  <> "</label><button>Verify sign-in</button></form>"
   <> delivered_button(identity)
   <> "</section>"
+}
+
+fn trust_period(seconds: Int) -> String {
+  let #(count, unit) = case seconds {
+    s if s >= 172_800 -> #(s / 86_400, "days")
+    s if s >= 7200 -> #(s / 3600, "hours")
+    s -> #(s / 60, "minutes")
+  }
+  int.to_string(count) <> " " <> unit
 }
 
 fn security_settings(identity: Auth) -> String {

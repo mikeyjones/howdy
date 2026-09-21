@@ -52,11 +52,13 @@ fn unique_cookie(
   }
 }
 
+/// The second element finishes the response: when device trust renews on use,
+/// it re-sets the device cookie so the browser keeps it as long as the server.
 pub fn try_trusted(
   identity: auth.Auth,
   ctx: controller.Context,
   challenge: auth.MfaChallenge,
-) -> auth.LoginStep {
+) {
   case unique_cookie(ctx, trusted_cookie(identity)) {
     Ok(device) ->
       case
@@ -66,10 +68,22 @@ pub fn try_trusted(
           device,
         )
       {
-        Ok(session) -> auth.SignedIn(session)
-        Error(_) -> auth.SecondFactor(challenge)
+        Ok(session) -> #(auth.SignedIn(session), fn(res) {
+          case auth.mfa_trust_renewal(identity) {
+            True ->
+              cookie.set(
+                res,
+                trusted_cookie(identity),
+                device,
+                options(identity)
+                  |> cookie.max_age(auth.mfa_trust_seconds(identity)),
+              )
+            False -> res
+          }
+        })
+        Error(_) -> #(auth.SecondFactor(challenge), fn(res) { res })
       }
-    Error(_) -> auth.SecondFactor(challenge)
+    Error(_) -> #(auth.SecondFactor(challenge), fn(res) { res })
   }
 }
 
@@ -89,10 +103,12 @@ pub fn browser(
   answer: service.Result(auth.LoginStep),
   required,
 ) {
-  let answer = case answer {
-    Ok(auth.SecondFactor(challenge)) ->
-      Ok(try_trusted(identity, ctx, challenge))
-    other -> other
+  let #(answer, remembered) = case answer {
+    Ok(auth.SecondFactor(challenge)) -> {
+      let #(step, remembered) = try_trusted(identity, ctx, challenge)
+      #(Ok(step), remembered)
+    }
+    other -> #(other, fn(res) { res })
   }
   case answer {
     Error(error) -> service.error_response(ctx, error)
@@ -114,6 +130,7 @@ pub fn browser(
               |> cookie.max_age(auth.policy(identity).session_seconds),
           )
           |> cookie.delete(pending_cookie(identity), options(identity))
+          |> remembered
         auth.SecondFactor(challenge) ->
           pending(
             identity,
@@ -181,7 +198,8 @@ pub fn completed(
           |> cookie.set(
             trusted_cookie(identity),
             secret.reveal(device),
-            options(identity) |> cookie.max_age(security_store.trusted_seconds),
+            options(identity)
+              |> cookie.max_age(auth.mfa_trust_seconds(identity)),
           )
       }
     }

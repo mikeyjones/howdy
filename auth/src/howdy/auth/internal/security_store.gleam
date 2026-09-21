@@ -14,8 +14,6 @@ import howdy/service
 
 pub const challenge_seconds = 300
 
-pub const trusted_seconds = 2_592_000
-
 pub type Ceremony {
   Ceremony(
     user_id: Option(String),
@@ -436,6 +434,7 @@ pub fn add_trusted(
   user_id: String,
   version: Int,
   digest: String,
+  seconds: Int,
 ) -> service.Result(Nil) {
   use _ <- result.try(
     db.execute(
@@ -452,8 +451,20 @@ pub fn add_trusted(
       sql.string(user_id),
       sql.int(version),
       sql.int(token.now()),
-      sql.int(token.now() + trusted_seconds),
+      sql.int(token.now() + seconds),
     ],
+  )
+}
+
+pub fn renew_trusted(
+  conn: Repo,
+  digest: String,
+  seconds: Int,
+) -> service.Result(Nil) {
+  db.execute(
+    conn,
+    "UPDATE howdy_auth_trusted_devices SET expires_at = $1 WHERE digest = $2",
+    [sql.int(token.now() + seconds), sql.string(digest)],
   )
 }
 

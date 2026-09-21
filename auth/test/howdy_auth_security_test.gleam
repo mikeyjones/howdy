@@ -890,3 +890,243 @@ pub fn native_bearer_mfa_flow_never_returns_access_before_verification_test() {
   assert result.is_ok(auth.authenticate(identity, session_token))
   assert testing.cookies(response) == []
 }
+
+fn device_expiry(database) {
+  let assert Ok([#(created, expires)]) =
+    repo.all(
+      database,
+      "SELECT created_at, expires_at FROM howdy_auth_trusted_devices",
+      [],
+      {
+        use created <- decode.field(0, decode.int)
+        use expires <- decode.field(1, decode.int)
+        decode.success(#(created, expires))
+      },
+    )
+  expires - created
+}
+
+pub fn device_trust_lifetime_renewal_and_recovery_count_are_configurable_test() {
+  use database, identity, permissions, mailbox <- fixture
+  let assert Ok(config) = mfa.new("Howdy tests", token.new())
+  assert result.is_error(mfa.with_device_trust(config, 299, False))
+  assert result.is_error(mfa.with_device_trust(config, 31_536_001, True))
+  assert result.is_error(mfa.with_recovery_codes(config, 3))
+  assert result.is_error(mfa.with_recovery_codes(config, 33))
+  let assert Ok(fixed) = mfa.with_device_trust(config, 3600, False)
+  let assert Ok(fixed) = mfa.with_recovery_codes(fixed, 4)
+  let assert Ok(renewing) = mfa.with_device_trust(fixed, 3600, True)
+  let fixed = auth.with_mfa(identity, fixed)
+  let renewing = auth.with_mfa(identity, renewing)
+  assert auth.mfa_trust_seconds(identity) == mfa.default_trust_seconds
+  assert auth.mfa_trust_seconds(fixed) == 3600
+  assert !auth.mfa_trust_renewal(fixed)
+  assert auth.mfa_trust_renewal(renewing)
+
+  let session = signup(fixed, mailbox, "ada@example.com")
+  let #(_, codes) = enroll(fixed, session)
+  let assert [code, _, _, _] = codes
+  let assert Ok(completed) =
+    auth.verify_mfa(
+      fixed,
+      pending(fixed, mailbox),
+      auth.RecoveryCode,
+      secret.reveal(code),
+      True,
+    )
+  let assert Some(device) = completed.trusted_device
+  let device = secret.reveal(device)
+  assert device_expiry(database) == 3600
+
+  // Half the lifetime has passed. Using the device leaves a fixed expiry alone.
+  exec(
+    database,
+    "UPDATE howdy_auth_trusted_devices SET created_at = created_at - 1800, expires_at = expires_at - 1800",
+  )
+  let assert Ok(_) =
+    auth.use_trusted_device(fixed, pending(fixed, mailbox), device)
+  assert device_expiry(database) == 3600
+  let assert Ok(_) =
+    auth.use_trusted_device(renewing, pending(renewing, mailbox), device)
+  let renewed = device_expiry(database)
+  assert renewed >= 5400 && renewed <= 5402
+
+  // The browser keeps a renewed device exactly as long as the server does.
+  let login = fn(identity) {
+    let assert Ok(_) =
+      auth.request_token(identity, "ada@example.com", auth.Login)
+    let assert Ok(delivery) = process.receive(mailbox, 1000)
+    testing.post(
+      "/api/auth/session",
+      json.object([#("token", json.string(secret.reveal(delivery.token)))]),
+    )
+    |> testing.header("origin", "https://example.test")
+    |> testing.cookie("__Host-howdy_trusted", device)
+    |> testing.send(support.app(identity, permissions))
+  }
+  let kept = login(fixed)
+  assert kept.status == 200
+  assert testing.cookies(kept)
+    |> list.all(fn(c) { c.0 != "__Host-howdy_trusted" })
+  let again = login(renewing)
+  assert again.status == 200
+  assert testing.cookies(again)
+    |> list.contains(#("__Host-howdy_trusted", device))
+  let assert Ok(header) =
+    list.find(again.headers, fn(h) {
+      h.0 == "set-cookie" && string.contains(h.1, "__Host-howdy_trusted")
+    })
+  assert string.contains(header.1, "Max-Age=3600")
+
+  // An expired device is refused even when renewal is on.
+  exec(database, "UPDATE howdy_auth_trusted_devices SET expires_at = 1")
+  assert auth.use_trusted_device(renewing, pending(renewing, mailbox), device)
+    == Error(service.Unauthorized)
+}
+
+fn subdomain(database, mailbox: process.Subject(auth.Delivery)) {
+  let assert Ok(identity) =
+    auth.new(database, "https://app.example.test", fn(delivery) {
+      process.send(mailbox, delivery)
+      Ok(Nil)
+    })
+  let assert Ok(identity) =
+    auth.with_passkeys(auth.allow_registration(identity), "Howdy tests")
+  identity
+}
+
+pub fn passkey_relying_party_must_cover_every_origin_test() {
+  use database, identity, _, mailbox <- fixture
+  assert result.is_error(
+    auth.with_passkey_relying_party(identity, "example.test", []),
+  )
+  let identity = subdomain(database, mailbox)
+  let rp = fn(id, origins) {
+    auth.with_passkey_relying_party(identity, id, origins)
+  }
+  assert result.is_ok(rp("example.test", []))
+  assert result.is_ok(rp(" Example.Test ", ["https://admin.example.test"]))
+  assert result.is_ok(rp("app.example.test", []))
+  assert result.is_error(rp("", []))
+  assert result.is_error(rp(".test", []))
+  assert result.is_error(rp("ample.test", []))
+  assert result.is_error(rp("other.test", []))
+  assert result.is_error(rp("admin.example.test", []))
+  assert result.is_error(rp("example.test", ["https://example.test.evil.test"]))
+  assert result.is_error(rp("example.test", ["http://admin.example.test"]))
+  assert result.is_error(rp("example.test", ["https://admin.example.test/x"]))
+}
+
+pub fn parent_domain_passkeys_register_and_login_from_a_subdomain_test() {
+  use database, _, _, mailbox <- fixture
+  let exact = subdomain(database, mailbox)
+  let session = signup(exact, mailbox, "ada@example.com")
+  let keypair = authenticator.generate_es256_keypair()
+
+  // The authenticator below is scoped to `example.test`. Without the parent
+  // RP ID the subdomain deployment expects `app.example.test` and refuses it.
+  let p = principal(exact, session)
+  let assert Ok(start) = auth.begin_passkey_registration(exact, p, "Laptop")
+  assert auth.finish_passkey_registration(
+      exact,
+      p,
+      secret.reveal(start.challenge),
+      registration_response(database, start, keypair, True)
+        |> authenticator.to_registration_json,
+    )
+    == Error(service.Unauthorized)
+
+  let assert Ok(shared) =
+    auth.with_passkey_relying_party(exact, "example.test", [])
+  let id = register(database, shared, session, keypair)
+  let assert Ok(start) = auth.begin_passkey_login(shared)
+  let response =
+    assertion(database, start, keypair, id, session.user.id, 1)
+    |> authenticator.to_authentication_json
+  let assert Ok(auth.SignedIn(signed_in)) =
+    auth.finish_passkey_login(
+      shared,
+      secret.reveal(start.challenge),
+      response,
+      "test",
+    )
+  assert signed_in.user.id == session.user.id
+
+  // The same credential is refused where the RP ID is the exact hostname.
+  let assert Ok(start) = auth.begin_passkey_login(exact)
+  assert auth.finish_passkey_login(
+      exact,
+      secret.reveal(start.challenge),
+      assertion(database, start, keypair, id, session.user.id, 2)
+        |> authenticator.to_authentication_json,
+      "test",
+    )
+    == Error(service.Unauthorized)
+}
+
+fn assertion_from(
+  database,
+  challenge,
+  origin,
+  keypair,
+  credential_id,
+  user_id,
+  counter,
+) {
+  let assert Ok(c) = authentication.parse_challenge(state(database, challenge))
+  let signed =
+    assertion(database, challenge, keypair, credential_id, user_id, counter)
+  let client_data_json =
+    authenticator.build_client_data_get(
+      challenge: authentication.challenge_data(c).bytes,
+      origin:,
+      cross_origin: False,
+    )
+  authenticator.AuthenticationResponse(
+    ..signed,
+    client_data_json:,
+    signature: authenticator.sign_authentication_message(
+      keypair,
+      signed.authenticator_data,
+      client_data_json,
+    ),
+  )
+  |> authenticator.to_authentication_json
+}
+
+pub fn further_passkey_origins_are_accepted_only_when_listed_test() {
+  use database, _, _, mailbox <- fixture
+  let identity = subdomain(database, mailbox)
+  let assert Ok(alone) =
+    auth.with_passkey_relying_party(identity, "example.test", [])
+  let assert Ok(listed) =
+    auth.with_passkey_relying_party(identity, "example.test", [
+      "https://admin.example.test",
+    ])
+  let session = signup(alone, mailbox, "ada@example.com")
+  let keypair = authenticator.generate_es256_keypair()
+  let id = register(database, alone, session, keypair)
+  let attempt = fn(identity, origin, counter) {
+    let assert Ok(start) = auth.begin_passkey_login(identity)
+    auth.finish_passkey_login(
+      identity,
+      secret.reveal(start.challenge),
+      assertion_from(
+        database,
+        start,
+        origin,
+        keypair,
+        id,
+        session.user.id,
+        counter,
+      ),
+      "test",
+    )
+    |> result.is_ok
+  }
+  assert attempt(alone, "https://app.example.test", 1)
+  assert !attempt(alone, "https://admin.example.test", 2)
+  assert attempt(listed, "https://app.example.test", 3)
+  assert attempt(listed, "https://admin.example.test", 4)
+  assert !attempt(listed, "https://other.example.test", 5)
+}

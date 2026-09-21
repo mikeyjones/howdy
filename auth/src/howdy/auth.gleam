@@ -90,7 +90,7 @@ pub opaque type Auth {
     sessions: Sessions,
     before_delete: Option(fn(Repo, User) -> service.Result(Nil)),
     mfa: Option(mfa.Config),
-    passkeys: Option(String),
+    passkeys: Option(PasskeySetup),
     sso: Option(connection.Config),
   )
 }
@@ -2563,6 +2563,23 @@ pub fn mfa_enabled(auth: Auth) -> Bool {
   option.is_some(auth.mfa)
 }
 
+/// Remembered-device lifetime in seconds, for transports setting the cookie.
+pub fn mfa_trust_seconds(auth: Auth) -> Int {
+  case auth.mfa {
+    Some(config) -> mfa.trust_seconds(config)
+    None -> mfa.default_trust_seconds
+  }
+}
+
+/// Whether using a remembered device restarts its lifetime; a transport then
+/// re-sets the device cookie with a fresh `mfa_trust_seconds` max-age.
+pub fn mfa_trust_renewal(auth: Auth) -> Bool {
+  case auth.mfa {
+    Some(config) -> mfa.trust_renewal(config)
+    None -> False
+  }
+}
+
 pub fn mfa_delivery_enabled(auth: Auth) -> Bool {
   case auth.mfa {
     Some(config) -> mfa.can_deliver(config)
@@ -2570,8 +2587,13 @@ pub fn mfa_delivery_enabled(auth: Auth) -> Bool {
   }
 }
 
-/// Passkeys use the exact public-origin hostname as RP ID and require user
-/// verification (PIN/biometric). Enable once at startup with the displayed name.
+type PasskeySetup {
+  PasskeySetup(name: String, rp: Option(String), origins: List(String))
+}
+
+/// Passkeys use the exact public-origin hostname as RP ID unless
+/// `with_passkey_relying_party` says otherwise, and require user verification
+/// (PIN/biometric). Enable once at startup with the displayed name.
 pub fn with_passkeys(
   auth: Auth,
   relying_party_name: String,
@@ -2580,7 +2602,10 @@ pub fn with_passkeys(
     string.trim(relying_party_name) != ""
     && string.byte_size(relying_party_name) <= 128
   {
-    True -> Ok(Auth(..auth, passkeys: Some(relying_party_name)))
+    True ->
+      Ok(
+        Auth(..auth, passkeys: Some(PasskeySetup(relying_party_name, None, []))),
+      )
     False ->
       Error(service.Invalid(
         "passkey relying-party name must contain 1 to 128 bytes",
@@ -2599,17 +2624,76 @@ fn mfa_config(auth: Auth) -> service.Result(mfa.Config) {
   }
 }
 
-fn passkey_config(auth: Auth) -> service.Result(#(String, String)) {
-  use name <- result.try(case auth.passkeys {
-    Some(name) -> Ok(name)
+/// Share passkeys across subdomains. `id` is the RP ID: the public origin's
+/// hostname or a parent domain of it, such as `example.com` for
+/// `https://app.example.com`. `origins` lists further HTTPS origins under that
+/// domain whose ceremonies `finish_passkey_registration` and
+/// `finish_passkey_login` also accept; the public origin always is. Call after
+/// `with_passkeys`.
+///
+/// Browsers refuse a public suffix (`com`, `co.uk`) as RP ID; that is not
+/// checked here. A passkey is bound to the RP ID it was created under, so
+/// changing it later strands every existing passkey: choose it before launch.
+/// The bundled JSON routes still answer only the public origin, so another
+/// origin needs its own deployment or transport calling these functions.
+pub fn with_passkey_relying_party(
+  auth: Auth,
+  id id: String,
+  origins origins: List(String),
+) -> service.Result(Auth) {
+  use setup <- result.try(case auth.passkeys {
+    Some(setup) -> Ok(setup)
+    None -> Error(service.Invalid("enable passkeys before their relying party"))
+  })
+  let id = string.lowercase(string.trim(id))
+  use origins <- result.try(list.try_map(origins, address.canonical_origin))
+  let origins =
+    list.unique(origins) |> list.filter(fn(origin) { origin != auth.origin })
+  let within = fn(origin) {
+    case uri.parse(origin) {
+      Ok(uri.Uri(host: Some(host), ..)) ->
+        host == id || string.ends_with(host, "." <> id)
+      _ -> False
+    }
+  }
+  case
+    id != ""
+    && !string.starts_with(id, ".")
+    && list.length(origins) <= 16
+    && list.all([auth.origin, ..origins], within)
+  {
+    True ->
+      Ok(
+        Auth(
+          ..auth,
+          passkeys: Some(PasskeySetup(..setup, rp: Some(id), origins:)),
+        ),
+      )
+    False ->
+      Error(service.Invalid(
+        "passkey RP ID must be the hostname of the public origin and of at most 16 further origins, or a parent domain of them all",
+      ))
+  }
+}
+
+fn passkey_config(
+  auth: Auth,
+) -> service.Result(#(String, String, List(String))) {
+  use setup <- result.try(case auth.passkeys {
+    Some(setup) -> Ok(setup)
     None -> Error(service.Forbidden)
   })
-  use parsed <- result.try(
-    uri.parse(auth.origin) |> result.replace_error(service.Forbidden),
-  )
-  case parsed.host {
-    Some(host) -> Ok(#(host, name))
-    None -> Error(service.Forbidden)
+  case setup.rp {
+    Some(rp) -> Ok(#(rp, setup.name, setup.origins))
+    None -> {
+      use parsed <- result.try(
+        uri.parse(auth.origin) |> result.replace_error(service.Forbidden),
+      )
+      case parsed.host {
+        Some(host) -> Ok(#(host, setup.name, []))
+        None -> Error(service.Forbidden)
+      }
+    }
   }
 }
 
@@ -2656,7 +2740,7 @@ pub fn begin_passkey_registration(
   principal: Principal,
   name: String,
 ) -> service.Result(PasskeyChallenge) {
-  use #(rp, rp_name) <- result.try(passkey_config(auth))
+  use #(rp, rp_name, origins) <- result.try(passkey_config(auth))
   use name <- result.try(key_name(name))
   let challenge = token.new()
   use options <- result.try({
@@ -2672,6 +2756,7 @@ pub fn begin_passkey_registration(
         rp,
         rp_name,
         auth.origin,
+        origins,
         user.id,
         user.email,
         keys,
@@ -2764,8 +2849,9 @@ fn bound_ceremony(
 }
 
 pub fn begin_passkey_login(auth: Auth) -> service.Result(PasskeyChallenge) {
-  use #(rp, _) <- result.try(passkey_config(auth))
-  let #(options, state) = passkey.authentication_options(rp, auth.origin)
+  use #(rp, _, origins) <- result.try(passkey_config(auth))
+  let #(options, state) =
+    passkey.authentication_options(rp, auth.origin, origins)
   let challenge = token.new()
   use _ <- result.try(
     db.transaction(auth.repo, security_store.ceremony(
@@ -3006,7 +3092,11 @@ fn new_recovery_codes(
   auth: Auth,
   user_id: String,
 ) -> service.Result(List(secret.Secret)) {
-  let codes = list.map(list.repeat(Nil, 10), fn(_) { mfa.backup() })
+  use config <- result.try(mfa_config(auth))
+  let codes =
+    list.map(list.repeat(Nil, mfa.recovery_codes(config)), fn(_) {
+      mfa.backup()
+    })
   use _ <- result.try(security_store.recovery_codes(
     conn,
     user_id,
@@ -3223,6 +3313,7 @@ pub fn verify_mfa(
           user.id,
           pending.version,
           token.digest(secret.reveal(value)),
+          mfa.trust_seconds(config),
         )
       None -> Ok(Nil)
     })
@@ -3251,13 +3342,15 @@ pub fn verify_mfa(
 }
 
 /// Redeem a remembered device only AFTER a successful primary login challenge.
-/// Tokens are user- and generation-bound and have a fixed 30-day lifetime.
+/// Tokens are user- and generation-bound and last as long as
+/// `mfa.with_device_trust` says (30 days by default), restarting on each use
+/// only when renewal is enabled.
 pub fn use_trusted_device(
   auth: Auth,
   challenge: String,
   device: String,
 ) -> service.Result(Session) {
-  use _ <- result.try(mfa_config(auth))
+  use config <- result.try(mfa_config(auth))
   use _ <- result.try(valid_token(challenge))
   use _ <- result.try(valid_token(device))
   use issued <- result.try({
@@ -3273,9 +3366,15 @@ pub fn use_trusted_device(
       user.id,
       pending.version,
     ))
-    use _ <- result.try(case trusted {
-      True -> Ok(Nil)
-      False -> Error(service.Unauthorized)
+    use _ <- result.try(case trusted, mfa.trust_renewal(config) {
+      True, True ->
+        security_store.renew_trusted(
+          conn,
+          token.digest(device),
+          mfa.trust_seconds(config),
+        )
+      True, False -> Ok(Nil)
+      False, _ -> Error(service.Unauthorized)
     })
     use _ <- result.try(security_store.spend_pending(
       conn,

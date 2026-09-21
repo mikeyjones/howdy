@@ -14,8 +14,14 @@ pub opaque type Config {
     issuer: String,
     key: secret.Secret,
     deliver: Option(fn(User, secret.Secret) -> Result(Nil, Nil)),
+    trust_seconds: Int,
+    trust_renewal: Bool,
+    recovery_codes: Int,
   )
 }
+
+/// Default remembered-device lifetime: 30 days.
+pub const default_trust_seconds = 2_592_000
 
 pub fn new(issuer: String, encryption_key: String) -> service.Result(Config) {
   use key <- result.try(
@@ -31,7 +37,15 @@ pub fn new(issuer: String, encryption_key: String) -> service.Result(Config) {
       ))
     True ->
       case string.trim(issuer) != "" && string.byte_size(issuer) <= 128 {
-        True -> Ok(Config(issuer, secret.wrap(encryption_key), None))
+        True ->
+          Ok(Config(
+            issuer,
+            secret.wrap(encryption_key),
+            None,
+            default_trust_seconds,
+            False,
+            10,
+          ))
         False ->
           Error(service.Invalid("MFA issuer must contain 1 to 128 bytes"))
       }
@@ -46,6 +60,51 @@ pub fn with_delivery(
   deliver: fn(User, secret.Secret) -> Result(Nil, Nil),
 ) -> Config {
   Config(..config, deliver: Some(deliver))
+}
+
+/// How long a remembered device skips the second factor: 30 days by default,
+/// at least five minutes and at most a year. With `renew`, each successful use
+/// restarts the lifetime, so only a device left unused this long is forgotten;
+/// without it, trust ends this long after the second factor was last verified.
+/// Devices already remembered keep the expiry they were issued with.
+pub fn with_device_trust(
+  config: Config,
+  seconds seconds: Int,
+  renew renew: Bool,
+) -> service.Result(Config) {
+  case seconds >= 300 && seconds <= 31_536_000 {
+    True -> Ok(Config(..config, trust_seconds: seconds, trust_renewal: renew))
+    False ->
+      Error(service.Invalid(
+        "MFA device trust must last 300 to 31536000 seconds",
+      ))
+  }
+}
+
+/// Recovery codes issued per enrollment or regeneration: 10 by default, 4 to 32.
+pub fn with_recovery_codes(
+  config: Config,
+  count: Int,
+) -> service.Result(Config) {
+  case count >= 4 && count <= 32 {
+    True -> Ok(Config(..config, recovery_codes: count))
+    False -> Error(service.Invalid("MFA recovery codes must number 4 to 32"))
+  }
+}
+
+@internal
+pub fn trust_seconds(config: Config) -> Int {
+  config.trust_seconds
+}
+
+@internal
+pub fn trust_renewal(config: Config) -> Bool {
+  config.trust_renewal
+}
+
+@internal
+pub fn recovery_codes(config: Config) -> Int {
+  config.recovery_codes
 }
 
 @internal
