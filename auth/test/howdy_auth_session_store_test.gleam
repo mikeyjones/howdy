@@ -1,8 +1,10 @@
 //// Sessions kept outside the database, and provisioning users.
 
 import gleam/erlang/process
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import howdy/auth
 import howdy/auth/group
 import howdy/auth/groups
@@ -39,9 +41,19 @@ fn unable_to_remove(store: SessionStore) -> SessionStore {
 pub fn the_memory_store_meets_the_contract_and_check_catches_a_broken_one_test() {
   let store = session_store.memory()
   assert session_store.check(store) == Ok(Nil)
-  let forgetful = SessionStore(..store, touch: fn(_, _) { Ok(Nil) })
+  let forgetful = SessionStore(..store, touch: fn(_, _, _) { Ok(Nil) })
   assert session_store.check(forgetful)
-    == Error("touch must change last_seen_at and nothing else")
+    == Error(
+      "touch must change last_seen_at and leave an unchanged expires_at alone",
+    )
+  // A store written for the old contract, which ignores the new expiry.
+  let unrenewing =
+    SessionStore(..store, touch: fn(digest, now, _) {
+      let assert Ok(Some(entry)) = store.get(digest)
+      store.touch(digest, now, entry.expires_at)
+    })
+  assert session_store.check(unrenewing)
+    == Error("touch must set last_seen_at and expires_at and nothing else")
   let careless =
     SessionStore(..store, delete: fn(digest, _) {
       store.delete(digest, "howdy-check-bob")
@@ -244,4 +256,132 @@ pub fn provisioning_follows_the_group_mode_test() {
   // One account per address everywhere once the mode says so.
   let assert Error(service.Conflict(_)) =
     auth.with_groups(identity, group.OneGroupPerUser)
+}
+
+const day = 86_400
+
+fn renewing(identity, max: Int) {
+  let assert Ok(identity) =
+    auth.with_policy(
+      identity,
+      policy.Policy(
+        ..auth.policy(identity),
+        session_seconds: 7 * day,
+        session_renew_seconds: day,
+        session_max_seconds: max,
+      ),
+    )
+  identity
+}
+
+pub fn renewal_policy_is_validated_and_sizes_the_cookie_test() {
+  use _, identity, _, _ <- fixture
+  let with = fn(renew, max) {
+    auth.with_policy(
+      identity,
+      policy.Policy(
+        ..policy.default(),
+        session_renew_seconds: renew,
+        session_max_seconds: max,
+      ),
+    )
+  }
+  assert with(59, 0) |> result.is_error
+  assert with(day, 0) |> result.is_error
+  assert with(3600, day - 1) |> result.is_error
+  assert with(0, day - 1) |> result.is_error
+  assert auth.session_cookie_seconds(identity) == day
+  let assert Ok(capped) = with(3600, 30 * day)
+  assert auth.session_cookie_seconds(capped) == 30 * day
+  let assert Ok(open) = with(3600, 0)
+  assert auth.session_cookie_seconds(open) == 400 * day
+  // A ceiling without renewal changes nothing: the session is the cookie.
+  let assert Ok(fixed) = with(0, 30 * day)
+  assert auth.session_cookie_seconds(fixed) == day
+}
+
+// Move one session into the past, as seen by either kind of store.
+fn age(database, store: option.Option(SessionStore), digest, by seconds: Int) {
+  case store {
+    None ->
+      support.exec(
+        database,
+        "UPDATE howdy_auth_sessions SET created_at = created_at - "
+          <> int.to_string(seconds)
+          <> ", last_seen_at = last_seen_at - "
+          <> int.to_string(seconds)
+          <> ", expires_at = expires_at - "
+          <> int.to_string(seconds),
+      )
+    Some(store) -> {
+      let assert Ok(Some(entry)) = store.get(digest)
+      let assert Ok(Nil) =
+        store.insert(
+          Entry(
+            ..entry,
+            created_at: entry.created_at - seconds,
+            last_seen_at: entry.last_seen_at - seconds,
+            expires_at: entry.expires_at - seconds,
+          ),
+        )
+      Nil
+    }
+  }
+}
+
+fn remaining(identity, session: auth.Session) {
+  let assert Ok(p) = auth.authenticate(identity, secret.reveal(session.token))
+  let assert Ok([info]) = auth.sessions(identity, p)
+  info.expires_at - token.now()
+}
+
+fn renewal_scenario(database, identity, mailbox, store) {
+  let fixed = identity
+  let identity = renewing(identity, 10 * day)
+  let session = signup(identity, mailbox, "ada@example.com")
+  let digest = token.digest(secret.reveal(session.token))
+  let near = fn(actual, expected) {
+    actual >= expected - 5 && actual <= expected + 5
+  }
+  assert near(remaining(identity, session), 7 * day)
+
+  // Used within the renewal interval: the expiry is left alone.
+  age(database, store, digest, by: day / 2)
+  assert near(remaining(identity, session), 7 * day - day / 2)
+
+  // Used after it: a full lifetime from now.
+  age(database, store, digest, by: day)
+  assert near(remaining(identity, session), 7 * day)
+
+  // Without the policy the same use extends nothing.
+  age(database, store, digest, by: 2 * day)
+  let fixed = renewing(fixed, 0)
+  let assert Ok(fixed) =
+    auth.with_policy(
+      fixed,
+      policy.Policy(..auth.policy(fixed), session_renew_seconds: 0),
+    )
+  assert near(remaining(fixed, session), 5 * day)
+
+  // A minute from expiry, 8.5 days after creation. A full week would pass the
+  // ten-day ceiling, so renewal reaches only that: a day and a half.
+  age(database, store, digest, by: 5 * day - 60)
+  assert near(remaining(identity, session), day + day / 2 + 60)
+
+  // An expired session is never revived, renewal or not.
+  age(database, store, digest, by: 2 * day)
+  assert auth.authenticate(identity, secret.reveal(session.token))
+    == Error(service.Unauthorized)
+}
+
+pub fn database_sessions_renew_on_use_up_to_the_ceiling_test() {
+  use database, identity, _, mailbox <- fixture
+  renewal_scenario(database, identity, mailbox, None)
+}
+
+pub fn external_sessions_renew_on_use_up_to_the_ceiling_test() {
+  use database, identity, _, mailbox <- fixture
+  let store = session_store.memory()
+  let identity = auth.with_session_store(identity, store)
+  renewal_scenario(database, identity, mailbox, Some(store))
 }

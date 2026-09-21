@@ -11,8 +11,20 @@ import howdy/service
 
 pub type Policy {
   Policy(
-    /// Absolute session lifetime. There is no sliding renewal.
+    /// Session lifetime: absolute, unless `session_renew_seconds` extends it.
     session_seconds: Int,
+    /// Sliding renewal. When a session is used and at least this long has
+    /// passed since its expiry was last set, the expiry moves to
+    /// `session_seconds` from now. Zero, the default, disables renewal;
+    /// otherwise at least 60 and less than `session_seconds`. With a week-long
+    /// session, 86_400 keeps anyone who returns within a week signed in, at
+    /// the cost of one extra write per session per day.
+    session_renew_seconds: Int,
+    /// Hard ceiling on a renewed session, measured from its creation: however
+    /// active, it ends then. Zero means no ceiling; otherwise at least
+    /// `session_seconds`. Set one whenever renewal is on unless sessions
+    /// really should be able to live forever.
+    session_max_seconds: Int,
     /// Revoke a session unused for this long. Zero disables the idle timeout;
     /// otherwise at least 300, because last use is recorded once a minute.
     session_idle_seconds: Int,
@@ -54,6 +66,8 @@ pub type Policy {
 pub fn default() -> Policy {
   Policy(
     session_seconds: 86_400,
+    session_renew_seconds: 0,
+    session_max_seconds: 0,
     session_idle_seconds: 0,
     fresh_session_seconds: 600,
     challenge_seconds: 600,
@@ -99,6 +113,17 @@ pub fn validate(policy: Policy) -> service.Result(Policy) {
     && {
       policy.session_idle_seconds == 0 || policy.session_idle_seconds >= 300
     }
+    && {
+      policy.session_renew_seconds == 0
+      || {
+        policy.session_renew_seconds >= 60
+        && policy.session_renew_seconds < policy.session_seconds
+      }
+    }
+    && {
+      policy.session_max_seconds == 0
+      || policy.session_max_seconds >= policy.session_seconds
+    }
     && policy.email_coalesce_margin_seconds <= policy.challenge_seconds
     && policy.email_cooldown_max_seconds >= policy.email_cooldown_seconds
     && policy.password_account_attempts >= policy.password_attempts
@@ -109,7 +134,7 @@ pub fn validate(policy: Policy) -> service.Result(Policy) {
     True -> Ok(policy)
     False ->
       Error(service.Invalid(
-        "auth policy values must be positive; idle timeout 0 or at least 300 seconds; coalesce margin at most the challenge lifetime; maximum cooldown at least the cooldown; minimum password length at least 8",
+        "auth policy values must be positive; idle timeout 0 or at least 300 seconds; session renewal 0 or from 60 seconds to below the session lifetime; maximum session 0 or at least the session lifetime; coalesce margin at most the challenge lifetime; maximum cooldown at least the cooldown; minimum password length at least 8",
       ))
   }
 }

@@ -246,22 +246,26 @@ pub fn api_limited_by(
     strict(fn(ctx) {
       use principal <- guard.require(ctx, required)
       use email <- body.json_with_limit(ctx, body_limit, field("email"))
-      case auth.request_email_change(identity, principal, email) {
-        Ok(Nil) ->
-          controller.json(
-            ctx,
-            json.object([
-              #(
-                "message",
-                json.string(
-                  "Check your new email address for a confirmation token.",
-                ),
-              ),
-            ]),
-          )
-          |> controller.with_status(202)
-        Error(error) -> service.error_response(ctx, error)
-      }
+      auth.request_email_change(identity, principal, email)
+      |> email_change_sent(
+        ctx,
+        case auth.email_change_approval_enabled(identity) {
+          True -> "Check your current email address for an approval token."
+          False -> "Check your new email address for a confirmation token."
+        },
+      )
+    }),
+  )
+  |> controller.post(
+    "/email/approve",
+    strict(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      use token <- body.json_with_limit(ctx, body_limit, field("token"))
+      auth.approve_email_change(identity, principal, token)
+      |> email_change_sent(
+        ctx,
+        "Check your new email address for a confirmation token.",
+      )
     }),
   )
   |> controller.post(
@@ -322,6 +326,15 @@ pub fn api_limited_by(
 /// Request bodies hold an address, a token or a password; nothing larger.
 const body_limit = 4096
 
+fn email_change_sent(answer: service.Result(Nil), ctx, message: String) {
+  case answer {
+    Ok(Nil) ->
+      controller.json(ctx, json.object([#("message", json.string(message))]))
+      |> controller.with_status(202)
+    Error(error) -> service.error_response(ctx, error)
+  }
+}
+
 fn account_response(answer: service.Result(Nil), ctx, identity: Auth) {
   case answer {
     Ok(Nil) ->
@@ -334,7 +347,7 @@ fn account_response(answer: service.Result(Nil), ctx, identity: Auth) {
 fn options(identity: Auth) -> cookie.Options {
   cookie.defaults()
   |> cookie.secure(auth.secure(identity))
-  |> cookie.max_age(auth.policy(identity).session_seconds)
+  |> cookie.max_age(auth.session_cookie_seconds(identity))
 }
 
 fn field(name: String) -> decode.Decoder(String) {

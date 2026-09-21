@@ -357,8 +357,8 @@ The runtime checks a fixed public origin rather than trusting Host/forwarded
 headers. HTTPS is required except for loopback development origins such as
 `http://localhost:8787`. Secure cookies use the `__Host-` prefix, HttpOnly,
 SameSite=Lax and Path=/; development HTTP uses a different cookie name.
-Sessions expire after 24 hours with no sliding renewal, and can additionally
-expire when idle; see [Policy](#policy).
+Sessions expire after 24 hours by default. They can additionally expire when
+idle, or renew while in use up to an optional ceiling; see [Policy](#policy).
 
 Construct the runtime and routes once in a long-lived startup process. HTTP
 route limiters are owned by that process. Auth never opens, configures or closes
@@ -408,9 +408,34 @@ let assert Ok(identity) = auth.with_policy(
 )
 ```
 
+To keep returning users signed in, renew sessions while they are in use:
+
+```gleam
+policy.Policy(
+  ..policy.default(),
+  session_seconds: 604_800,        // a week
+  session_renew_seconds: 86_400,   // extended at most once a day
+  session_max_seconds: 7_776_000,  // never beyond 90 days
+)
+```
+
+Anyone who comes back within a week stays signed in; anyone away longer signs in
+again. Renewal happens when an authenticated request finds the expiry at least
+`session_renew_seconds` old, during the once-a-minute last-use update, so it adds
+no writes. An expired session is never revived, and revocation, suspension and
+the idle timeout apply as before. Set a ceiling unless sessions really should be
+able to live forever. The session cookie then lasts until the ceiling (or the
+400 days browsers allow) rather than being re-issued on each renewal: it only
+carries the token, and the server alone decides when the session ends, so
+renewal works on every route of the application. `expires_in` from the token
+endpoints is the initial expiry; `GET /sessions` reports the current one.
+Lowering these values later does not shorten sessions already issued.
+
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `session_seconds` | 86 400 | Absolute session lifetime |
+| `session_seconds` | 86 400 | Session lifetime: absolute unless renewal extends it |
+| `session_renew_seconds` | 0 (off) | Sliding renewal: a session used at least this long after its expiry was last set expires `session_seconds` from now; from 60 to below `session_seconds` |
+| `session_max_seconds` | 0 (none) | Ceiling on a renewed session, from its creation; at least `session_seconds` when set |
 | `session_idle_seconds` | 0 (off) | Reject sessions unused this long; at least 300 when set |
 | `email_coalesce_margin_seconds` | 300 | Life a live token must have left for a request to be answered by it rather than by sending another |
 | `fresh_session_seconds` | 600 | Age limit of the email-token session that may set a password |
@@ -918,8 +943,29 @@ The old address remains unchanged until confirmation. Both steps require recent
 sign-in; confirmation also rechecks address uniqueness under the installation's
 group mode. Changing group or group mode invalidates pending changes. Requests
 back off both per user and per target mailbox using the configured email cooldown.
-Delivery failure invalidates the pending token. The new flow verifies the new
-mailbox; it does not separately email a confirmation to the old mailbox.
+Delivery failure invalidates the pending token. Once a change completes, the old
+address receives a best-effort `EmailChanged` notice (empty `token`): tell a
+reader who did not make the change to contact support, because that mailbox can
+no longer recover the account.
+
+By default only the new mailbox is verified, so a hijacked fresh session could
+move the account to an address the attacker controls. To also require the
+current mailbox, enable approval at startup:
+
+```gleam
+let identity = auth.with_email_change_approval(identity)
+```
+
+`request_email_change` then sends an `EmailChangeApproval` token to the
+**current** address and nothing to the new one. `auth.approve_email_change(
+identity, principal, token)` (`POST /email/approve`) redeems it from the
+requesting session, rechecks freshness, account state and availability, and only
+then sends the usual `EmailChange` token to the new address. Approval and
+confirmation tokens are not interchangeable, neither can sign in, and each is
+single-use. All three steps must finish within `policy.fresh_session_seconds` of
+the sign-in, so consider raising that policy value alongside this option. A user
+who has lost the old mailbox cannot change address unaided; trusted
+administration still can.
 
 Successful email changes and unlinking sign out **every** session, including the
 caller, and cancel pending email changes/provider links. Email changes invalidate
@@ -959,7 +1005,8 @@ normal migrations before starting the new code. `session_store.Entry` now has a
 required `version: Int`; custom adapters must persist and return it unchanged.
 Pre-upgrade serialized entries can be read as version 0, or cleared on deployment.
 The store contract checker includes this field. `Delivery.purpose` exhaustive
-matches must also handle `EmailChange` and the tokenless `PasswordChanged` notice.
+matches must also handle `EmailChange`, `EmailChangeApproval` and the tokenless
+`EmailChanged` and `PasswordChanged` notices.
 
 Email changes and unlinking advance that version in the database. Authentication
 rejects external entries from older versions, including delayed writes after a
@@ -993,7 +1040,8 @@ require JavaScript, and display success without choosing an application redirect
 | `GET /sessions` | Cookie or bearer authentication | The caller's live sessions: `id`, `method`, `created_at`, `last_seen_at`, `expires_at`, `current` |
 | `POST /sessions/revoke` | Cookie or bearer authentication; `{"id":"…"}` | 204; revokes that session if it is the caller's |
 | `POST /logout` | Cookie or bearer authentication; JSON body, e.g. `{}` | 204; revokes session |
-| `POST /email/change` | Recent authentication; `{"email":"new@example.com"}` | 202; emails confirmation token to new address |
+| `POST /email/change` | Recent authentication; `{"email":"new@example.com"}` | 202; emails confirmation token to new address, or an approval token to the current address under `with_email_change_approval` |
+| `POST /email/approve` | Only with `with_email_change_approval`; same recent session; `{"token":"…"}` from the current address | 202; sends the confirmation token to the new address |
 | `POST /email/confirm` | Same recent session; `{"token":"…"}` | 204; changes email, signs out all sessions and clears cookie |
 | `GET /providers` | Authentication | Linked provider/issuer pairs |
 | `POST /providers/unlink` | Recent authentication through another method; `{"issuer":"…"}` | 204; unlinks, signs out all sessions and clears cookie |
@@ -1238,7 +1286,7 @@ pub fn my_redis_store(connection) -> session_store.SessionStore {
   session_store.SessionStore(
     insert: fn(entry) { todo as "SET howdy:s:<digest> with a TTL; SADD howdy:u:<user_id>" },
     get: fn(digest) { todo },
-    touch: fn(digest, now) { todo },
+    touch: fn(digest, now, expires_at) { todo as "set both; EXPIREAT from expires_at" },
     list: fn(user_id) { todo },
     delete: fn(digest, user_id) { todo },
     delete_for_user: fn(user_id, keep) { todo },
@@ -1256,6 +1304,12 @@ pub fn my_redis_store(connection) -> session_store.SessionStore {
   per-request database read.
 - **The package enforces expiry and idle timeouts itself** from the entry's
   timestamps. A store may expire entries natively as well.
+- **Renewal arrives through `touch`.** Its third argument is the expiry to
+  store: the unchanged value normally, a later one when
+  `policy.session_renew_seconds` is renewing the session. A backend with a
+  native TTL must reset it from that value, or renewed sessions vanish early.
+  This argument was added with renewal; adapters written for the two-argument
+  `touch` no longer compile, and `check` fails one that ignores it.
 - **Atomicity is what you give up.** The database commits first and the store
   is written second. If the store fails in between, the operation returns its
   error with the database change already made: a sign-in without a session

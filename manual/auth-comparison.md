@@ -24,11 +24,11 @@ equal production maturity or prove that either library is more secure.
 | Area | Howdy working tree | Comparison |
 | --- | --- | --- |
 | Passwords and recovery | Argon2id, verified registration, persistent throttling, configurable breach check; current-password changes with a notice to the mailbox; setting/recovery through a fresh email-token session | Core capability present; Better Auth also offers a dedicated reset-link flow. [Password docs](https://better-auth.com/docs/authentication/email-password) |
-| Account lifecycle | New-email verification, recent-session checks, deletion cleanup hook, safe provider unlinking and session revocation | Major gap closed. Better Auth additionally offers confirmation through the old email before proceeding. [Account docs](https://better-auth.com/docs/concepts/users-accounts) |
+| Account lifecycle | New-email verification, optional approval through the old email, a notice to the old address, recent-session checks, deletion cleanup hook, safe provider unlinking and session revocation | Major gap closed; old-email confirmation is available as an option. [Account docs](https://better-auth.com/docs/concepts/users-accounts) |
 | Passkeys | Discoverable enrollment/login, naming/removal, signature counters, backup metadata, required user verification | Core lifecycle present. RP ID and further origins are configurable. Better Auth additionally exposes conditional autofill, extensions and pre-authentication enrollment hooks. [Passkey plugin](https://better-auth.com/docs/plugins/passkey) |
 | MFA | TOTP, callback-delivered OTP, one-use recovery codes, recovery replacement, disablement and remembered devices | Core lifecycle present. Trust lifetime, renewal on use and recovery-code count are configurable. Better Auth exposes more settings; Howdy fixes TOTP/OTP formats and timings. [2FA plugin](https://better-auth.com/docs/plugins/2fa) |
 | Providers | Google, GitHub, Facebook and Microsoft Entra, with explicit linking | Much improved; smaller catalog, no supported public provider-construction contract, and no provider token retention/refresh. Apple is one concrete consumer gap. [Apple support](https://better-auth.com/docs/authentication/apple), [account token management](https://better-auth.com/docs/concepts/users-accounts) |
-| Sessions | Cookie/bearer sessions, list/revoke, absolute and idle expiry, custom session storage | Core present. Better Auth also supports rolling renewal and optional cookie caching/stateless strategies. [Session docs](https://better-auth.com/docs/concepts/session-management) |
+| Sessions | Cookie/bearer sessions, list/revoke, absolute and idle expiry, optional rolling renewal with a hard ceiling, custom session storage | Core present. Better Auth also supports optional cookie caching/stateless strategies. [Session docs](https://better-auth.com/docs/concepts/session-management) |
 | Authorization and user data | Scoped roles/permissions, typed custom fields, trusted provisioning and suspension | Already implemented; these are not missing features. Applications own administrative authorization and UI. [Howdy documentation](../auth/README.md#simple-roles-and-permission-based-rbac) |
 
 Howdy's MFA enforcement is broader than Better Auth's documented default:
@@ -65,9 +65,9 @@ explicitly explain. [Howdy storage](../auth/README.md#session-storage),
    Passkey-first signup needs more design. Conditional autofill
    is a useful smaller UX improvement. This is narrower configuration rather
    than absence of passkeys. [Better Auth passkeys](https://better-auth.com/docs/plugins/passkey)
-4. **Session convenience.** Howdy has fixed absolute expiry, not sliding renewal.
-   Remembering MFA is separate from keeping the main session alive. Better Auth
-   provides renewal and optional [same-browser account switching](https://better-auth.com/docs/plugins/multi-session).
+4. **Session convenience.** Howdy offers sliding renewal as a policy option;
+   remembering MFA is separate from keeping the main session alive. Better Auth
+   additionally provides optional [same-browser account switching](https://better-auth.com/docs/plugins/multi-session).
 5. **Distributed abuse controls.** Howdy's HTTP limits are per process, although
    account/password/MFA guessing and email cooldowns are database-backed. Better
    Auth offers shared database, secondary-storage and custom limiter backends.
@@ -102,7 +102,7 @@ For a normal Howdy web application, prioritize:
 2. Smoother existing workflows: magic-link or short email-OTP login, local
    authenticator QR rendering, and passkey autofill.
 3. A small reusable auth client with explicit signed-out, pending-MFA and signed-in
-   states; configurable session renewal if the application needs persistent login.
+   states.
 4. Shared HTTP rate limiting before deploying multiple application instances.
 5. Add providers and API-key support when there is a concrete product requirement.
 

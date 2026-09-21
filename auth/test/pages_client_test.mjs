@@ -22,7 +22,7 @@ class Element {
   reset() { for (const input of Object.values(this.elements)) input.value = ''; }
 }
 
-function accountPage({ lifecycle = false, fail = null } = {}) {
+function accountPage({ lifecycle = false, fail = null, approval = false } = {}) {
   const ids = Object.fromEntries(['account', 'status', 'sessions', 'refresh-sessions', 'password-change', 'password-current', 'logout'].map(id => [id, new Element()]));
   if (lifecycle) {
     for (const id of ['linked-providers', 'email-change', 'email-confirm', 'account-delete']) ids[id] = new Element();
@@ -32,6 +32,12 @@ function accountPage({ lifecycle = false, fail = null } = {}) {
       ids[id].elements[field] = {value: field === 'token' ? 'confirmation-secret' : 'new@example.com', focus() { this.focused = true; }};
     }
     ids['email-confirm'].hidden = true;
+    if (approval) {
+      ids['email-approve'] = new Element();
+      ids['email-approve'].button = new Element();
+      ids['email-approve'].elements.token = {value: 'approval-secret', focus() { this.focused = true; }};
+      ids['email-approve'].hidden = true;
+    }
   }
   ids.account.dataset.api = '/api/auth';
   ids['password-change'].button = new Element();
@@ -52,7 +58,7 @@ function accountPage({ lifecycle = false, fail = null } = {}) {
       calls.push({ url, ...options });
       if (fail && url.endsWith(fail)) return {status: 403, ok: false, json: async () => ({error: 'Sign in again'})};
       if (url.endsWith('/providers')) return {status: 200, ok: true, json: async () => [{provider: 'google', issuer: 'https://accounts.google.com'}]};
-      if (url.endsWith('/email/change')) return {status: 202, ok: true, json: async () => ({message: 'Check your new email address'})};
+      if (url.endsWith('/email/change') || url.endsWith('/email/approve')) return {status: 202, ok: true, json: async () => ({message: 'Check your new email address'})};
       if (url.endsWith('/sessions')) return { status: 200, ok: true, json: async () => sessions };
       if (url.endsWith('/password')) sessions = sessions.filter(s => s.current);
       if (url.endsWith('/sessions/revoke')) sessions = sessions.filter(s => s.id !== JSON.parse(options.body).id);
@@ -137,6 +143,23 @@ test('email change requests proof then confirms it and disables signed-out contr
   const confirmation = calls.find(call => call.url.endsWith('/email/confirm'));
   assert.equal(confirmation.method, 'POST');
   assert.deepEqual(JSON.parse(confirmation.body), {token: 'confirmation-secret'});
+});
+
+test('email change with approval asks the current address before the new one', async () => {
+  const {ids, calls} = accountPage({lifecycle: true, approval: true});
+  await settle();
+  await ids['email-change'].fire('submit');
+  assert.equal(ids['email-approve'].hidden, false);
+  assert.equal(ids['email-approve'].elements.token.focused, true);
+  assert.equal(ids['email-confirm'].hidden, true);
+  await ids['email-approve'].fire('submit');
+  assert.equal(ids['email-approve'].hidden, true);
+  assert.equal(ids['email-confirm'].hidden, false);
+  assert.equal(ids['email-confirm'].elements.token.focused, true);
+  const approvalCall = calls.find(call => call.url.endsWith('/email/approve'));
+  assert.deepEqual(JSON.parse(approvalCall.body), {token: 'approval-secret'});
+  await ids['email-confirm'].fire('submit');
+  assert.match(ids.status.textContent, /Email changed/);
 });
 
 test('provider unlink submits only the selected issuer and signs out', async () => {

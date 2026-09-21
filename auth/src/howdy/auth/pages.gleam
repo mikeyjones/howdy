@@ -356,7 +356,19 @@ fn account_page(identity: Auth, prefix: String, api: String) -> String {
   let email_forms = case auth.email_tokens_enabled(identity) {
     False -> ""
     True ->
-      "<h2>Change email</h2><p>Sign in again first. Confirm the token sent to your new address in this session. Confirming signs out all sessions.</p><form id=\"email-change\"><label>New email <input name=\"email\" type=\"email\" required maxlength=\"254\" autocomplete=\"email\"></label><button>Send confirmation</button></form><form id=\"email-confirm\" hidden><label>Confirmation token <input name=\"token\" required autocomplete=\"one-time-code\"></label><button>Confirm new email</button></form>"
+      "<h2>Change email</h2><p>Sign in again first. "
+      <> case auth.email_change_approval_enabled(identity) {
+        True ->
+          "Approve the change with the token sent to your current address, then confirm the token sent to your new address, both in this session."
+        False -> "Confirm the token sent to your new address in this session."
+      }
+      <> " Confirming signs out all sessions.</p><form id=\"email-change\"><label>New email <input name=\"email\" type=\"email\" required maxlength=\"254\" autocomplete=\"email\"></label><button>Send confirmation</button></form>"
+      <> case auth.email_change_approval_enabled(identity) {
+        True ->
+          "<form id=\"email-approve\" hidden><label>Approval token <input name=\"token\" required autocomplete=\"one-time-code\"></label><button>Approve change</button></form>"
+        False -> ""
+      }
+      <> "<form id=\"email-confirm\" hidden><label>Confirmation token <input name=\"token\" required autocomplete=\"one-time-code\"></label><button>Confirm new email</button></form>"
   }
   let deletion_form = case auth.account_deletion_enabled(identity) {
     False -> ""
@@ -483,10 +495,12 @@ function accountForm(id, endpoint, field, message) {
     try {
       const result = await call(endpoint, {[field]: form.elements[field].value.trim()});
       form.reset();
-      if (id === 'email-change') {
+      if (id === 'email-change' || id === 'email-approve') {
         status.textContent = result.message;
-        const confirmation = document.getElementById('email-confirm');
-        confirmation.hidden = false; confirmation.elements.token.focus();
+        const approval = id === 'email-change' && document.getElementById('email-approve');
+        const next = approval || document.getElementById('email-confirm');
+        if (id === 'email-approve') form.hidden = true;
+        next.hidden = false; next.elements.token.focus();
       } else {
         completed = true; signedOut(message);
       }
@@ -497,6 +511,7 @@ function accountForm(id, endpoint, field, message) {
 if (account) {
   refreshProviders().catch(error => status.textContent = error.message);
   accountForm('email-change', 'email/change', 'email', '');
+  accountForm('email-approve', 'email/approve', 'token', '');
   accountForm('email-confirm', 'email/confirm', 'token', 'Email changed. You are signed out. Sign in using your new address.');
   accountForm('account-delete', 'account/delete', 'email', 'Your account has been deleted.');
   refreshSessions().catch(error => status.textContent = error.message);

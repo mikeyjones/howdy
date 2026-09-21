@@ -54,6 +54,14 @@ fn change_token(identity, p, mailbox: process.Subject(auth.Delivery), email) {
   secret.reveal(delivery.token)
 }
 
+// A completed change tells the old address, exactly once.
+fn changed_notice(mailbox: process.Subject(auth.Delivery), old: String) {
+  let assert Ok(notice) = process.receive(mailbox, 1000)
+  assert notice.email == old
+  assert notice.purpose == auth.EmailChanged
+  assert secret.reveal(notice.token) == ""
+}
+
 fn configured(identity) {
   // Protocol verification has its own signed-provider suite. This adapter
   // supplies a verified identity so these tests exercise local account policy.
@@ -235,6 +243,8 @@ pub fn account_changes_fail_closed_when_external_revocation_fails_test() {
   let proof = change_token(working, p, mailbox, "new@example.com")
   assert auth.confirm_email_change(failing, p, proof)
     == Error(service.Internal("offline"))
+  // The change committed, so the old address still hears about it.
+  changed_notice(mailbox, "ada@example.com")
   assert auth.authenticate(working, secret.reveal(session.token))
     == Error(service.Unauthorized)
   // Simulate a delayed write from a sign-in that committed before the change.
@@ -422,6 +432,8 @@ pub fn concurrent_email_confirmation_and_deletion_each_commit_once_test() {
       "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'email.changed'",
     )
     == 1
+  changed_notice(mailbox, "ada@example.com")
+  assert process.receive(mailbox, 0) == Error(Nil)
   let p = principal(identity, login(identity, mailbox, "new@example.com"))
   race(fn() { auth.delete_account(identity, p, "new@example.com") })
   assert count(
@@ -514,6 +526,7 @@ pub fn account_http_routes_enforce_origin_and_clear_cookie_after_success_test() 
   assert changed.status == 204
   let assert Ok(header) = response.get_header(changed, "set-cookie")
   assert string.contains(header, "Max-Age=0")
+  changed_notice(mailbox, "ada@example.com")
   assert post(
       application,
       "/account/delete",
@@ -633,4 +646,158 @@ pub fn account_migration_preserves_existing_sessions_and_google_links_test() {
   assert auth.unlink_provider(identity, p, "https://accounts.google.com")
     == Ok(Nil)
   assert auth.authenticate(identity, session) == Error(service.Unauthorized)
+}
+
+pub fn completed_email_change_notifies_the_old_address_test() {
+  use _, identity, _, mailbox <- fixture
+  let p = principal(identity, signup(identity, mailbox, "ada@example.com"))
+  let proof = change_token(identity, p, mailbox, "new@example.com")
+  assert auth.confirm_email_change(identity, p, "not-the-token-but-long-enough")
+    |> result.is_error
+  assert process.receive(mailbox, 0) == Error(Nil)
+  assert auth.confirm_email_change(identity, p, proof) == Ok(Nil)
+  let assert Ok(notice) = process.receive(mailbox, 1000)
+  assert notice.email == "ada@example.com"
+  assert notice.purpose == auth.EmailChanged
+  assert secret.reveal(notice.token) == ""
+  // Without approval configured there is no approval step to call.
+  assert auth.approve_email_change(identity, p, proof)
+    == Error(service.Forbidden)
+}
+
+pub fn email_change_approval_asks_the_current_mailbox_first_test() {
+  use database, identity, _, mailbox <- fixture
+  let identity = auth.with_email_change_approval(identity)
+  assert auth.email_change_approval_enabled(identity)
+  let first = signup(identity, mailbox, "ada@example.com")
+  let p = principal(identity, first)
+  let other = principal(identity, login(identity, mailbox, "ada@example.com"))
+
+  let assert Ok(_) = auth.request_email_change(identity, p, "new@example.com")
+  let assert Ok(approval) = process.receive(mailbox, 1000)
+  assert approval.email == "ada@example.com"
+  assert approval.purpose == auth.EmailChangeApproval
+  let approval = secret.reveal(approval.token)
+  // Nothing reaches the new mailbox until the current one agrees.
+  assert process.receive(mailbox, 0) == Error(Nil)
+
+  // The approval token is not a confirmation, a login, or another session's.
+  assert auth.confirm_email_change(identity, p, approval)
+    == Error(service.Unauthorized)
+  assert auth.exchange(identity, approval) == Error(service.Unauthorized)
+  assert auth.approve_email_change(identity, other, approval)
+    == Error(service.Unauthorized)
+  assert count(database, "SELECT COUNT(*) FROM howdy_auth_email_changes") == 1
+
+  assert auth.approve_email_change(identity, p, approval) == Ok(Nil)
+  assert auth.approve_email_change(identity, p, approval)
+    == Error(service.Unauthorized)
+  let assert Ok(confirmation) = process.receive(mailbox, 1000)
+  assert confirmation.email == "new@example.com"
+  assert confirmation.purpose == auth.EmailChange
+  let confirmation = secret.reveal(confirmation.token)
+  assert count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'email.change_approved'",
+    )
+    == 1
+  // Nor does the confirmation token approve anything.
+  assert auth.approve_email_change(identity, p, confirmation)
+    == Error(service.Unauthorized)
+  let assert Ok(unchanged) = users.get(identity, first.user.id)
+  assert unchanged.email == "ada@example.com"
+
+  assert auth.confirm_email_change(identity, p, confirmation) == Ok(Nil)
+  let assert Ok(notice) = process.receive(mailbox, 1000)
+  assert notice.email == "ada@example.com"
+  assert notice.purpose == auth.EmailChanged
+  let assert Ok(changed) = users.get(identity, first.user.id)
+  assert changed.email == "new@example.com"
+}
+
+pub fn email_change_approval_rechecks_state_and_fails_closed_test() {
+  use database, identity, _, mailbox <- fixture
+  let identity = auth.with_email_change_approval(identity)
+  let p = principal(identity, signup(identity, mailbox, "ada@example.com"))
+  let request = fn(identity) {
+    exec(database, "DELETE FROM howdy_auth_throttles")
+    let assert Ok(_) = auth.request_email_change(identity, p, "new@example.com")
+    let assert Ok(approval) = process.receive(mailbox, 1000)
+    secret.reveal(approval.token)
+  }
+
+  // The address was taken while the approval was in the inbox.
+  let approval = request(identity)
+  let _ = signup(identity, mailbox, "new@example.com")
+  assert auth.approve_email_change(identity, p, approval)
+    == Error(service.Conflict("email address is unavailable"))
+  assert count(database, "SELECT COUNT(*) FROM howdy_auth_email_changes") == 0
+  exec(database, "DELETE FROM howdy_auth_users WHERE email = 'new@example.com'")
+
+  // An expired approval is refused.
+  let approval = request(identity)
+  exec(database, "UPDATE howdy_auth_email_changes SET expires_at = 1")
+  assert auth.approve_email_change(identity, p, approval)
+    == Error(service.Unauthorized)
+
+  // A confirmation that cannot be delivered leaves nothing pending.
+  let approval = request(identity)
+  let assert Ok(failing) =
+    auth.new(database, "https://example.test", fn(_) { Error(Nil) })
+  let failing = auth.with_email_change_approval(failing)
+  assert auth.approve_email_change(failing, p, approval)
+    == Error(service.Internal("auth email delivery failed"))
+  assert count(database, "SELECT COUNT(*) FROM howdy_auth_email_changes") == 0
+
+  // A session that is no longer fresh cannot approve.
+  let approval = request(identity)
+  exec(database, "UPDATE howdy_auth_sessions SET created_at = 0")
+  assert auth.approve_email_change(identity, p, approval)
+    == Error(service.Forbidden)
+  assert process.receive(mailbox, 0) == Error(Nil)
+}
+
+pub fn email_change_approval_over_http_test() {
+  use _, identity, permissions, mailbox <- fixture
+  let identity = auth.with_email_change_approval(identity)
+  let session = signup(identity, mailbox, "ada@example.com")
+  let app = app(identity, permissions)
+  let post = fn(path, body) {
+    testing.post("/api/auth" <> path, json.object(body))
+    |> testing.header("origin", "https://example.test")
+    |> testing.cookie("__Host-howdy_session", secret.reveal(session.token))
+    |> testing.send(app)
+  }
+  assert string.contains(
+    testing.get("/auth/account")
+      |> testing.cookie("__Host-howdy_session", secret.reveal(session.token))
+      |> testing.send(app)
+      |> testing.text,
+    "email-approve",
+  )
+  let requested = post("/email/change", [#("email", json.string("new@x.test"))])
+  assert requested.status == 202
+  assert string.contains(testing.text(requested), "current email address")
+  let assert Ok(approval) = process.receive(mailbox, 1000)
+  assert approval.purpose == auth.EmailChangeApproval
+  assert testing.post(
+      "/api/auth/email/approve",
+      json.object([#("token", json.string(secret.reveal(approval.token)))]),
+    )
+    |> testing.header("origin", "https://example.test")
+    |> testing.send(app)
+    |> fn(r) { r.status }
+    == 401
+  let approved =
+    post("/email/approve", [
+      #("token", json.string(secret.reveal(approval.token))),
+    ])
+  assert approved.status == 202
+  assert string.contains(testing.text(approved), "new email address")
+  let assert Ok(confirmation) = process.receive(mailbox, 1000)
+  assert confirmation.email == "new@x.test"
+  assert post("/email/confirm", [
+      #("token", json.string(secret.reveal(confirmation.token))),
+    ]).status
+    == 204
 }

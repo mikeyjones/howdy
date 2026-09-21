@@ -52,6 +52,10 @@ pub fn main() {
       // say so rather than inviting them to register again.
       let subject = case delivery.purpose {
         auth.EmailChange -> "Confirm your new email address"
+        auth.EmailChangeApproval ->
+          "Approve moving your account to a new email address"
+        auth.EmailChanged ->
+          "Your account now uses a different email address"
         auth.PasswordChanged ->
           "Your password was changed; reset it by email if this was not you"
         auth.SignIn -> "Your sign-in token"

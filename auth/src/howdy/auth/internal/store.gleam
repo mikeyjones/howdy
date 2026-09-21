@@ -612,17 +612,19 @@ pub fn session_user(
   digest: String,
   now: Int,
   seen_after: Int,
-) -> service.Result(List(#(User, Int))) {
+) -> service.Result(List(#(User, Int, Int, Int))) {
   let row = {
     use found <- decode.then(user.row())
     use last_seen_at <- decode.field(5, decode.int)
-    decode.success(#(found, last_seen_at))
+    use created_at <- decode.field(6, decode.int)
+    use expires_at <- decode.field(7, decode.int)
+    decode.success(#(found, last_seen_at, created_at, expires_at))
   }
   db.query(
     conn,
     "SELECT "
       <> user_columns(conn)
-      <> ", s.last_seen_at FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.expires_at > $2 AND s.last_seen_at > $3 AND u.suspended = 0",
+      <> ", s.last_seen_at, s.created_at, s.expires_at FROM howdy_auth_sessions s JOIN howdy_auth_users u ON u.id = s.user_id WHERE s.digest = $1 AND s.expires_at > $2 AND s.last_seen_at > $3 AND u.suspended = 0",
     [sql.string(digest), sql.int(now), sql.int(seen_after)],
     row,
   )
@@ -632,11 +634,12 @@ pub fn touch_session(
   conn: Repo,
   digest: String,
   now: Int,
+  expires_at: Int,
 ) -> service.Result(Nil) {
   db.execute(
     conn,
-    "UPDATE howdy_auth_sessions SET last_seen_at = $1 WHERE digest = $2",
-    [sql.int(now), sql.string(digest)],
+    "UPDATE howdy_auth_sessions SET last_seen_at = $1, expires_at = $2 WHERE digest = $3",
+    [sql.int(now), sql.int(expires_at), sql.string(digest)],
   )
 }
 

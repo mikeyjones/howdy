@@ -63,6 +63,15 @@ pub type Purpose {
   AlreadyRegistered
   /// Confirm a change of the signed-in account’s email, not a login token.
   EmailChange
+  /// Sent to the CURRENT address when `with_email_change_approval` is on:
+  /// someone signed in asked to move the account to another address. The token
+  /// approves that on the account page; it cannot sign in. Tell a reader who
+  /// did not ask to ignore it and secure the account.
+  EmailChangeApproval
+  /// A notice to the OLD address: the account now signs in with a different
+  /// one. `token` is empty. Tell a reader who did not do this to contact
+  /// support, because this mailbox can no longer recover the account.
+  EmailChanged
   /// A notice, not a request: the account's password was just replaced using
   /// its current password. `token` is empty. Tell the reader to reset the
   /// password from a fresh email login if this was not them.
@@ -96,6 +105,7 @@ pub opaque type Auth {
     mfa: Option(mfa.Config),
     passkeys: Option(PasskeySetup),
     sso: Option(connection.Config),
+    email_change_approval: Bool,
   )
 }
 
@@ -177,6 +187,7 @@ pub fn new(
     None,
     None,
     None,
+    False,
   ))
 }
 
@@ -414,6 +425,18 @@ pub fn secure(auth: Auth) -> Bool {
   string.starts_with(auth.origin, "https://")
 }
 
+/// Max-Age for the session cookie. Without renewal it matches the session. With
+/// it the cookie must outlive any one expiry, so it lasts to
+/// `policy.session_max_seconds`, or the 400 days browsers allow when there is
+/// no ceiling. The cookie only carries the token; expiry is decided here.
+pub fn session_cookie_seconds(auth: Auth) -> Int {
+  case auth.policy.session_renew_seconds, auth.policy.session_max_seconds {
+    0, _ -> auth.policy.session_seconds
+    _, 0 -> 34_560_000
+    _, max -> int.min(max, 34_560_000)
+  }
+}
+
 pub fn cookie_name(auth: Auth) -> String {
   case secure(auth) {
     True -> "__Host-howdy_session"
@@ -636,6 +659,8 @@ fn purpose_name(purpose: Purpose) -> String {
     Registration -> "registration"
     AlreadyRegistered -> "already-registered"
     EmailChange -> "email-change"
+    EmailChangeApproval -> "email-change-approval"
+    EmailChanged -> "email-changed"
     PasswordChanged -> "password-changed"
   }
 }
@@ -1228,10 +1253,11 @@ pub fn change_password_from(
     }
   })
   use replacement <- result.try(password_hash.hash(hasher, new))
+  // The notice follows the commit even when external session cleanup fails.
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(user.id, Some(principal.session_id))
+  })
   use _ <- result.try({
-    use <- after_commit(auth, fn(external) {
-      external.delete_for_user(user.id, Some(principal.session_id))
-    })
     use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
     // Lock the account and recheck both proofs after hashing: the session may
     // have been revoked, or the password replaced, while Argon2 was running.
@@ -1412,14 +1438,38 @@ fn authenticate_digest(
     idle -> now - idle
   }
   let touch_due = fn(last_seen_at) { last_seen_at <= now - touch_seconds }
+  // Renewal rides on the throttled touch, so it costs no further writes. The
+  // expiry was last set `session_seconds` before it falls due; one that is
+  // already later than renewal would make it (a lowered policy) is kept.
+  let renewed = fn(created_at, expires_at) {
+    let policy = auth.policy
+    let due =
+      policy.session_renew_seconds > 0
+      && expires_at - now
+      <= policy.session_seconds - policy.session_renew_seconds
+    let target = case policy.session_max_seconds {
+      0 -> now + policy.session_seconds
+      max -> int.min(now + policy.session_seconds, created_at + max)
+    }
+    case due {
+      True -> int.max(expires_at, target)
+      False -> expires_at
+    }
+  }
   use user <- result.try(case auth.sessions {
     InDatabase -> {
       use conn <- db.connect(auth.repo)
       use found <- result.try(store.session_user(conn, digest, now, seen_after))
       case found {
-        [#(user, last_seen_at)] ->
+        [#(user, last_seen_at, created_at, expires_at)] ->
           case touch_due(last_seen_at) {
-            True -> store.touch_session(conn, digest, now)
+            True ->
+              store.touch_session(
+                conn,
+                digest,
+                now,
+                renewed(created_at, expires_at),
+              )
             False -> Ok(Nil)
           }
           |> result.replace(user)
@@ -1452,7 +1502,12 @@ fn authenticate_digest(
       case users {
         [user] ->
           case touch_due(entry.last_seen_at) {
-            True -> external.touch(digest, now)
+            True ->
+              external.touch(
+                digest,
+                now,
+                renewed(entry.created_at, entry.expires_at),
+              )
             False -> Ok(Nil)
           }
           |> result.replace(user)
@@ -2356,8 +2411,30 @@ pub fn account_deletion_enabled(auth: Auth) -> Bool {
   option.is_some(auth.before_delete)
 }
 
-/// Request proof of the new mailbox. Requires an enabled email delivery flow
-/// and a recent, live sign-in. The confirmation must use the same session.
+/// Require the CURRENT mailbox to approve an email change before the new one
+/// is asked to confirm it. Without this, a hijacked fresh session can move the
+/// account to a mailbox the attacker controls; with it, they also need the
+/// owner's inbox. `request_email_change` then emails an `EmailChangeApproval`
+/// token to the current address, and `approve_email_change` continues to the
+/// usual `EmailChange` token. A user who has lost the old mailbox cannot change
+/// address by themselves; trusted administration still can.
+pub fn with_email_change_approval(auth: Auth) -> Auth {
+  Auth(..auth, email_change_approval: True)
+}
+
+pub fn email_change_approval_enabled(auth: Auth) -> Bool {
+  auth.email_change_approval
+}
+
+// Approval tokens live in the same table as confirmation tokens. Hashing them
+// under a prefix keeps the two apart: neither can be redeemed as the other.
+fn approval_digest(secret: String) -> String {
+  token.digest("email-change-approval:" <> secret)
+}
+
+/// Request proof of the new mailbox, or first of the current one under
+/// `with_email_change_approval`. Requires an enabled email delivery flow and a
+/// recent, live sign-in. Every later step must use the same session.
 /// Only a digest is stored; the email change token cannot sign anyone in.
 pub fn request_email_change(
   auth: Auth,
@@ -2367,7 +2444,11 @@ pub fn request_email_change(
   use _ <- result.try(require_email_tokens(auth))
   use email <- result.try(address.normalize_email(email))
   let secret = token.new()
-  use _ <- result.try({
+  let digest = case auth.email_change_approval {
+    True -> approval_digest(secret)
+    False -> token.digest(secret)
+  }
+  use user <- result.try({
     use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
     use #(user, _) <- result.try(current_account(conn, auth, principal, True))
     use _ <- result.try(available_email(conn, auth, user, email))
@@ -2389,7 +2470,7 @@ pub fn request_email_change(
       conn,
       user.id,
       principal.session_id,
-      token.digest(secret),
+      digest,
       account_store.EmailChange(
         user.email,
         email,
@@ -2398,18 +2479,93 @@ pub fn request_email_change(
       ),
       token.now() + auth.policy.challenge_seconds,
     ))
-    event(conn, user.id, "email.change_requested", Acting(principal), "")
+    use _ <- result.try(event(
+      conn,
+      user.id,
+      "email.change_requested",
+      Acting(principal),
+      "",
+    ))
+    Ok(user)
   })
-  case auth.deliver(Delivery(email, secret.wrap(secret), EmailChange)) {
+  deliver_email_change(auth, digest, case auth.email_change_approval {
+    True -> Delivery(user.email, secret.wrap(secret), EmailChangeApproval)
+    False -> Delivery(email, secret.wrap(secret), EmailChange)
+  })
+}
+
+fn deliver_email_change(
+  auth: Auth,
+  digest: String,
+  delivery: Delivery,
+) -> service.Result(Nil) {
+  case auth.deliver(delivery) {
     Ok(Nil) -> Ok(Nil)
     Error(Nil) -> {
-      let _ =
-        db.connect(auth.repo, account_store.discard_email(
-          _,
-          token.digest(secret),
-        ))
+      let _ = db.connect(auth.repo, account_store.discard_email(_, digest))
       Error(service.Internal("auth email delivery failed"))
     }
+  }
+}
+
+/// Redeem the token sent to the current address, from the requesting session,
+/// then email the confirmation token to the new one. Single-use even on a later
+/// failure. Forbidden unless `with_email_change_approval` is configured.
+pub fn approve_email_change(
+  auth: Auth,
+  principal: Principal,
+  secret: String,
+) -> service.Result(Nil) {
+  use _ <- result.try(require_email_tokens(auth))
+  use _ <- result.try(case auth.email_change_approval {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
+  })
+  use _ <- result.try(valid_token(secret))
+  use change <- result.try({
+    use conn <- db.transaction(auth.repo)
+    account_store.consume_email(
+      conn,
+      principal.user.id,
+      principal.session_id,
+      approval_digest(secret),
+    )
+  })
+  let confirmation = token.new()
+  use _ <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+    use _ <- result.try(unchanged_since(auth, user, change))
+    use _ <- result.try(available_email(conn, auth, user, change.new_email))
+    use _ <- result.try(account_store.request_email(
+      conn,
+      user.id,
+      principal.session_id,
+      token.digest(confirmation),
+      change,
+      token.now() + auth.policy.challenge_seconds,
+    ))
+    event(conn, user.id, "email.change_approved", Acting(principal), "")
+  })
+  deliver_email_change(
+    auth,
+    token.digest(confirmation),
+    Delivery(change.new_email, secret.wrap(confirmation), EmailChange),
+  )
+}
+
+fn unchanged_since(
+  auth: Auth,
+  user: User,
+  change: account_store.EmailChange,
+) -> service.Result(Nil) {
+  case
+    user.email == change.old_email
+    && user.group_id == change.group_id
+    && group.mode_name(auth.groups) == change.mode
+  {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
   }
 }
 
@@ -2436,6 +2592,7 @@ fn available_email(
 /// Confirm the new mailbox from the requesting session. Revalidates freshness,
 /// account/group state and uniqueness, then signs out every session, including
 /// this one. A correctly bound token is single-use even on a later failure.
+/// The old address is sent an `EmailChanged` notice on a best-effort basis.
 pub fn confirm_email_change(
   auth: Auth,
   principal: Principal,
@@ -2452,34 +2609,31 @@ pub fn confirm_email_change(
       token.digest(secret),
     )
   })
+  // The notice follows the commit even when external session cleanup fails.
   use <- after_commit(auth, fn(external) {
     external.delete_for_user(principal.user.id, None)
   })
-  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
-  use #(user, _) <- result.try(current_account(conn, auth, principal, True))
-  use _ <- result.try(
-    case
-      user.email == change.old_email
-      && user.group_id == change.group_id
-      && group.mode_name(auth.groups) == change.mode
-    {
-      True -> Ok(Nil)
-      False -> Error(service.Forbidden)
-    },
-  )
-  use _ <- result.try(available_email(conn, auth, user, change.new_email))
-  use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
-  use _ <- result.try(account_store.change_email(
-    conn,
-    user.id,
-    change.new_email,
-    group.login_key(auth.groups, user.group_id, change.new_email),
-  ))
-  // Challenges for the new address may predate this change too.
-  use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
-  use _ <- result.try(account_store.clear_pending(conn, user.id))
-  use _ <- result.try(account_store.revoke(conn, user.id))
-  event(conn, user.id, "email.changed", Acting(principal), "")
+  use _ <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use #(user, _) <- result.try(current_account(conn, auth, principal, True))
+    use _ <- result.try(unchanged_since(auth, user, change))
+    use _ <- result.try(available_email(conn, auth, user, change.new_email))
+    use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
+    use _ <- result.try(account_store.change_email(
+      conn,
+      user.id,
+      change.new_email,
+      group.login_key(auth.groups, user.group_id, change.new_email),
+    ))
+    // Challenges for the new address may predate this change too.
+    use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
+    use _ <- result.try(account_store.clear_pending(conn, user.id))
+    use _ <- result.try(account_store.revoke(conn, user.id))
+    event(conn, user.id, "email.changed", Acting(principal), "")
+  })
+  let _ =
+    auth.deliver(Delivery(change.old_email, secret.wrap(""), EmailChanged))
+  Ok(Nil)
 }
 
 /// The caller's linked providers as #(provider id, issuer). Subjects and

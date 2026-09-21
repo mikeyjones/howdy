@@ -27,7 +27,7 @@ pub type Entry {
     created_at: Int,
     last_seen_at: Int,
     /// A store may drop the record at any time from this moment on, so it
-    /// suits a native expiry such as a Redis TTL.
+    /// suits a native expiry such as a Redis TTL. `touch` may move it later.
     expires_at: Int,
     client: String,
     /// Account session generation. Preserve it unchanged; older generations
@@ -47,9 +47,12 @@ pub type SessionStore {
     insert: fn(Entry) -> service.Result(Nil),
     /// The record stored under a digest.
     get: fn(String) -> service.Result(Option(Entry)),
-    /// Set `last_seen_at` for a digest. Called at most about once a minute
-    /// per session. An unknown digest is not an error and creates nothing.
-    touch: fn(String, Int) -> service.Result(Nil),
+    /// Set `last_seen_at`, then `expires_at`, for a digest. `expires_at`
+    /// repeats the stored value unless `policy.session_renew_seconds` is
+    /// renewing the session, when it is later; a backend with native expiry
+    /// resets its TTL from it. Called at most about once a minute per
+    /// session. An unknown digest is not an error and creates nothing.
+    touch: fn(String, Int, Int) -> service.Result(Nil),
     /// Every record of a user id, in any order.
     list: fn(String) -> service.Result(List(Entry)),
     /// Remove the record under a digest if it belongs to the user id. A
@@ -104,9 +107,9 @@ pub fn memory() -> SessionStore {
   SessionStore(
     insert: fn(record) { Ok(put(record)) },
     get: fn(digest) { Ok(table_get(table, digest)) },
-    touch: fn(digest, now) {
+    touch: fn(digest, now, expires_at) {
       case table_get(table, digest) {
-        Some(record) -> Ok(put(Entry(..record, last_seen_at: now)))
+        Some(record) -> Ok(put(Entry(..record, last_seen_at: now, expires_at:)))
         None -> Ok(Nil)
       }
     },
@@ -163,13 +166,23 @@ pub fn check(store: SessionStore) -> Result(Nil, String) {
     missing == None,
     "get must return None for an unknown digest",
   ))
-  use _ <- result.try(call(store.touch(first.digest, 999), "touch"))
+  use _ <- result.try(call(store.touch(first.digest, 999, far), "touch"))
   use touched <- result.try(call(store.get(first.digest), "get"))
   use _ <- result.try(expect(
     touched == Some(Entry(..first, last_seen_at: 999)),
-    "touch must change last_seen_at and nothing else",
+    "touch must change last_seen_at and leave an unchanged expires_at alone",
   ))
-  use _ <- result.try(call(store.touch("howdy-check-missing", 999), "touch"))
+  use _ <- result.try(call(store.touch(first.digest, 1000, far + 60), "touch"))
+  use renewed <- result.try(call(store.get(first.digest), "get"))
+  use _ <- result.try(expect(
+    renewed == Some(Entry(..first, last_seen_at: 1000, expires_at: far + 60)),
+    "touch must set last_seen_at and expires_at and nothing else",
+  ))
+  use _ <- result.try(call(store.touch(first.digest, 1000, far), "touch"))
+  use _ <- result.try(call(
+    store.touch("howdy-check-missing", 999, far),
+    "touch",
+  ))
   use created <- result.try(call(store.get("howdy-check-missing"), "get"))
   use _ <- result.try(expect(created == None, "touch must not create a record"))
   use listed <- result.try(digests(ada))

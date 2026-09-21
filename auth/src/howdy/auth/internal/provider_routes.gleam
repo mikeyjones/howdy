@@ -122,7 +122,7 @@ pub fn complete(
       auth.cookie_name(identity),
       secret.reveal(session.token),
       options(identity)
-        |> cookie.max_age(auth.policy(identity).session_seconds),
+        |> cookie.max_age(auth.session_cookie_seconds(identity)),
     )
   }
   // Rotate an existing local session when switching accounts.
