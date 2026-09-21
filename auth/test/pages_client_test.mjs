@@ -243,6 +243,107 @@ test('cancelled passkey prompt does not submit a credential or claim success', a
   assert.equal(ids['passkey-login'].disabled, false);
 });
 
+function autofillPage({ available = true } = {}) {
+  const ids = Object.fromEntries(['status', 'request', 'passkey-login', 'mfa-login'].map(id => [id, new Element()]));
+  ids.request.dataset.api = '/api/auth';
+  const calls = [], ceremonies = [], timers = [];
+  let choose;
+  vm.runInNewContext(script, {
+    document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
+    location: {search: ''}, URLSearchParams, atob, btoa, AbortController,
+    setInterval: (callback, delay) => timers.push({callback, delay}),
+    PublicKeyCredential: {isConditionalMediationAvailable: async () => available},
+    navigator: {credentials: {get: options => {
+      ceremonies.push(options);
+      if (!options.mediation) return Promise.resolve(null);
+      // A conditional request stays pending until the user picks a passkey.
+      return new Promise((resolve, reject) => {
+        choose = resolve;
+        options.signal.addEventListener('abort', () => reject(Object.assign(Error('aborted'), {name: 'AbortError'})));
+      });
+    }}},
+    fetch: async (url, options) => {
+      calls.push({url, ...options});
+      const body = url.endsWith('/passkeys/login') ? {challenge: 'opaque-' + calls.length, options: {challenge: 'AQI', rpId: 'example.test'}} : {id: 'user'};
+      return {status: 200, ok: true, json: async () => body};
+    },
+  });
+  return {ids, calls, ceremonies, timers, choose: credential => choose(credential)};
+}
+
+const assertion = {id: 'AQI', rawId: new Uint8Array([1,2]).buffer, type: 'public-key', response: {
+  clientDataJSON: new Uint8Array([3]).buffer, authenticatorData: new Uint8Array([4]).buffer,
+  signature: new Uint8Array([5]).buffer, userHandle: new Uint8Array([6]).buffer,
+}};
+
+test('passkey autofill arms a conditional request, refreshes it and signs in when chosen', async () => {
+  const {ids, calls, ceremonies, timers, choose} = autofillPage();
+  await settle();
+  assert.equal(ceremonies.length, 1);
+  assert.equal(ceremonies[0].mediation, 'conditional');
+  assert.equal(ids.status.textContent, undefined);
+  // Before the five-minute challenge lapses the page swaps in a fresh one,
+  // cancelling the pending request without telling the user anything.
+  assert.equal(timers.length, 1);
+  assert.ok(timers[0].delay < 300000);
+  timers[0].callback();
+  await settle();
+  assert.equal(ceremonies[0].signal.aborted, true);
+  assert.equal(ceremonies.length, 2);
+  assert.equal(ids.status.textContent, undefined);
+  choose(assertion);
+  await settle();
+  const posted = JSON.parse(calls.at(-1).body);
+  assert.ok(calls.at(-1).url.endsWith('/passkeys/session'));
+  assert.equal(posted.challenge, 'opaque-2');
+  assert.match(ids.status.textContent, /signed in/i);
+});
+
+test('the passkey button cancels pending autofill, and autofill stays off where unsupported', async () => {
+  const {ids, ceremonies} = autofillPage();
+  await settle();
+  await ids['passkey-login'].fire('click');
+  assert.equal(ceremonies[0].signal.aborted, true);
+  assert.equal(ceremonies[1].mediation, undefined);
+  assert.match(ids.status.textContent, /cancelled/);
+  const unsupported = autofillPage({available: false});
+  await settle();
+  assert.equal(unsupported.ceremonies.length, 0);
+  assert.equal(unsupported.calls.length, 0);
+});
+
+test('passkey signup creates the credential before asking for the emailed token', async () => {
+  const ids = Object.fromEntries(['status', 'request', 'exchange', 'passkey-signup'].map(id => [id, new Element()]));
+  ids.request.dataset.api = '/api/auth';
+  ids.exchange.elements.token = {focus() { this.focused = true; }};
+  ids['passkey-signup'].button = new Element();
+  ids['passkey-signup'].elements = {email: {value: 'ada@example.com'}, name: {value: 'Laptop'}};
+  const calls = [];
+  vm.runInNewContext(script, {
+    document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
+    location: {search: '?group=team'}, URLSearchParams, atob, btoa,
+    navigator: {credentials: {create: async options => {
+      assert.deepEqual([...options.publicKey.user.id], [7]);
+      return {id: 'AQI', rawId: new Uint8Array([1,2]).buffer, type: 'public-key', response: {
+        clientDataJSON: new Uint8Array([3]).buffer, attestationObject: new Uint8Array([4]).buffer, getTransports: () => ['internal'],
+      }};
+    }}},
+    fetch: async (url, options) => {
+      calls.push({url, ...options});
+      const body = url.endsWith('/passkeys/signup')
+        ? {challenge: 'opaque', options: {challenge: 'AQI', rp: {id: 'example.test'}, user: {id: 'Bw', name: 'ada@example.com'}, pubKeyCredParams: []}}
+        : {message: 'Check your email'};
+      return {status: url.endsWith('/confirm') ? 202 : 200, ok: true, json: async () => body};
+    },
+  });
+  await ids['passkey-signup'].fire('submit');
+  assert.deepEqual(JSON.parse(calls[0].body), {email: 'ada@example.com', name: 'Laptop', group: 'team'});
+  assert.ok(calls[1].url.endsWith('/passkeys/signup/confirm'));
+  assert.equal(JSON.parse(calls[1].body).challenge, 'opaque');
+  assert.match(ids.status.textContent, /Check your email/);
+  assert.equal(ids.exchange.elements.token.focused, true);
+});
+
 test('recovery codes render on separate lines and enrollment secrets are cleared', () => {
   const ids = Object.fromEntries(['status', 'sessions', 'recovery-codes', 'mfa-setup-key'].map(id => [id, new Element()]));
   const context = {document: {getElementById: id => ids[id] || null}};

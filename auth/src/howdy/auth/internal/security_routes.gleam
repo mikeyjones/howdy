@@ -73,6 +73,57 @@ pub fn add(
     }),
   )
   |> controller.post(
+    "/passkeys/signup",
+    strict(fn(ctx) {
+      use _ <- guard.require(ctx, fn(ctx) { auth.check_origin(identity, ctx) })
+      use #(email, name, group) <- body.json_with_limit(ctx, 4096, {
+        use email <- decode.field("email", decode.string)
+        use name <- decode.field("name", decode.string)
+        use group <- decode.optional_field(
+          "group",
+          None,
+          decode.optional(decode.string),
+        )
+        decode.success(#(email, name, group))
+      })
+      let scoped = case auth.bound_group(identity), group {
+        None, Some(g) -> auth.in_group(identity, g)
+        _, _ -> identity
+      }
+      auth.begin_passkey_signup(scoped, email, name)
+      |> service.respond(ctx, challenge_json)
+    }),
+  )
+  |> controller.post(
+    "/passkeys/signup/confirm",
+    strict(fn(ctx) {
+      use _ <- guard.require(ctx, fn(ctx) { auth.check_origin(identity, ctx) })
+      use #(challenge, credential) <- body.json_with_limit(
+        ctx,
+        70_000,
+        credential(),
+      )
+      case
+        auth.finish_passkey_signup(identity, challenge, credential, client(ctx))
+      {
+        Ok(Nil) ->
+          controller.json(
+            ctx,
+            json.object([
+              #(
+                "message",
+                json.string(
+                  "Check your email for a token to finish creating your account.",
+                ),
+              ),
+            ]),
+          )
+          |> controller.with_status(202)
+        Error(error) -> service.error_response(ctx, error)
+      }
+    }),
+  )
+  |> controller.post(
     "/passkeys/login",
     strict(fn(ctx) {
       use _ <- guard.require(ctx, fn(ctx) { auth.check_origin(identity, ctx) })

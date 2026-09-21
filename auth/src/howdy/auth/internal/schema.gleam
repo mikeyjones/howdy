@@ -363,6 +363,13 @@ ALTER TABLE howdy_auth_sso_connections ADD COLUMN enforced INTEGER NOT NULL DEFA
 ALTER TABLE howdy_auth_sso_connections ADD COLUMN trusts_mfa INTEGER NOT NULL DEFAULT 0;
 ",
     ),
+    gloo_migration.new(
+      15,
+      "add_passkey_registration",
+      "
+ALTER TABLE howdy_auth_challenges ADD COLUMN passkey TEXT;
+",
+    ),
   ])
 }
 

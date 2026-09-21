@@ -246,7 +246,13 @@ fn page(
       <> api
       <> "\" data-action=\""
       <> action
-      <> "\"><label>Email address <input name=\"email\" type=\"email\" autocomplete=\"username\" required maxlength=\"254\"></label>"
+      <> "\"><label>Email address <input name=\"email\" type=\"email\" autocomplete=\""
+      // `webauthn` lets the browser offer passkeys in this field's autofill.
+      <> case auth.passkeys_enabled(identity) && !register {
+        True -> "username webauthn"
+        False -> "username"
+      }
+      <> "\" required maxlength=\"254\"></label>"
       <> password_field
       <> "<button>"
       <> button
@@ -265,12 +271,18 @@ fn page(
   <> "</h1>"
   <> provider_forms(identity, prefix, "login", group)
   <> credentials
-  <> case auth.passkeys_enabled(identity) {
-    True ->
+  <> case register, auth.passkeys_enabled(identity) {
+    False, True ->
       "<button id=\"passkey-login\" data-api=\""
       <> api
       <> "\">Sign in with a passkey</button>"
-    False -> ""
+    True, _ ->
+      case auth.passkey_signup_enabled(identity) && !password {
+        True ->
+          "<h2>Register with a passkey</h2><p>Create the passkey first; we then email a token to verify your address. The account and its passkey exist once you enter that token above.</p><form id=\"passkey-signup\"><label>Email address <input name=\"email\" type=\"email\" autocomplete=\"username\" required maxlength=\"254\"></label><label>Passkey name <input name=\"name\" required maxlength=\"100\" value=\"My passkey\"></label><button>Create passkey</button></form>"
+        False -> ""
+      }
+    False, False -> ""
   }
   <> mfa_login(identity, api, True)
   <> "<p><a href=\""
@@ -588,15 +600,49 @@ function credentialJSON(credential) {
   }
   return JSON.stringify({id: credential.id, rawId: toBase64(credential.rawId), type: credential.type, response: encoded, clientExtensionResults: credential.getClientExtensionResults?.() || {}});
 }
+// One WebAuthn request may be pending at a time. The autofill request waits for
+// as long as the page is open, so the button cancels it before starting its own.
+let autofill = null;
+async function passkeyLogin(conditional) {
+  autofill?.abort(); autofill = conditional ? new AbortController() : null;
+  const group = new URLSearchParams(location.search).get('group');
+  const challenge = await call('passkeys/login', group ? {group} : {});
+  const request = {publicKey: credentialOptions(challenge.options, false)};
+  if (conditional) { request.mediation = 'conditional'; request.signal = autofill.signal; }
+  const credential = await navigator.credentials.get(request);
+  if (!credential) throw Error('Passkey sign-in was cancelled.');
+  loginResult(await call('passkeys/session', {challenge: challenge.challenge, credential: credentialJSON(credential)}));
+}
+// Offer passkeys in the email field's autofill where the browser can. A
+// challenge lasts five minutes, so an idle page asks for a fresh one before then.
+async function passkeyAutofill() {
+  if (!document.getElementById('passkey-login') || !requestForm) return;
+  if (!(await globalThis.PublicKeyCredential?.isConditionalMediationAvailable?.())) return;
+  const arm = () => passkeyLogin(true).catch(error => {
+    if (error.name !== 'AbortError') status.textContent = error.message;
+  });
+  arm(); setInterval(arm, 240000);
+}
+passkeyAutofill().catch(() => {});
 document.getElementById('passkey-login')?.addEventListener('click', async event => {
   const button = event.currentTarget; button.disabled = true;
   try {
     if (!navigator.credentials) throw Error('This browser does not support passkeys.');
+    await passkeyLogin(false);
+  } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
+});
+document.getElementById('passkey-signup')?.addEventListener('submit', async event => {
+  event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true;
+  try {
+    if (!navigator.credentials) throw Error('This browser does not support passkeys.');
+    const payload = {email: form.elements.email.value, name: form.elements.name.value};
     const group = new URLSearchParams(location.search).get('group');
-    const challenge = await call('passkeys/login', group ? {group} : {});
-    const credential = await navigator.credentials.get({publicKey: credentialOptions(challenge.options, false)});
-    if (!credential) throw Error('Passkey sign-in was cancelled.');
-    loginResult(await call('passkeys/session', {challenge: challenge.challenge, credential: credentialJSON(credential)}));
+    if (group) payload.group = group;
+    const challenge = await call('passkeys/signup', payload);
+    const credential = await navigator.credentials.create({publicKey: credentialOptions(challenge.options, true)});
+    if (!credential) throw Error('Passkey registration was cancelled.');
+    const result = await call('passkeys/signup/confirm', {challenge: challenge.challenge, credential: credentialJSON(credential)});
+    form.reset(); status.textContent = result.message; exchangeForm?.elements.token.focus();
   } catch (error) { status.textContent = error.message; } finally { button.disabled = false; }
 });
 async function refreshPasskeys() {

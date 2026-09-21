@@ -1130,3 +1130,266 @@ pub fn further_passkey_origins_are_accepted_only_when_listed_test() {
   assert attempt(listed, "https://admin.example.test", 4)
   assert !attempt(listed, "https://other.example.test", 5)
 }
+
+// Run the signed-out ceremony with a real keypair and return the credential id.
+fn passkey_signup(database, identity, email, keypair) {
+  let assert Ok(start) = auth.begin_passkey_signup(identity, email, "Laptop")
+  let assert [_, _, ceremony] = string.split(state(database, start), "\n")
+  let assert Ok(c) = registration.parse_challenge(ceremony)
+  let response =
+    authenticator.build_registration_response_with_keypair(c, keypair)
+  let data =
+    authenticator.build_registration_authenticator_data(
+      "example.test",
+      response.credential_id,
+      authenticator.cose_key(keypair),
+      authenticator.AuthenticatorFlags(True, True),
+      0,
+    )
+  let encoded =
+    authenticator.RegistrationResponse(
+      ..response,
+      attestation_object: authenticator.build_attestation_object(
+        "none",
+        data,
+        [],
+      ),
+    )
+    |> authenticator.to_registration_json
+  #(start, encoded, response.credential_id)
+}
+
+pub fn passkey_signup_creates_the_account_only_when_the_email_is_verified_test() {
+  use database, identity, _, mailbox <- fixture
+  let identity = configured(identity)
+  assert auth.passkey_signup_enabled(identity)
+  let keypair = authenticator.generate_es256_keypair()
+  let #(start, credential, id) =
+    passkey_signup(database, identity, " Ada@Example.com ", keypair)
+  assert auth.finish_passkey_signup(
+      identity,
+      secret.reveal(start.challenge),
+      credential,
+      "test",
+    )
+    == Ok(Nil)
+  // The ceremony is single-use, and nothing exists until the inbox answers.
+  assert auth.finish_passkey_signup(
+      identity,
+      secret.reveal(start.challenge),
+      credential,
+      "test",
+    )
+    == Error(service.Unauthorized)
+  assert count(database, "SELECT COUNT(*) FROM howdy_auth_users") == 0
+  assert count(database, "SELECT COUNT(*) FROM howdy_auth_passkeys") == 0
+  let assert Ok(delivery) = process.receive(mailbox, 1000)
+  assert delivery.email == "ada@example.com"
+  assert delivery.purpose == auth.Registration
+
+  let assert Ok(session) =
+    auth.exchange(identity, secret.reveal(delivery.token))
+  let assert Ok([key]) = auth.passkeys(identity, principal(identity, session))
+  assert key.id == bit_array.base64_url_encode(id, False)
+  assert key.name == "Laptop"
+  assert count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'passkey.registered'",
+    )
+    == 1
+
+  // The account was created under the ceremony's user handle, so the passkey
+  // signs in to it.
+  let assert Ok(login) = auth.begin_passkey_login(identity)
+  let assert Ok(auth.SignedIn(signed_in)) =
+    auth.finish_passkey_login(
+      identity,
+      secret.reveal(login.challenge),
+      assertion(database, login, keypair, id, session.user.id, 1)
+        |> authenticator.to_authentication_json,
+      "test",
+    )
+  assert signed_in.user.id == session.user.id
+}
+
+pub fn passkey_signup_for_an_existing_address_keeps_nothing_and_says_nothing_test() {
+  use database, identity, _, mailbox <- fixture
+  let identity = configured(identity)
+  let existing = signup(identity, mailbox, "ada@example.com")
+  let keypair = authenticator.generate_es256_keypair()
+  let #(start, credential, _) =
+    passkey_signup(database, identity, "ada@example.com", keypair)
+  // The caller sees the same answer as for a new address.
+  assert auth.finish_passkey_signup(
+      identity,
+      secret.reveal(start.challenge),
+      credential,
+      "test",
+    )
+    == Ok(Nil)
+  let assert Ok(delivery) = process.receive(mailbox, 1000)
+  assert delivery.purpose == auth.AlreadyRegistered
+  assert count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_challenges WHERE passkey IS NOT NULL",
+    )
+    == 0
+  let assert Ok(session) =
+    auth.exchange(identity, secret.reveal(delivery.token))
+  assert session.user.id == existing.user.id
+  assert auth.passkeys(identity, principal(identity, session)) == Ok([])
+}
+
+pub fn passkey_signup_is_gated_verified_and_throttled_test() {
+  use database, identity, _, mailbox <- fixture
+  let keypair = authenticator.generate_es256_keypair()
+  // Passkeys must be enabled, and so must registration.
+  assert !auth.passkey_signup_enabled(identity)
+  assert auth.begin_passkey_signup(identity, "ada@example.com", "Laptop")
+    |> result.is_error
+  let assert Ok(closed) =
+    auth.new(database, "https://example.test", fn(_) { Ok(Nil) })
+  let assert Ok(closed) = auth.with_passkeys(closed, "Howdy tests")
+  assert !auth.passkey_signup_enabled(closed)
+  assert auth.begin_passkey_signup(closed, "ada@example.com", "Laptop")
+    == Error(service.Forbidden)
+
+  let identity = configured(identity)
+  assert auth.begin_passkey_signup(identity, "not an address", "Laptop")
+    |> result.is_error
+  assert auth.begin_passkey_signup(identity, "ada@example.com", "")
+    |> result.is_error
+
+  // A response for a different ceremony does not verify.
+  let #(first, _, _) =
+    passkey_signup(database, identity, "ada@example.com", keypair)
+  let #(_, other, _) =
+    passkey_signup(database, identity, "ada@example.com", keypair)
+  assert auth.finish_passkey_signup(
+      identity,
+      secret.reveal(first.challenge),
+      other,
+      "test",
+    )
+    == Error(service.Unauthorized)
+  assert process.receive(mailbox, 0) == Error(Nil)
+
+  // A signup ceremony cannot be redeemed as a login, and trying does not
+  // spend it.
+  let #(start, credential, _) =
+    passkey_signup(database, identity, "ada@example.com", keypair)
+  assert auth.finish_passkey_login(
+      identity,
+      secret.reveal(start.challenge),
+      credential,
+      "test",
+    )
+    |> result.is_error
+  assert auth.finish_passkey_signup(
+      identity,
+      secret.reveal(start.challenge),
+      credential,
+      "test",
+    )
+    == Ok(Nil)
+  let assert Ok(_) = process.receive(mailbox, 1000)
+
+  // Each completed signup emails the address, so it pays the same cooldown as
+  // password registration.
+  let finish = fn() {
+    let #(start, credential, _) =
+      passkey_signup(database, identity, "ada@example.com", keypair)
+    auth.finish_passkey_signup(
+      identity,
+      secret.reveal(start.challenge),
+      credential,
+      "test",
+    )
+  }
+  let assert Error(service.TooManyRequests(_)) = finish()
+  assert process.receive(mailbox, 0) == Error(Nil)
+
+  // Turning passkeys off strands a pending signup rather than half-creating it.
+  let assert Ok(without) =
+    auth.new(database, "https://example.test", fn(_) { Ok(Nil) })
+  let without = auth.allow_registration(without)
+  exec(database, "DELETE FROM howdy_auth_throttles")
+  assert finish() == Ok(Nil)
+  let assert Ok(delivery) = process.receive(mailbox, 1000)
+  assert auth.exchange(without, secret.reveal(delivery.token))
+    |> result.is_error
+  assert count(database, "SELECT COUNT(*) FROM howdy_auth_users") == 0
+}
+
+pub fn passkey_signup_over_http_requires_origin_and_answers_202_test() {
+  use database, identity, permissions, mailbox <- fixture
+  let identity = configured(identity)
+  let app = support.app(identity, permissions)
+  let body =
+    json.object([
+      #("email", json.string("ada@example.com")),
+      #("name", json.string("Laptop")),
+    ])
+  assert testing.post("/api/auth/passkeys/signup", body)
+    |> testing.send(app)
+    |> fn(r) { r.status }
+    != 200
+  let started =
+    testing.post("/api/auth/passkeys/signup", body)
+    |> testing.header("origin", "https://example.test")
+    |> testing.send(app)
+  assert started.status == 200
+  let assert Ok(challenge) =
+    json.parse(
+      testing.text(started),
+      decode.field("challenge", decode.string, decode.success),
+    )
+  let assert Ok([payload]) =
+    repo.all(
+      database,
+      "SELECT payload FROM howdy_auth_ceremonies WHERE digest = $1",
+      [sql.string(token.digest(challenge))],
+      decode.field(0, decode.string, decode.success),
+    )
+  let assert [_, _, ceremony] = string.split(payload, "\n")
+  let assert Ok(c) = registration.parse_challenge(ceremony)
+  let keypair = authenticator.generate_es256_keypair()
+  let response =
+    authenticator.build_registration_response_with_keypair(c, keypair)
+  let data =
+    authenticator.build_registration_authenticator_data(
+      "example.test",
+      response.credential_id,
+      authenticator.cose_key(keypair),
+      authenticator.AuthenticatorFlags(True, True),
+      0,
+    )
+  let credential =
+    authenticator.RegistrationResponse(
+      ..response,
+      attestation_object: authenticator.build_attestation_object(
+        "none",
+        data,
+        [],
+      ),
+    )
+    |> authenticator.to_registration_json
+  let confirmed =
+    testing.post(
+      "/api/auth/passkeys/signup/confirm",
+      json.object([
+        #("challenge", json.string(challenge)),
+        #("credential", json.string(credential)),
+      ]),
+    )
+    |> testing.header("origin", "https://example.test")
+    |> testing.send(app)
+  assert confirmed.status == 202
+  let assert Ok(delivery) = process.receive(mailbox, 1000)
+  assert delivery.purpose == auth.Registration
+  let page = testing.get("/auth/register") |> testing.send(app) |> testing.text
+  assert string.contains(page, "passkey-signup")
+  let login = testing.get("/auth/login") |> testing.send(app) |> testing.text
+  assert string.contains(login, "username webauthn")
+  assert !string.contains(login, "passkey-signup")
+}

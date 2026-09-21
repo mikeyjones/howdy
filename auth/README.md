@@ -21,7 +21,8 @@ for the upgrade. It adds passkey credentials, enrollment/login challenges,
 encrypted factors, recovery-code digests, verification budgets and remembered
 devices; existing users and sessions survive. New session methods include
 `passkey` and `mfa:<primary-method>`. External stores must preserve the method
-string and session version unchanged.
+string and session version unchanged. Migration **15** adds a column that holds a
+verified passkey with its registration token; run it before using passkey signup.
 
 Enable either feature independently:
 
@@ -50,7 +51,7 @@ Successful enrollment/recovery replacement returns ten 80-bit recovery codes
 once and signs out all sessions. Save those codes before navigating away.
 `mfa.with_recovery_codes(config, 16)` issues a different number, from 4 to 32.
 
-Passkeys require a recently authenticated account for enrollment and management.
+Adding a passkey to an account, and managing passkeys, requires a recent sign-in.
 The RP ID defaults to the configured public-origin hostname; exact origin, user
 presence and user verification (PIN/biometric) are required. Credentials are discoverable,
 with ES256, Ed25519 and RS256 support, signature counters, AAGUID, transports and
@@ -126,6 +127,34 @@ uses `passkeys`, `rename_passkey`, `delete_passkey`. MFA management uses
 `begin_mfa`, `confirm_mfa`, `mfa_status`, `disable_mfa`,
 `regenerate_recovery_codes`, `trusted_devices`, `revoke_trusted_device`.
 
+**Passkey autofill.** On the starter sign-in pages the email field carries
+`autocomplete="username webauthn"`, and where the browser supports conditional
+mediation the page arms a `mediation: "conditional"` request on load, so saved
+passkeys appear in the field's autofill with no button press. The pending
+request is replaced before its five-minute challenge lapses, and cancelled when
+the "Sign in with a passkey" button starts its own. It uses the same
+`/passkeys/login` and `/passkeys/session` endpoints; custom pages can do the
+same with any WebAuthn client.
+
+**Registering with a passkey.** With passkeys, registration and email tokens all
+enabled (`auth.passkey_signup_enabled`), a visitor can create an account that
+never has a password:
+
+1. `auth.begin_passkey_signup(identity, email, name)` starts a signed-out
+   ceremony. Nothing is excluded from it, so it reveals nothing about the address.
+2. `auth.finish_passkey_signup(identity, challenge, credential, client)`
+   verifies the new credential, stores it with a `Registration` token, and emails
+   that token. It pays the same per-address cooldown as password registration.
+3. Exchanging the token creates the account **and** its passkey together, under
+   the user handle the ceremony chose, and signs in.
+
+No account exists before its address is verified, exactly as for email and
+password registration. For an address that already has an account the reply is
+identical, the credential is discarded, and the email is `AlreadyRegistered`.
+A credential that is already registered fails the exchange with `Conflict`.
+To veto or shape sign-ups, guard these calls in your own transport as you would
+the other registration routes; `allow_registration` remains the master switch.
+
 Under the configured API prefix:
 
 | Endpoint | Request / result |
@@ -134,6 +163,8 @@ Under the configured API prefix:
 | `GET /passkeys` | Owned credential metadata |
 | `POST /passkeys/register` | `{name}` → `{challenge, options}` |
 | `POST /passkeys/register/confirm` | `{challenge, credential}` → 204; `credential` is a JSON string |
+| `POST /passkeys/signup` | Signed out; `{email, name, group?}` → `{challenge, options}` |
+| `POST /passkeys/signup/confirm` | Signed out; `{challenge, credential}` → 202; emails the registration token |
 | `POST /passkeys/login` | `{group?}` → `{challenge, options}` |
 | `POST /passkeys/session` | `{challenge, credential}` → session cookie or pending MFA |
 | `POST /passkeys/rename` | `{id, name}` → 204 |

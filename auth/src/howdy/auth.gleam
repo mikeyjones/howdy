@@ -509,6 +509,8 @@ pub fn register_password_from(
 type Preparation {
   TokenOnly
   WithPassword(fn() -> service.Result(String))
+  /// An encoded passkey whose attestation has already been verified.
+  WithPasskey(String)
 }
 
 fn request_challenge(
@@ -557,7 +559,24 @@ fn request_challenge(
     // second one would let a third party fill the inbox, and refusing would
     // let them stop its owner receiving anything.
     TokenOnly ->
-      send(auth, email, within, stored, purpose, None, now, client, owner)
+      send(auth, email, within, stored, purpose, None, None, now, client, owner)
+    WithPasskey(key) -> {
+      use _ <- result.try({
+        use conn <- db.transaction(auth.repo)
+        store.reserve_email(
+          conn,
+          address_key(auth, within, email),
+          now,
+          auth.policy,
+        )
+      })
+      // As with a password: an existing account keeps nothing from the request.
+      let key = case purpose {
+        AlreadyRegistered -> None
+        _ -> Some(key)
+      }
+      send(auth, email, within, stored, purpose, None, key, now, client, owner)
+    }
     WithPassword(hash) -> {
       // Reserve the cooldown before hashing, and keep it even if hashing or
       // delivery then fails. Hashing must not hold a transaction open.
@@ -577,7 +596,18 @@ fn request_challenge(
         AlreadyRegistered -> None
         _ -> Some(encoded)
       }
-      send(auth, email, within, stored, purpose, password, now, client, owner)
+      send(
+        auth,
+        email,
+        within,
+        stored,
+        purpose,
+        password,
+        None,
+        now,
+        client,
+        owner,
+      )
     }
   }
 }
@@ -589,6 +619,7 @@ fn send(
   intent: Intent,
   purpose: Purpose,
   password: Option(String),
+  passkey: Option(String),
   now: Int,
   client: String,
   owner: Option(String),
@@ -607,6 +638,7 @@ fn send(
       expires_at: now + auth.policy.challenge_seconds,
       live_after: now + auth.policy.email_coalesce_margin_seconds,
       password_hash: password,
+      passkey:,
       keep: auth.policy.live_challenges,
     ))
     // Attributable only when the address has an account. Someone investigating
@@ -741,10 +773,26 @@ fn redeem(
     Some(_) -> passwords(auth) |> result.map(fn(_) { Nil })
     None -> Ok(Nil)
   })
+  // Only a registration carries a passkey. Its WebAuthn user handle is the id
+  // the ceremony chose, so the account has to be created under that id.
+  use key <- result.try(case challenge.passkey, intent {
+    Some(encoded), Register -> {
+      use _ <- result.try(passkey_config(auth))
+      passkey.decode(encoded) |> result.map(Some)
+    }
+    _, _ -> Ok(None)
+  })
   use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
   use _ <- result.try(case intent {
     Register ->
-      register(conn, auth, challenge.email, challenge.group_id, client)
+      register(
+        conn,
+        auth,
+        option.map(key, fn(key) { key.user_id }),
+        challenge.email,
+        challenge.group_id,
+        client,
+      )
     Login -> Ok(Nil)
   })
   use users <- result.try(store.active_user_by_email(
@@ -760,6 +808,21 @@ fn redeem(
   use _ <- result.try(case challenge.password_hash {
     Some(encoded) ->
       store.insert_password(conn, user.id, encoded, challenge.normalized)
+    None -> Ok(Nil)
+  })
+  use _ <- result.try(case key {
+    Some(key) if key.user_id == user.id -> {
+      use _ <- result.try(security_store.add_passkey(conn, key))
+      event_from(
+        conn,
+        user.id,
+        "passkey.registered",
+        System,
+        key.info.id,
+        client,
+      )
+    }
+    Some(_) -> Error(service.Unauthorized)
     None -> Ok(Nil)
   })
   // Redeeming a token proves control of the address, so its back-off ends.
@@ -1290,6 +1353,7 @@ pub fn change_password_from(
 fn register(
   conn: Repo,
   auth: Auth,
+  id: Option(String),
   email: String,
   within: Option(String),
   client: String,
@@ -1298,13 +1362,31 @@ fn register(
     True -> Ok(Nil)
     False -> Error(service.Forbidden)
   })
-  enroll(conn, auth, email, within, client)
+  enroll_as(
+    conn,
+    auth,
+    option.lazy_unwrap(id, token.new),
+    email,
+    within,
+    client,
+  )
 }
 
 /// Registration itself, once the caller has decided it is allowed.
 fn enroll(
   conn: Repo,
   auth: Auth,
+  email: String,
+  within: Option(String),
+  client: String,
+) -> service.Result(Nil) {
+  enroll_as(conn, auth, token.new(), email, within, client)
+}
+
+fn enroll_as(
+  conn: Repo,
+  auth: Auth,
+  id: String,
   email: String,
   within: Option(String),
   client: String,
@@ -1327,7 +1409,6 @@ fn enroll(
     False -> Ok(Nil)
     True -> Error(service.Unauthorized)
   })
-  let id = token.new()
   use _ <- result.try(store.insert_user(
     conn,
     id:,
@@ -3120,6 +3201,112 @@ fn bound_ceremony(
     True -> Ok(Nil)
     False -> Error(service.Unauthorized)
   }
+}
+
+/// Whether `begin_passkey_signup` is available: passkeys, registration and
+/// email tokens must all be enabled.
+pub fn passkey_signup_enabled(auth: Auth) -> Bool {
+  option.is_some(auth.passkeys) && auth.registration && auth.email_tokens
+}
+
+/// Register a new account with a passkey and no password. The ceremony runs
+/// first, signed out; `finish_passkey_signup` then emails a `Registration`
+/// token, and the account and its passkey are created together when that token
+/// is exchanged. As everywhere else, no account exists before its address is
+/// verified, and the reply never says whether the address already has one.
+/// Nothing is excluded from the ceremony, for the same reason.
+pub fn begin_passkey_signup(
+  auth: Auth,
+  email: String,
+  name: String,
+) -> service.Result(PasskeyChallenge) {
+  use #(rp, rp_name, origins) <- result.try(passkey_config(auth))
+  use _ <- result.try(case passkey_signup_enabled(auth) {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
+  })
+  use email <- result.try(address.normalize_email(email))
+  use name <- result.try(key_name(name))
+  // The WebAuthn user handle, and so the id the account will be created under.
+  let id = token.new()
+  let #(options, state) =
+    passkey.registration_options(
+      rp,
+      rp_name,
+      auth.origin,
+      origins,
+      id,
+      email,
+      [],
+    )
+  let challenge = token.new()
+  use _ <- result.try(
+    db.transaction(auth.repo, security_store.ceremony(
+      _,
+      token.digest(challenge),
+      "passkey-signup",
+      security_store.Ceremony(
+        None,
+        "",
+        option.unwrap(auth.group, ""),
+        0,
+        // An email address holds no newline, nor does a token.
+        id <> "\n" <> email <> "\n" <> state,
+        name,
+      ),
+    )),
+  )
+  Ok(PasskeyChallenge(secret.wrap(challenge), options))
+}
+
+/// Verify the new credential, then send the registration token. The passkey
+/// works only after that token is exchanged; for an address that already has an
+/// account it is discarded and the email says `AlreadyRegistered`. Subject to
+/// the same per-address cooldown as password registration.
+pub fn finish_passkey_signup(
+  auth: Auth,
+  challenge: String,
+  credential: String,
+  client: String,
+) -> service.Result(Nil) {
+  use _ <- result.try(passkey_config(auth))
+  use ceremony <- result.try(consume_ceremony(
+    auth,
+    challenge,
+    "passkey-signup",
+    credential,
+  ))
+  // Register into the group the ceremony began in, never a different one.
+  use auth <- result.try(case auth.group, ceremony.group_id {
+    None, "" -> Ok(auth)
+    None, id -> Ok(in_group(auth, id))
+    Some(bound), id if bound == id -> Ok(auth)
+    Some(_), _ -> Error(service.Unauthorized)
+  })
+  use #(id, email, state) <- result.try(
+    case string.split_once(ceremony.payload, "\n") {
+      Ok(#(id, rest)) ->
+        case string.split_once(rest, "\n") {
+          Ok(#(email, state)) -> Ok(#(id, email, state))
+          Error(_) -> Error(service.Unauthorized)
+        }
+      Error(_) -> Error(service.Unauthorized)
+    },
+  )
+  use key <- result.try(passkey.register(
+    state,
+    credential,
+    id,
+    ceremony.label,
+    token.now(),
+  ))
+  request_challenge(
+    auth,
+    email,
+    Register,
+    client,
+    WithPasskey(passkey.encode(key)),
+  )
 }
 
 pub fn begin_passkey_login(auth: Auth) -> service.Result(PasskeyChallenge) {

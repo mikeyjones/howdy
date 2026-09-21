@@ -36,6 +36,48 @@ pub type Stored {
   )
 }
 
+/// A verified credential held with an email challenge until its account exists.
+@internal
+pub fn encode(stored: Stored) -> String {
+  json.object([
+    #("id", json.string(stored.info.id)),
+    #("name", json.string(stored.info.name)),
+    #("created_at", json.int(stored.info.created_at)),
+    #("aaguid", json.string(stored.info.aaguid)),
+    #("backup_eligible", json.bool(stored.info.backup_eligible)),
+    #("backed_up", json.bool(stored.info.backed_up)),
+    #("user_id", json.string(stored.user_id)),
+    #("key", json.string(stored.key)),
+    #("counter", json.int(stored.counter)),
+    #("transports", json.string(stored.transports)),
+  ])
+  |> json.to_string
+}
+
+@internal
+pub fn decode(encoded: String) -> service.Result(Stored) {
+  json.parse(encoded, {
+    use id <- decode.field("id", decode.string)
+    use name <- decode.field("name", decode.string)
+    use created_at <- decode.field("created_at", decode.int)
+    use aaguid <- decode.field("aaguid", decode.string)
+    use backup_eligible <- decode.field("backup_eligible", decode.bool)
+    use backed_up <- decode.field("backed_up", decode.bool)
+    use user_id <- decode.field("user_id", decode.string)
+    use key <- decode.field("key", decode.string)
+    use counter <- decode.field("counter", decode.int)
+    use transports <- decode.field("transports", decode.string)
+    decode.success(Stored(
+      Passkey(id, name, created_at, aaguid, backup_eligible, backed_up),
+      user_id,
+      key,
+      counter,
+      transports,
+    ))
+  })
+  |> result.replace_error(service.Internal("stored passkey is unreadable"))
+}
+
 @internal
 pub fn registration_options(
   rp: String,

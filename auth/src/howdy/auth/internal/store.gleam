@@ -148,6 +148,8 @@ pub type Challenge {
     normalized: Bool,
     /// The group the request named, if it named one.
     group_id: Option(String),
+    /// A verified passkey awaiting the account this token will create.
+    passkey: Option(String),
   )
 }
 
@@ -162,6 +164,7 @@ pub fn insert_challenge(
   now now: Int,
   expires_at expires_at: Int,
   password_hash password_hash: Option(String),
+  passkey passkey: Option(String),
   keep keep: Int,
 ) -> service.Result(Nil) {
   use _ <- result.try(
@@ -188,7 +191,7 @@ pub fn insert_challenge(
   )
   db.execute(
     conn,
-    "INSERT INTO howdy_auth_challenges(digest, email, intent, expires_at, password_hash, created_at, password_normalized, group_id) VALUES ($1, $2, $3, $4, $5, $6, 1, $7)",
+    "INSERT INTO howdy_auth_challenges(digest, email, intent, expires_at, password_hash, created_at, password_normalized, group_id, passkey) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8)",
     [
       sql.string(digest),
       sql.string(email),
@@ -197,6 +200,7 @@ pub fn insert_challenge(
       sql.nullable(sql.string, password_hash),
       sql.int(now),
       sql.nullable(sql.string, group_id),
+      sql.nullable(sql.string, passkey),
     ],
   )
 }
@@ -216,13 +220,14 @@ pub fn claim_challenge(
   expires_at expires_at: Int,
   live_after live_after: Int,
   password_hash password_hash: Option(String),
+  passkey passkey: Option(String),
   keep keep: Int,
 ) -> service.Result(Bool) {
   use _ <- result.try(lock_address(conn, address_key))
   use live <- result.try(
     db.query(
       conn,
-      "SELECT 1 FROM howdy_auth_challenges WHERE email = $1 AND intent = $2 AND expires_at > $3 AND password_hash IS NULL AND COALESCE(group_id, '') = $4 LIMIT 1",
+      "SELECT 1 FROM howdy_auth_challenges WHERE email = $1 AND intent = $2 AND expires_at > $3 AND password_hash IS NULL AND passkey IS NULL AND COALESCE(group_id, '') = $4 LIMIT 1",
       [
         sql.string(email),
         sql.string(intent),
@@ -234,7 +239,7 @@ pub fn claim_challenge(
     |> result.map(fn(rows) { rows != [] }),
   )
   // A token-only request is answered by whatever is already in that inbox.
-  case live && password_hash == option.None {
+  case live && password_hash == option.None && passkey == option.None {
     True -> Ok(False)
     False -> {
       use _ <- result.try(insert_challenge(
@@ -246,6 +251,7 @@ pub fn claim_challenge(
         now:,
         expires_at:,
         password_hash:,
+        passkey:,
         keep:,
       ))
       Ok(True)
@@ -292,17 +298,19 @@ pub fn consume_challenge(
     use password_hash <- decode.field(2, decode.optional(decode.string))
     use normalized <- decode.field(3, decode.int)
     use group_id <- decode.field(4, decode.optional(decode.string))
+    use passkey <- decode.field(5, decode.optional(decode.string))
     decode.success(Challenge(
       email,
       intent,
       password_hash,
       normalized == 1,
       group_id,
+      passkey,
     ))
   }
   db.query(
     conn,
-    "DELETE FROM howdy_auth_challenges WHERE digest = $1 AND expires_at > $2 RETURNING email, intent, password_hash, password_normalized, group_id",
+    "DELETE FROM howdy_auth_challenges WHERE digest = $1 AND expires_at > $2 RETURNING email, intent, password_hash, password_normalized, group_id, passkey",
     [sql.string(digest), sql.int(now)],
     row,
   )
