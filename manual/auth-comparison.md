@@ -28,7 +28,7 @@ equal production maturity or prove that either library is more secure.
 | Passkeys | Discoverable enrollment/login, conditional autofill, email-verified passkey-first registration, naming/removal, signature counters, backup metadata, required user verification | Core lifecycle present. RP ID and further origins are configurable. Better Auth additionally exposes WebAuthn extensions and a user-resolution hook for pre-authentication enrollment. [Passkey plugin](https://better-auth.com/docs/plugins/passkey) |
 | MFA | TOTP, callback-delivered OTP, one-use recovery codes, recovery replacement, disablement and remembered devices | Core lifecycle present. Trust lifetime, renewal on use and recovery-code count are configurable. Better Auth exposes more settings; Howdy fixes TOTP/OTP formats and timings. [2FA plugin](https://better-auth.com/docs/plugins/2fa) |
 | Providers | Google, GitHub, Facebook and Microsoft Entra, with explicit linking | Much improved; smaller catalog, no supported public provider-construction contract, and no provider token retention/refresh. Apple is one concrete consumer gap. [Apple support](https://better-auth.com/docs/authentication/apple), [account token management](https://better-auth.com/docs/concepts/users-accounts) |
-| Sessions | Cookie/bearer sessions, list/revoke, absolute and idle expiry, optional rolling renewal with a hard ceiling, custom session storage | Core present. Better Auth also supports optional cookie caching/stateless strategies. [Session docs](https://better-auth.com/docs/concepts/session-management) |
+| Sessions | Cookie/bearer sessions, list/revoke, absolute and idle expiry, optional rolling renewal with a hard ceiling, optional same-browser account switching, custom session storage | Core present. Better Auth also supports optional cookie caching/stateless strategies. [Session docs](https://better-auth.com/docs/concepts/session-management) |
 | Authorization and user data | Scoped roles/permissions, typed custom fields, trusted provisioning and suspension | Already implemented; these are not missing features. Applications own administrative authorization and UI. [Howdy documentation](../auth/README.md#simple-roles-and-permission-based-rbac) |
 
 Howdy's MFA enforcement is broader than Better Auth's documented default:
@@ -64,9 +64,10 @@ explicitly explain. [Howdy storage](../auth/README.md#session-storage),
    cross-subdomain deployments, offers conditional autofill on its starter
    pages, and supports passkey-first signup that still verifies the address
    before the account exists. WebAuthn extensions are not exposed. [Better Auth passkeys](https://better-auth.com/docs/plugins/passkey)
-4. **Session convenience.** Howdy offers sliding renewal as a policy option;
-   remembering MFA is separate from keeping the main session alive. Better Auth
-   additionally provides optional [same-browser account switching](https://better-auth.com/docs/plugins/multi-session).
+4. **Session convenience.** Howdy offers sliding renewal and same-browser
+   account switching as options; remembering MFA is separate from keeping the
+   main session alive. Better Auth's remaining extras here are cookie caching
+   and stateless session strategies.
 5. **Distributed abuse controls.** Howdy's HTTP limits are per process, although
    account/password/MFA guessing and email cooldowns are database-backed. Better
    Auth offers shared database, secondary-storage and custom limiter backends.

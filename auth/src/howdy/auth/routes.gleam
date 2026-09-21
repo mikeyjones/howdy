@@ -315,9 +315,63 @@ pub fn api_limited_by(
     "/logout",
     signed_in(fn(ctx) {
       use principal <- guard.require(ctx, required)
-      auth.logout(identity, principal)
-      |> service.no_content(ctx)
-      |> cookie.delete(auth.cookie_name(identity), options(identity))
+      use everywhere <- body.json_with_limit(
+        ctx,
+        body_limit,
+        // Any JSON body signs this account out; only `{"all": true}` does more.
+        decode.one_of(
+          decode.optional_field("all", False, decode.bool, decode.success),
+          [decode.success(False)],
+        ),
+      )
+      case auth.logout(identity, principal), everywhere {
+        Error(error), _ -> service.error_response(ctx, error)
+        Ok(Nil), True ->
+          controller.status(ctx, 204)
+          |> login_transport.signed_out_everywhere(identity, ctx, _)
+        Ok(Nil), False ->
+          controller.status(ctx, 204)
+          |> login_transport.signed_out(identity, ctx, _)
+      }
+    }),
+  )
+  |> controller.get(
+    "/sessions/accounts",
+    signed_in(fn(ctx) {
+      use principal <- guard.require(ctx, required)
+      auth.device_sessions(
+        identity,
+        login_transport.device_tokens(identity, ctx),
+        client(ctx),
+      )
+      |> json.array(fn(entry) {
+        json.object([
+          #("id", json.string({ entry.1 }.session_id)),
+          #("user", user.to_json({ entry.1 }.user)),
+          #(
+            "current",
+            json.bool({ entry.1 }.session_id == principal.session_id),
+          ),
+        ])
+      })
+      |> controller.json(ctx, _)
+    }),
+  )
+  |> controller.post(
+    "/sessions/switch",
+    signed_in(fn(ctx) {
+      use _ <- guard.require(ctx, required)
+      use id <- body.json_with_limit(ctx, body_limit, field("id"))
+      let tokens = login_transport.device_tokens(identity, ctx)
+      let found =
+        auth.device_sessions(identity, tokens, client(ctx))
+        |> list.find(fn(entry) { { entry.1 }.session_id == id })
+      case found {
+        Ok(#(secret, principal)) ->
+          controller.json(ctx, user.to_json(principal.user))
+          |> cookie.set(auth.cookie_name(identity), secret, options(identity))
+        Error(Nil) -> service.error_response(ctx, service.NotFound("account"))
+      }
     }),
   )
   |> security_routes.add(identity, strict, signed_in, required, client)
@@ -339,7 +393,7 @@ fn account_response(answer: service.Result(Nil), ctx, identity: Auth) {
   case answer {
     Ok(Nil) ->
       service.no_content(answer, ctx)
-      |> cookie.delete(auth.cookie_name(identity), options(identity))
+      |> login_transport.signed_out(identity, ctx, _)
     Error(error) -> service.error_response(ctx, error)
   }
 }

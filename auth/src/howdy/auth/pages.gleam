@@ -400,6 +400,13 @@ fn account_page(identity: Auth, prefix: String, api: String) -> String {
   <> "<h2>Linked sign-in providers</h2><p>To unlink a provider, first sign in again using another method. Unlinking signs out all sessions.</p><ul id=\"linked-providers\"></ul>"
   <> security_settings(identity)
   <> deletion_form
+  <> case auth.multi_session(identity) {
+    Some(_) ->
+      "<h2>Accounts on this device</h2><ul id=\"device-accounts\"></ul><p><a href=\""
+      <> prefix
+      <> "/login\">Add another account</a></p><button id=\"logout-all\">Sign out of all accounts</button>"
+    None -> ""
+  }
   <> "<h2>Active sessions</h2><ul id=\"sessions\"></ul><button id=\"refresh-sessions\">Refresh sessions</button><button id=\"logout\">Sign out</button><p id=\"status\" role=\"status\" aria-live=\"polite\"></p><noscript>Account management requires JavaScript.</noscript></main></body></html>"
 }
 
@@ -543,13 +550,38 @@ if (account) {
     });
   passwordForm('password-change', 'password', ['password']);
   passwordForm('password-current', 'password/change', ['current', 'password']);
-  document.getElementById('logout').addEventListener('click', async () => {
+  // With several accounts in this browser, signing one out lands in another,
+  // so the page reloads as that account instead of going quiet.
+  const deviceAccounts = document.getElementById('device-accounts');
+  const leave = async all => {
     try {
-      await call('logout', {}); status.textContent = 'You are signed out.';
+      await call('logout', all ? {all: true} : {});
+      if (!all && deviceAccounts && deviceAccounts.children.length > 1) { location.reload(); return; }
+      status.textContent = 'You are signed out.';
       document.getElementById('sessions').replaceChildren();
+      deviceAccounts?.replaceChildren();
       account.querySelectorAll('button').forEach(b => b.disabled = true);
     } catch (error) { status.textContent = error.message; }
-  });
+  };
+  document.getElementById('logout').addEventListener('click', () => leave(false));
+  document.getElementById('logout-all')?.addEventListener('click', () => leave(true));
+  if (deviceAccounts) call('sessions/accounts').then(entries => {
+    deviceAccounts.replaceChildren();
+    for (const entry of entries) {
+      const item = document.createElement('li');
+      item.textContent = entry.user.email + (entry.current ? ' (current) ' : ' ');
+      if (!entry.current) {
+        const button = document.createElement('button'); button.textContent = 'Switch';
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try { await call('sessions/switch', {id: entry.id}); location.reload(); }
+          catch (error) { status.textContent = error.message; button.disabled = false; }
+        });
+        item.append(button);
+      }
+      deviceAccounts.append(item);
+    }
+  }).catch(error => status.textContent = error.message);
 }
 function showMfa() {
   if (mfaLogin) mfaLogin.hidden = false;

@@ -191,6 +191,45 @@ test('deletion submits explicit email confirmation and handles a stale session w
   assert.deepEqual(JSON.parse(deletion.body), {email: 'new@example.com'});
 });
 
+test('device accounts list, switch and sign-out reload into the remaining account', async () => {
+  const ids = Object.fromEntries(['account', 'status', 'sessions', 'refresh-sessions', 'logout', 'logout-all', 'device-accounts'].map(id => [id, new Element()]));
+  ids.account.dataset.api = '/api/auth';
+  ids.account.buttons = [ids.logout, ids['logout-all']];
+  const calls = []; let reloads = 0;
+  vm.runInNewContext(script, {
+    document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
+    location: {search: '', reload: () => { reloads += 1; }},
+    fetch: async (url, options) => {
+      calls.push({url, ...options});
+      if (url.endsWith('/sessions/accounts')) return {status: 200, ok: true, json: async () => [
+        {id: 'digest-ada', current: true, user: {email: 'ada@example.com'}},
+        {id: 'digest-bob', current: false, user: {email: 'bob@example.com'}},
+      ]};
+      if (url.endsWith('/sessions') || url.endsWith('/passkeys') || url.endsWith('/mfa/devices')) return {status: 200, ok: true, json: async () => []};
+      if (url.endsWith('/sessions/switch')) return {status: 200, ok: true, json: async () => ({email: 'bob@example.com'})};
+      return {status: 204, ok: true, json: () => { throw Error('no body'); }};
+    },
+  });
+  await settle();
+  const [ada, bob] = ids['device-accounts'].children;
+  assert.match(ada.textContent, /ada@example.com \(current\)/);
+  assert.equal(ada.children.length, 0);
+  assert.match(bob.textContent, /bob@example.com/);
+  await bob.children[0].fire('click');
+  assert.deepEqual(JSON.parse(calls.find(c => c.url.endsWith('/sessions/switch')).body), {id: 'digest-bob'});
+  assert.equal(reloads, 1);
+  // Another account remains, so signing out reloads into it...
+  await ids.logout.fire('click');
+  assert.deepEqual(JSON.parse(calls.at(-1).body), {});
+  assert.equal(reloads, 2);
+  // ...while signing out of all accounts ends on a signed-out page.
+  await ids['logout-all'].fire('click');
+  assert.deepEqual(JSON.parse(calls.at(-1).body), {all: true});
+  assert.equal(reloads, 2);
+  assert.match(ids.status.textContent, /signed out/);
+  assert.equal(ids['device-accounts'].children.length, 0);
+});
+
 function passkeyPage({ cancelled = false, mfa = true } = {}) {
   const ids = Object.fromEntries(['status', 'passkey-login', 'mfa-login', 'mfa-verify', 'mfa-send'].map(id => [id, new Element()]));
   ids['passkey-login'].dataset.api = '/api/auth';

@@ -10,7 +10,6 @@ import howdy/auth/passkey
 import howdy/auth/secret
 import howdy/body
 import howdy/controller
-import howdy/cookie
 import howdy/guard
 import howdy/service
 
@@ -366,8 +365,7 @@ fn key_json(key: passkey.Passkey) {
 fn retire(identity: auth.Auth, ctx, answer) {
   case answer {
     Ok(Nil) ->
-      service.no_content(answer, ctx)
-      |> cookie.delete(auth.cookie_name(identity), login.options(identity))
+      service.no_content(answer, ctx) |> login.signed_out(identity, ctx, _)
     Error(error) -> service.error_response(ctx, error)
   }
 }
@@ -388,7 +386,7 @@ fn codes(
           ),
         ]),
       )
-      |> cookie.delete(auth.cookie_name(identity), login.options(identity))
+      |> login.signed_out(identity, ctx, _)
     Error(error) -> service.error_response(ctx, error)
   }
 }

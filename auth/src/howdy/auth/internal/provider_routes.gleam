@@ -116,43 +116,39 @@ pub fn complete(
   principal: Option(Principal),
   completed: service.Result(auth.ProviderOutcome),
 ) {
+  // Signing in replaces the local session the browser arrived with, or joins
+  // it in a multi-session browser.
   let signed_in = fn(session: auth.Session) {
-    redirect(ctx, success)
-    |> cookie.set(
-      auth.cookie_name(identity),
-      secret.reveal(session.token),
-      options(identity)
-        |> cookie.max_age(auth.session_cookie_seconds(identity)),
+    login_transport.signed_in(
+      identity,
+      ctx,
+      redirect(ctx, success),
+      session,
+      principal,
+      "",
     )
   }
-  // Rotate an existing local session when switching accounts.
-  let rotate = fn() {
-    case principal {
-      Some(p) -> {
-        let _ = auth.logout(identity, p)
-        Nil
-      }
-      None -> Nil
-    }
-  }
   case completed {
-    Ok(auth.ProviderSession(session)) -> {
-      rotate()
-      signed_in(session)
-    }
-    Ok(auth.ProviderSecondFactor(challenge)) -> {
-      rotate()
+    Ok(auth.ProviderSession(session)) -> signed_in(session)
+    Ok(auth.ProviderSecondFactor(challenge)) ->
       case login_transport.try_trusted(identity, ctx, challenge) {
         #(auth.SignedIn(session), remembered) ->
           signed_in(session) |> remembered
-        #(auth.SecondFactor(challenge), _) ->
+        #(auth.SecondFactor(challenge), _) -> {
+          case auth.multi_session(identity), principal {
+            None, Some(p) -> {
+              let _ = auth.logout(identity, p)
+              Nil
+            }
+            _, _ -> Nil
+          }
           login_transport.pending(
             identity,
             redirect(ctx, prefix <> "/mfa"),
             challenge,
           )
+        }
       }
-    }
     Ok(auth.ProviderLinked) -> redirect(ctx, success)
     Error(_) -> redirect(ctx, failure)
   }

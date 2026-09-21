@@ -3,7 +3,8 @@
 import gleam/http/request
 import gleam/json
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
+import gleam/string
 import howdy/auth
 import howdy/auth/internal/security_store
 import howdy/auth/secret
@@ -88,13 +89,118 @@ pub fn try_trusted(
 }
 
 pub fn pending(identity: auth.Auth, res, challenge: auth.MfaChallenge) {
-  res
-  |> cookie.set(
-    pending_cookie(identity),
-    secret.reveal(challenge.token),
-    options(identity) |> cookie.max_age(security_store.challenge_seconds),
-  )
-  |> cookie.delete(auth.cookie_name(identity), options(identity))
+  let res =
+    cookie.set(
+      res,
+      pending_cookie(identity),
+      secret.reveal(challenge.token),
+      options(identity) |> cookie.max_age(security_store.challenge_seconds),
+    )
+  // A multi-session browser stays in its current account until the new one
+  // has passed its second factor.
+  case auth.multi_session(identity) {
+    Some(_) -> res
+    None -> cookie.delete(res, auth.cookie_name(identity), options(identity))
+  }
+}
+
+/// The session tokens in a multi-session browser's accounts cookie.
+pub fn device_tokens(identity: auth.Auth, ctx: controller.Context) {
+  case auth.multi_session(identity) {
+    None -> []
+    Some(_) ->
+      request.get_cookies(ctx.request)
+      |> list.filter(fn(pair) { pair.0 == auth.accounts_cookie_name(identity) })
+      |> list.flat_map(fn(pair) { string.split(pair.1, ".") })
+  }
+}
+
+fn session_cookies(
+  identity: auth.Auth,
+  res,
+  active: String,
+  all: List(String),
+) {
+  let lasting =
+    options(identity) |> cookie.max_age(auth.session_cookie_seconds(identity))
+  let res = cookie.set(res, auth.cookie_name(identity), active, lasting)
+  case auth.multi_session(identity) {
+    Some(_) ->
+      cookie.set(
+        res,
+        auth.accounts_cookie_name(identity),
+        string.join(all, "."),
+        lasting,
+      )
+    None -> res
+  }
+}
+
+/// Make `session` the browser's active session. Without multi-session it
+/// replaces the one the request carried, which is revoked; with it, the new
+/// session joins the browser's accounts.
+pub fn signed_in(
+  identity: auth.Auth,
+  ctx: controller.Context,
+  res,
+  session: auth.Session,
+  previous: Option(user.Principal),
+  client: String,
+) {
+  let all = case auth.multi_session(identity), previous {
+    Some(_), _ ->
+      auth.add_device_session(
+        identity,
+        device_tokens(identity, ctx),
+        session,
+        client,
+      )
+    None, Some(principal) -> {
+      let _ = auth.logout(identity, principal)
+      []
+    }
+    None, None -> []
+  }
+  session_cookies(identity, res, secret.reveal(session.token), all)
+}
+
+/// The active session has ended. A multi-session browser falls back to the
+/// account it signed in to most recently that is still signed in; otherwise
+/// the session cookie is removed.
+pub fn signed_out(identity: auth.Auth, ctx: controller.Context, res) {
+  let active =
+    request.get_cookies(ctx.request)
+    |> list.filter(fn(pair) { pair.0 == auth.cookie_name(identity) })
+    |> list.map(fn(pair) { pair.1 })
+  let remaining =
+    device_tokens(identity, ctx)
+    |> list.filter(fn(secret) { !list.contains(active, secret) })
+    |> auth.device_sessions(identity, _, "")
+    |> list.map(fn(entry) { entry.0 })
+  case list.last(remaining) {
+    Ok(next) -> session_cookies(identity, res, next, remaining)
+    Error(Nil) -> without_session_cookies(identity, res)
+  }
+}
+
+fn without_session_cookies(identity: auth.Auth, res) {
+  let res = cookie.delete(res, auth.cookie_name(identity), options(identity))
+  case auth.multi_session(identity) {
+    Some(_) ->
+      cookie.delete(res, auth.accounts_cookie_name(identity), options(identity))
+    None -> res
+  }
+}
+
+/// Sign every account in this browser out.
+pub fn signed_out_everywhere(
+  identity: auth.Auth,
+  ctx: controller.Context,
+  res,
+) {
+  auth.device_sessions(identity, device_tokens(identity, ctx), "")
+  |> list.each(fn(entry) { auth.logout(identity, entry.1) })
+  without_session_cookies(identity, res)
 }
 
 pub fn browser(
@@ -113,25 +219,23 @@ pub fn browser(
   case answer {
     Error(error) -> service.error_response(ctx, error)
     Ok(step) -> {
-      case required(ctx) {
-        Ok(principal) -> {
-          let _ = auth.logout(identity, principal)
-          Nil
-        }
-        Error(_) -> Nil
-      }
+      let previous = option.from_result(required(ctx))
       case step {
         auth.SignedIn(session) ->
           controller.json(ctx, user_json(session))
-          |> cookie.set(
-            auth.cookie_name(identity),
-            secret.reveal(session.token),
-            options(identity)
-              |> cookie.max_age(auth.session_cookie_seconds(identity)),
-          )
+          |> signed_in(identity, ctx, _, session, previous, "")
           |> cookie.delete(pending_cookie(identity), options(identity))
           |> remembered
-        auth.SecondFactor(challenge) ->
+        auth.SecondFactor(challenge) -> {
+          // The old session ends as soon as another account starts signing in,
+          // unless this browser keeps several.
+          case auth.multi_session(identity), previous {
+            None, Some(principal) -> {
+              let _ = auth.logout(identity, principal)
+              Nil
+            }
+            _, _ -> Nil
+          }
           pending(
             identity,
             controller.json(
@@ -141,6 +245,7 @@ pub fn browser(
               |> controller.with_status(202),
             challenge,
           )
+        }
       }
     }
   }

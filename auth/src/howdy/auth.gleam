@@ -106,6 +106,7 @@ pub opaque type Auth {
     passkeys: Option(PasskeySetup),
     sso: Option(connection.Config),
     email_change_approval: Bool,
+    multi_session: Option(Int),
   )
 }
 
@@ -188,6 +189,7 @@ pub fn new(
     None,
     None,
     False,
+    None,
   ))
 }
 
@@ -435,6 +437,74 @@ pub fn session_cookie_seconds(auth: Auth) -> Int {
     _, 0 -> 34_560_000
     _, max -> int.min(max, 34_560_000)
   }
+}
+
+/// Let one browser hold several signed-in accounts and switch between them.
+/// Signing in while signed in then adds an account instead of replacing the
+/// session; signing out returns to another account that is still signed in.
+/// `max` accounts per browser, from 2 to 10: signing in to one more signs the
+/// oldest out. Only the cookie transport changes. Every account remains an
+/// ordinary session that is listed, renewed, expired and revoked as any other,
+/// and bearer clients are unaffected.
+pub fn with_multi_session(auth: Auth, max max: Int) -> service.Result(Auth) {
+  case max >= 2 && max <= 10 {
+    True -> Ok(Auth(..auth, multi_session: Some(max)))
+    False ->
+      Error(service.Invalid("multi-session allows 2 to 10 accounts per browser"))
+  }
+}
+
+/// The most accounts one browser may hold, when multi-session is on.
+pub fn multi_session(auth: Auth) -> Option(Int) {
+  auth.multi_session
+}
+
+/// The second cookie of a multi-session browser: every session token it holds,
+/// the active one included, joined by `.`. It is as sensitive as the session
+/// cookie and takes the same options.
+pub fn accounts_cookie_name(auth: Auth) -> String {
+  case secure(auth) {
+    True -> "__Host-howdy_accounts"
+    False -> "howdy_dev_accounts"
+  }
+}
+
+/// The session tokens that still authenticate, in the order given, each with
+/// its principal. Anything else is dropped without error: expired, revoked,
+/// suspended or malformed entries are what a long-lived cookie accumulates.
+pub fn device_sessions(
+  auth: Auth,
+  tokens: List(String),
+  client: String,
+) -> List(#(String, Principal)) {
+  list.unique(tokens)
+  |> list.take(10)
+  |> list.filter_map(fn(secret) {
+    authenticate_from(auth, secret, client)
+    |> result.map(fn(principal) { #(secret, principal) })
+  })
+}
+
+/// The tokens a browser should hold after signing in to `session`: the live
+/// ones it had, then the new one. An earlier session of the same user is
+/// revoked and replaced, and so are the oldest beyond the configured maximum.
+pub fn add_device_session(
+  auth: Auth,
+  tokens: List(String),
+  session: Session,
+  client: String,
+) -> List(String) {
+  let new = secret.reveal(session.token)
+  let #(replaced, others) =
+    device_sessions(auth, tokens, client)
+    |> list.filter(fn(entry) { entry.0 != new })
+    |> list.partition(fn(entry) { { entry.1 }.user.id == session.user.id })
+  let room = option.unwrap(auth.multi_session, 1) - 1
+  let evicted = list.take(others, int.max(0, list.length(others) - room))
+  list.each(list.append(replaced, evicted), fn(entry) { logout(auth, entry.1) })
+  list.drop(others, list.length(evicted))
+  |> list.map(fn(entry) { entry.0 })
+  |> list.append([new])
 }
 
 pub fn cookie_name(auth: Auth) -> String {

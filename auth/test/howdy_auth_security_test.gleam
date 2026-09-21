@@ -1393,3 +1393,60 @@ pub fn passkey_signup_over_http_requires_origin_and_answers_202_test() {
   assert string.contains(login, "username webauthn")
   assert !string.contains(login, "passkey-signup")
 }
+
+pub fn multi_session_keeps_the_current_account_while_another_passes_mfa_test() {
+  use _, identity, permissions, mailbox <- fixture
+  let assert Ok(identity) = auth.with_multi_session(configured(identity), 3)
+  let ada = signup(identity, mailbox, "ada@example.com")
+  let #(_, codes) = enroll(identity, ada)
+  let bob = signup(identity, mailbox, "bob@example.com")
+  let bob_token = secret.reveal(bob.token)
+  let app = support.app(identity, permissions)
+  let as_bob = fn(request) {
+    request
+    |> testing.header("origin", "https://example.test")
+    |> testing.cookie("__Host-howdy_session", bob_token)
+    |> testing.cookie("__Host-howdy_accounts", bob_token)
+  }
+  let assert Ok(_) = auth.request_token(identity, "ada@example.com", auth.Login)
+  let assert Ok(delivery) = process.receive(mailbox, 1000)
+  let started =
+    testing.post(
+      "/api/auth/session",
+      json.object([#("token", json.string(secret.reveal(delivery.token)))]),
+    )
+    |> as_bob
+    |> testing.send(app)
+  assert started.status == 202
+  // Bob stays signed in, in the browser and on the server, and Ada's pending
+  // challenge has joined nothing yet.
+  assert testing.cookies(started)
+    |> list.all(fn(c) { c.0 == "__Host-howdy_mfa" })
+  assert result.is_ok(auth.authenticate(identity, bob_token))
+  let assert Ok(#(_, challenge)) =
+    testing.cookies(started) |> list.find(fn(c) { c.0 == "__Host-howdy_mfa" })
+  let assert [code, ..] = codes
+  let verified =
+    testing.post(
+      "/api/auth/mfa/verify",
+      json.object([
+        #("method", json.string("recovery")),
+        #("code", json.string(secret.reveal(code))),
+        #("remember", json.bool(False)),
+      ]),
+    )
+    |> as_bob
+    |> testing.cookie("__Host-howdy_mfa", challenge)
+    |> testing.send(app)
+  assert verified.status == 200
+  let assert Ok(#(_, active)) =
+    testing.cookies(verified)
+    |> list.find(fn(c) { c.0 == "__Host-howdy_session" })
+  let assert Ok(#(_, held)) =
+    testing.cookies(verified)
+    |> list.find(fn(c) { c.0 == "__Host-howdy_accounts" })
+  assert held == bob_token <> "." <> active
+  assert result.is_ok(auth.authenticate(identity, bob_token))
+  let assert Ok(p) = auth.authenticate(identity, active)
+  assert p.user.email == "ada@example.com"
+}

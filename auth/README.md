@@ -1070,7 +1070,9 @@ require JavaScript, and display success without choosing an application redirect
 | `GET /me` | Cookie or bearer authentication | User JSON |
 | `GET /sessions` | Cookie or bearer authentication | The caller's live sessions: `id`, `method`, `created_at`, `last_seen_at`, `expires_at`, `current` |
 | `POST /sessions/revoke` | Cookie or bearer authentication; `{"id":"…"}` | 204; revokes that session if it is the caller's |
-| `POST /logout` | Cookie or bearer authentication; JSON body, e.g. `{}` | 204; revokes session |
+| `POST /logout` | Cookie or bearer authentication; JSON body, e.g. `{}`; `{"all":true}` with multi-session | 204; revokes session. With multi-session the browser falls back to another account, or `all` signs every one out |
+| `GET /sessions/accounts` | Cookie authentication | With multi-session: `[{id, user, current}]` for the accounts in this browser; otherwise `[]` |
+| `POST /sessions/switch` | Cookie authentication; `{"id":"…"}` from the listing | User JSON; makes that account the browser's active session. 404 if it is not in this browser |
 | `POST /email/change` | Recent authentication; `{"email":"new@example.com"}` | 202; emails confirmation token to new address, or an approval token to the current address under `with_email_change_approval` |
 | `POST /email/approve` | Only with `with_email_change_approval`; same recent session; `{"token":"…"}` from the current address | 202; sends the confirmation token to the new address |
 | `POST /email/confirm` | Same recent session; `{"token":"…"}` | 204; changes email, signs out all sessions and clears cookie |
@@ -1292,6 +1294,38 @@ where you need them. Names are 1 to 64 lowercase letters, digits and
 underscores, user and group fields are named separately, and an encoded value
 is at most 1024 bytes. Anything relational, or that you query by range, still
 belongs in your own tables keyed by the id.
+
+## Several accounts in one browser
+
+By default signing in replaces the browser's session, and the old one is revoked.
+To let people stay signed in to several accounts and move between them:
+
+```gleam
+let assert Ok(identity) = auth.with_multi_session(identity, max: 5)
+```
+
+Signing in while signed in then **adds** an account. The browser holds a second
+HttpOnly cookie, `__Host-howdy_accounts`, listing the session tokens of its
+accounts; the usual session cookie still says which one is active, so
+`auth.required`, guards and every application route work unchanged and see one
+user at a time. `GET /sessions/accounts` lists the accounts by session id and
+user, never by token; `POST /sessions/switch` activates one of them, and only
+one this browser already holds. Signing out returns to the most recently added
+account still signed in, as does any account change that ends the active session
+(email change, deletion, passkey removal, and the rest); `{"all": true}` signs
+every account out. Signing in to a user already present replaces that user's
+session, and signing in beyond `max` (2 to 10) signs the oldest account out;
+both revoke the displaced session on the server. While a newly added account
+waits for its second factor, the current account stays active. The starter
+account page lists the accounts with Switch buttons.
+
+Every account is an ordinary session: listed, renewed, expired, idle-timed and
+revoked like any other, in the database or an external store. Entries that no
+longer authenticate are dropped from the cookie whenever it is rewritten. The
+accounts cookie is as sensitive as the session cookie and gets the same
+attributes. Bearer clients are unaffected; a native app holding several tokens
+already has this. Custom cookie transports use `auth.device_sessions`,
+`auth.add_device_session` and `auth.accounts_cookie_name`.
 
 ## Session storage
 
