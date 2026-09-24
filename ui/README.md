@@ -238,12 +238,54 @@ whether the page embeds, links the development route, or links a published
 file, and it needs no setup. Theme variables are inherited from the page,
 so a live view switches theme with the rest of the document.
 
+### Live links
+
+A live link moves between live pages without reloading. Mount one
+`live.outlet` in place of a `live.mount`, and link with `live.link`:
+
+```gleam
+fn layout(ctx, mount mount: String) {
+  page.new("Shop")
+  |> page.live
+  |> page.body([
+    live.link(to: "/", mount: "/live/home", children: [text("Home")]),
+    live.link(to: "/orders", mount: "/live/orders", children: [text("Orders")]),
+    live.outlet(mount),
+  ])
+  |> page.respond(ctx)
+}
+
+controller.new("/")
+|> controller.get("/", fn(ctx) { layout(ctx, mount: "/live/home") })
+|> controller.get("/orders", fn(ctx) { layout(ctx, mount: "/live/orders") })
+```
+
+A click connects the outlet to the link's socket route and puts `href` in
+the address bar. The old view stays on screen until the new one arrives, and
+everything outside the outlet, including other live components, is left
+alone. Back and forward swap the outlet too.
+
+- `href` is what a reload, a bookmark, a new tab or a browser without
+  JavaScript loads, so it must serve the page with that view in the outlet.
+- Modified clicks, middle clicks, `target` links and links to other origins
+  behave as plain links, as does every live link on a page with no outlet.
+- Links work inside live views as well as in the page. `live.navigate`
+  returns the attributes for an `<a>` you style yourself.
+- Put `live.title("Orders")` in a view to rename the document when the view
+  mounts.
+- After a click the page scrolls to the top and focus moves to the outlet.
+- Each swap starts a fresh runtime, so view state does not carry across.
+
+`page.live` includes the script. If you render the document yourself, add
+`live.script()` after `server_component.script()`.
+
 In `howdy/testing` there is no socket to upgrade, so a live route answers
 `426`. Test the app's `init`, `update` and `view` directly, or start a
 runtime with `live.start` and register your own subject as the client, as
 `test/live_test.gleam` does.
 
-See `examples/live` for a page with a private and a shared counter.
+See `examples/live` for a page with a private and a shared counter, and
+live links between two views.
 
 ## Publishing
 

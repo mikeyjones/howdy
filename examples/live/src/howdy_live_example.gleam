@@ -7,6 +7,13 @@
 //// tab sees the same number. The theme button switches light and dark
 //// without a reload and remembers the choice in a cookie.
 ////
+//// The first counter sits in an outlet. The Counter and About links swap
+//// it between two live views without reloading the page: the address bar,
+//// the title and back and forward all follow, and the shared counter
+//// below keeps its connection. Each link's `href` serves the same layout
+//// with that view mounted, so reloading or opening a link in a new tab
+//// gives the same page.
+////
 //// In development the CSS is served from `/assets/ui.css` and linked from
 //// the page. `gleam run -m tasks/css` writes the same CSS to a static
 //// file for publishing.
@@ -48,6 +55,7 @@ pub fn app(shared: lustre.Runtime(Msg)) -> howdy.App {
     |> controller.get("/mine", fn(ctx) {
       live.serve(ctx, counter("Your count"), with: 0)
     })
+    |> controller.get("/about", fn(ctx) { live.serve(ctx, about(), with: Nil) })
     |> controller.get("/everyone", fn(ctx) { live.serve_shared(ctx, shared) }),
   )
   |> howdy.controller(ui.stylesheet(
@@ -58,35 +66,41 @@ pub fn app(shared: lustre.Runtime(Msg)) -> howdy.App {
 
 fn pages() {
   controller.new("/")
-  |> controller.get("/", fn(ctx: Context) {
-    use theme <- cookie.string_or(ctx, "theme", default: "system")
+  |> controller.get("/", fn(ctx) { layout(ctx, mount: "/live/mine") })
+  |> controller.get("/about", fn(ctx) { layout(ctx, mount: "/live/about") })
+}
 
-    page.new("Howdy live")
-    |> page.stylesheet(at: "/assets/ui.css")
-    |> page.theme(theme)
-    |> page.live
-    |> page.body([
-      ui.container([], [
-        ui.stack([], [
-          ui.row([], [
-            ui.h1("Howdy live"),
-            button.theme_toggle(
-              [text("Toggle theme")],
-              from: "light",
-              to: "dark",
-            ),
-          ]),
-          ui.p([
-            text("Open this page in a second tab. "),
-            ui.muted("The first counter is yours; the second is shared."),
-          ]),
-          live.mount("/live/mine"),
-          live.mount("/live/everyone"),
+/// Every page is this layout with a different view in the outlet.
+fn layout(ctx: Context, mount mount: String) {
+  use theme <- cookie.string_or(ctx, "theme", default: "system")
+
+  page.new("Howdy live")
+  |> page.stylesheet(at: "/assets/ui.css")
+  |> page.theme(theme)
+  |> page.live
+  |> page.body([
+    ui.container([], [
+      ui.stack([], [
+        ui.row([], [
+          ui.h1("Howdy live"),
+          button.theme_toggle([text("Toggle theme")], from: "light", to: "dark"),
         ]),
+        ui.row([], [
+          live.link(to: "/", mount: "/live/mine", children: [text("Counter")]),
+          live.link(to: "/about", mount: "/live/about", children: [
+            text("About"),
+          ]),
+        ]),
+        ui.p([
+          text("Open this page in a second tab. "),
+          ui.muted("The first counter is yours; the second is shared."),
+        ]),
+        live.outlet(mount),
+        live.mount("/live/everyone"),
       ]),
-    ])
-    |> page.respond(ctx)
-  })
+    ]),
+  ])
+  |> page.respond(ctx)
 }
 
 // -- The component -----------------------------------------------------------
@@ -109,6 +123,7 @@ pub fn counter(title: String) -> lustre.App(Int, Int, Msg) {
     },
     view: fn(count) {
       ui.card([], [
+        live.title("Howdy live: " <> title),
         ui.h2(title),
         ui.p([text(int.to_string(count))]),
         ui.row([], [
@@ -120,5 +135,26 @@ pub fn counter(title: String) -> lustre.App(Int, Int, Msg) {
         ]),
       ])
     },
+  )
+}
+
+/// A second view for the outlet. Its link back works from inside the live
+/// view as well as from the page.
+pub fn about() -> lustre.App(Nil, Nil, Nil) {
+  lustre.element(
+    ui.card([], [
+      live.title("Howdy live: About"),
+      ui.h2("About"),
+      ui.p([
+        text("This card replaced the counter without a page reload. "),
+        text("Your count started again from zero: each view gets a fresh "),
+        text("runtime when the outlet connects to it."),
+      ]),
+      ui.p([
+        live.link(to: "/", mount: "/live/mine", children: [
+          text("Back to the counter"),
+        ]),
+      ]),
+    ]),
   )
 }

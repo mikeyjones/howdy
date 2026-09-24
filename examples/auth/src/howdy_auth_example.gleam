@@ -1,9 +1,8 @@
 import database
+import demo
 import gleam/dynamic/decode
-import gleam/erlang/process
-import gleam/io
 import gleam/json
-import gleam/option.{None, Some}
+import gleam/result
 import gloo/repo.{type Repo}
 import howdy
 import howdy/auth
@@ -11,7 +10,6 @@ import howdy/auth/mfa
 import howdy/auth/pages
 import howdy/auth/providers/google
 import howdy/auth/routes
-import howdy/auth/secret
 import howdy/auth/user
 import howdy/authorization as access
 import howdy/body
@@ -69,35 +67,10 @@ pub fn main() {
   // Local demonstration only. Real applications deliver tokens privately by
   // email and must never send them to logs or the browser that requested them.
   let assert Ok(identity) =
-    auth.new(repo: db, origin: "http://localhost:8787", deliver: fn(delivery) {
-      // A real application writes one email per purpose. Registering an
-      // address that already has an account arrives as AlreadyRegistered, so
-      // say so rather than inviting them to register again.
-      let subject = case delivery.purpose {
-        auth.EmailChange -> "Confirm your new email address"
-        auth.EmailChangeApproval ->
-          "Approve moving your account to a new email address"
-        auth.EmailChanged -> "Your account now uses a different email address"
-        auth.PasswordChanged ->
-          "Your password was changed; reset it by email if this was not you"
-        auth.SignIn -> "Your sign-in token"
-        auth.Registration -> "Confirm your new account"
-        auth.AlreadyRegistered ->
-          "You already have an account; this token signs you in"
-      }
-      io.println(
-        "LOCAL DEMO email for "
-        <> delivery.email
-        <> " ["
-        <> subject
-        <> "]: "
-        <> secret.reveal(delivery.token),
-      )
-      Ok(Nil)
-    })
+    auth.new(repo: db, origin: demo.origin, deliver: demo.print_email)
   let identity = case google_credentials() {
-    None -> identity
-    Some(#(client_id, client_secret)) -> {
+    Error(_) -> identity
+    Ok(#(client_id, client_secret)) -> {
       let assert Ok(identity) =
         auth.with_provider(identity, google.new(client_id:, client_secret:))
       identity
@@ -108,9 +81,9 @@ pub fn main() {
   let identity = auth.allow_registration(identity)
   let assert Ok(identity) = auth.with_passwords(identity)
   let assert Ok(identity) = auth.with_passkeys(identity, "Howdy demo")
-  let identity = case mfa_key() {
-    None -> identity
-    Some(key) -> {
+  let identity = case demo.env("HOWDY_AUTH_MFA_KEY") {
+    Error(_) -> identity
+    Ok(key) -> {
       let assert Ok(config) = mfa.new("Howdy demo", key)
       auth.with_mfa(identity, config)
     }
@@ -124,16 +97,12 @@ pub fn main() {
       ["reports.read"],
       by: user.System,
     )
-  let assert Ok(_) =
-    app(db, identity, permissions)
-    |> howdy.bind(to: "127.0.0.1")
-    |> howdy.start()
-  process.sleep_forever()
+  app(db, identity, permissions) |> demo.serve
 }
 
 // Read credentials at startup, never from requests or source-controlled values.
-@external(erlang, "howdy_auth_example_ffi", "google_credentials")
-fn google_credentials() -> option.Option(#(String, String))
-
-@external(erlang, "howdy_auth_example_ffi", "mfa_key")
-fn mfa_key() -> option.Option(String)
+fn google_credentials() -> Result(#(String, String), Nil) {
+  use id <- result.try(demo.env("GOOGLE_CLIENT_ID"))
+  use secret <- result.map(demo.env("GOOGLE_CLIENT_SECRET"))
+  #(id, secret)
+}

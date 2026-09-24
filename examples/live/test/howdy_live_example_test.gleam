@@ -22,6 +22,10 @@ pub fn page_stylesheet_and_socket_routes_test() {
   assert string.contains(testing.text(css), "--howdy-background")
   assert { testing.get("/live/mine") |> testing.send(app) }.status == 426
   assert { testing.get("/live/everyone") |> testing.send(app) }.status == 426
+  assert { testing.get("/live/about") |> testing.send(app) }.status == 426
+  let about = testing.get("/about") |> testing.send(app) |> testing.text
+  assert string.contains(about, "data-howdy-live-outlet route=\"/live/about\"")
+  assert string.contains(about, "data-howdy-live-mount=\"/live/mine\"")
   assert { testing.get("/missing") |> testing.send(app) }.status == 404
   lustre.send(shared, lustre.shutdown())
 }

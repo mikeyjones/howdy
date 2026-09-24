@@ -29,6 +29,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import howdy/controller.{type GuardedContext}
 import howdy/ui/internal/stylesheet
+import howdy/ui/live
 import howdy/ui/theme.{type Themes}
 import lustre/attribute
 import lustre/element.{type Element}
@@ -91,7 +92,8 @@ pub fn body(page: Page(msg), elements: List(Element(msg))) -> Page(msg) {
   Page(..page, body: list.append(page.body, elements))
 }
 
-/// Include the Lustre client runtime so `live.mount` elements connect.
+/// Include the Lustre client runtime so `live.mount` elements connect, and
+/// the script that lets `live.link` swap a `live.outlet`.
 pub fn live(page: Page(msg)) -> Page(msg) {
   Page(..page, live: True)
 }
@@ -106,7 +108,7 @@ pub fn stylesheet(page: Page(msg), at path: String) -> Page(msg) {
 /// The finished document as an element.
 pub fn render(page: Page(msg)) -> Element(msg) {
   let runtime = case page.live {
-    True -> [server_component.script()]
+    True -> [server_component.script(), live.script()]
     False -> []
   }
   html.html([attribute.lang(page.lang), ..theme_attribute(page)], [

@@ -32,14 +32,37 @@
 //// Views are styled with `howdy/ui` components automatically. A component
 //// carries the CSS for the classes its view uses, so it is styled whether
 //// or not the page links a stylesheet.
+////
+//// ## Live links
+////
+//// A page can mount one `outlet` in place of a `mount`. A `link` then swaps
+//// the outlet to another socket route and pushes the page URL onto the
+//// history, so moving between live pages needs no reload:
+////
+//// ```gleam
+//// page.new("Orders")
+//// |> page.live
+//// |> page.body([
+////   live.link(to: "/", mount: "/live/home", children: [text("Home")]),
+////   live.link(to: "/orders", mount: "/live/orders", children: [text("Orders")]),
+////   live.outlet("/live/orders"),
+//// ])
+//// ```
+////
+//// The `href` must serve the full page with the same outlet, because it is
+//// what a reload, a bookmark, a new tab or a browser without JavaScript
+//// loads.
 
 import ewe
 import gleam/erlang/process.{type Subject}
 import gleam/http/response.{type Response}
 import howdy/controller.{type GuardedContext}
 import howdy/ui/internal/stylesheet
+import howdy/ui/style.{class}
+import howdy/ui/typography
 import howdy/websocket.{type Builder, type Socket}
 import lustre.{type App, type Runtime}
+import lustre/attribute.{type Attribute}
 import lustre/element.{type Element}
 import lustre/element/html
 import lustre/runtime/app as lustre_app
@@ -49,6 +72,61 @@ import lustre/server_component.{type ClientMessage}
 /// page must include the client runtime; `page.live` does that.
 pub fn mount(route: String) -> Element(msg) {
   server_component.element([server_component.route(route)], [])
+}
+
+/// A `mount` that live links swap. When a `link` is clicked the outlet
+/// connects to the link's socket route and replaces its contents once the
+/// new view arrives. A page has at most one outlet.
+pub fn outlet(route: String) -> Element(msg) {
+  server_component.element(
+    [
+      server_component.route(route),
+      attribute.data("howdy-live-outlet", ""),
+      // Focusable from script, so focus can move to the new view.
+      attribute.tabindex(-1),
+    ],
+    [],
+  )
+}
+
+/// A link that swaps the page's `outlet` to the socket at `mount` and
+/// shows `href` in the address bar, instead of loading `href`. Back and
+/// forward swap the outlet too.
+///
+/// It is a plain link wherever swapping is not possible: with a modifier
+/// key or middle click, when the page has no outlet, or before scripts
+/// run. So `href` must serve a full page whose outlet mounts `mount`.
+/// Works in pages and in live views.
+pub fn link(
+  to href: String,
+  mount mount: String,
+  children children: List(Element(msg)),
+) -> Element(msg) {
+  html.a(
+    [class(typography.link_class()), ..navigate(to: href, mount:)],
+    children,
+  )
+}
+
+/// The attributes that make any `<a>` a live link, for links styled some
+/// other way. See `link`.
+pub fn navigate(to href: String, mount mount: String) -> List(Attribute(msg)) {
+  [attribute.href(href), attribute.data("howdy-live-mount", mount)]
+}
+
+/// Name the document from a live view. When the outlet mounts a view that
+/// contains a title, the document title changes to match, so history
+/// entries are named after the page they lead to. Put it anywhere in the
+/// view; browsers do not display a `<title>` in the body.
+pub fn title(content: String) -> Element(msg) {
+  html.title([], content)
+}
+
+/// The script that makes `link` work. `page.live` includes it; add it
+/// yourself only when rendering the document some other way, after
+/// `server_component.script()`.
+pub fn script() -> Element(msg) {
+  html.script([attribute.type_("module")], navigation_script)
 }
 
 /// Upgrade the request to a socket running a fresh runtime of `app`,
@@ -122,6 +200,49 @@ pub fn dispatch(runtime: Runtime(msg), message: msg) -> Nil {
 }
 
 // -- Internals ---------------------------------------------------------------
+
+// Module scripts run after the document is parsed, so the outlet exists.
+// Clicks are handled at the document so links inside live views are seen
+// too: their shadow roots are open, so `composedPath` includes the anchor.
+// Lustre reconnects when the outlet's `route` changes and keeps the old
+// view on screen until the new one mounts.
+const navigation_script = "
+const outlet = document.querySelector('lustre-server-component[data-howdy-live-outlet]');
+if (outlet) {
+  let navigated = false;
+  const swap = (mount) => {
+    if (outlet.getAttribute('route') === mount) return;
+    navigated = true;
+    outlet.setAttribute('route', mount);
+  };
+  history.replaceState({ ...history.state, howdyLiveMount: outlet.getAttribute('route') }, '');
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const link = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+    if (!link || !link.hasAttribute('data-howdy-live-mount')) return;
+    if ((link.target && link.target !== '_self') || link.hasAttribute('download')) return;
+    const url = new URL(link.href);
+    if (url.origin !== location.origin) return;
+    event.preventDefault();
+    const mount = link.getAttribute('data-howdy-live-mount');
+    if (url.href !== location.href) history.pushState({ howdyLiveMount: mount }, '', url);
+    swap(mount);
+    if (navigated) window.scrollTo(0, 0);
+  });
+  window.addEventListener('popstate', (event) => {
+    const mount = event.state?.howdyLiveMount;
+    if (mount) swap(mount);
+  });
+  outlet.addEventListener('lustre:mount', () => {
+    const title = outlet.shadowRoot?.querySelector('title');
+    if (title) document.title = title.textContent;
+    if (!navigated) return;
+    navigated = false;
+    outlet.focus({ preventScroll: true });
+  });
+}
+"
 
 fn styled(app: App(args, model, msg)) -> App(args, model, msg) {
   let view = app.view

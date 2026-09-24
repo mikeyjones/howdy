@@ -148,3 +148,17 @@ pub fn live_pages_include_the_client_runtime_test() {
     "<lustre-server-component route=\"/live/socket\"></lustre-server-component>",
   )
 }
+
+pub fn live_pages_include_the_live_link_script_unescaped_test() {
+  let plain = testing.get("/") |> testing.send(app()) |> testing.text
+  assert !string.contains(plain, "data-howdy-live-outlet")
+
+  let html = testing.get("/live") |> testing.send(app()) |> testing.text
+  let assert Ok(#(_, script)) =
+    string.split_once(html, "lustre-server-component[data-howdy-live-outlet]")
+  let assert Ok(#(script, _)) = string.split_once(script, "</script>")
+  assert string.contains(script, "history.pushState")
+  assert string.contains(script, "(node) => node instanceof HTMLAnchorElement")
+  assert !string.contains(script, "&gt;")
+  assert !string.contains(script, "&#39;")
+}
