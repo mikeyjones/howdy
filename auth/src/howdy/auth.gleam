@@ -24,6 +24,7 @@ import howdy/auth/internal/address
 import howdy/auth/internal/cache
 import howdy/auth/internal/connection_store
 import howdy/auth/internal/database as db
+import howdy/auth/internal/keyring
 import howdy/auth/internal/password as password_hash
 import howdy/auth/internal/provider_store
 import howdy/auth/internal/schema
@@ -3040,6 +3041,38 @@ pub fn with_passkeys(
 
 pub fn passkeys_enabled(auth: Auth) -> Bool {
   option.is_some(auth.passkeys)
+}
+
+/// Re-encrypt every stored authenticator secret, and every enrollment still in
+/// progress, with the key given to `mfa.new`: the last step of a rotation (see
+/// `mfa.with_decryption_keys`). Returns how many needed it; once every node
+/// seals with the new key, a rerun returns 0 and the old key can be dropped.
+/// Safe to run while serving. A secret no configured key opens stops it with
+/// an error naming the user, since dropping any key would not change that.
+pub fn reseal_mfa(auth: Auth) -> service.Result(Int) {
+  use config <- result.try(mfa_config(auth))
+  let keys = mfa.keys(config)
+  let unreadable = fn(id) {
+    service.Internal("MFA secret could not be decrypted: " <> id)
+  }
+  use conn <- db.connect(auth.repo)
+  use factors <- result.try(keyring.reseal_all(
+    keys,
+    conn,
+    page: security_store.sealed_factors,
+    replace: security_store.reseal_factor,
+    unreadable:,
+  ))
+  use setups <- result.try(
+    keyring.reseal_all(
+      keys,
+      conn,
+      page: security_store.sealed_setups,
+      replace: security_store.reseal_setup,
+      unreadable: fn(_) { unreadable("an enrollment in progress") },
+    ),
+  )
+  Ok(factors + setups)
 }
 
 fn mfa_config(auth: Auth) -> service.Result(mfa.Config) {

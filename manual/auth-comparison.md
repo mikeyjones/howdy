@@ -35,6 +35,7 @@ assurance cannot be inferred from matching feature names or counting tests.
 | Remembered MFA devices | Configurable lifetime and optional renewal; recovery-code count configurable | Previous fixed-duration/count gap closed |
 | Session renewal | Sliding expiry with optional absolute ceiling, idle expiry and updated external-store contract | Present, opt-in |
 | Account switching | Multiple accounts in one browser, explicit switching and logout fallback | Present, opt-in |
+| Encryption-key rotation | `mfa.with_decryption_keys` / `connection.with_decryption_keys` open with earlier keys; `auth.reseal_mfa` and `connections.reseal` re-encrypt online. Ciphertexts stay unversioned: authenticated trial decryption keeps existing values readable without a migration | Closed, including rolling deployments; Better Auth versions its ciphertexts instead ([secret rotation](https://better-auth.com/docs/reference/security#secret-rotation)) |
 | Apple login | Apple adapter, signed client-secret JWT, identity verification and POST callback handling | Present alongside Google, GitHub, Facebook and Entra |
 
 Local evidence: [auth API](../auth/src/howdy/auth.gleam),
@@ -89,11 +90,6 @@ unweighted plugin count. [Plugin catalog](https://better-auth.com/docs/plugins)
   HTTP limit state in database, secondary or custom storage; its server API
   calls bypass that HTTP limiter. A shared Howdy limiter is useful before scaling
   to multiple instances. [Rate limiting](https://better-auth.com/docs/concepts/rate-limit)
-- **MFA encryption-key rotation is missing.** Howdy accepts one stable key;
-  replacing it prevents decryption of existing TOTP seeds. Better Auth supports
-  versioned encryption secrets with old-key decryption. Add an explicit keyring,
-  ciphertext versioning and migration/re-encryption procedure rather than requiring
-  factor re-enrollment to rotate keys. [Secret rotation](https://better-auth.com/docs/reference/security#secret-rotation)
 - **Release/dependency readiness is still limited.** Howdy depends on a patched,
   vendored Jargon and `glasslock 1.0.0-rc1`, including internal parsing APIs.
   The README still requires stopping old instances before migrations and says
@@ -164,7 +160,7 @@ or cached sessions solely to match a checklist. [Session tradeoffs](https://bett
 
 ## Suggested next priorities
 
-1. Key rotation, dependency/release readiness and real-browser/device validation.
+1. Dependency/release readiness and real-browser/device validation.
 2. Shared HTTP rate limiting before multi-instance deployment.
 3. A reusable auth client plus magic-link/short-email-code UX and local QR rendering.
 4. Public provider/extension contracts and focused administrative tools.

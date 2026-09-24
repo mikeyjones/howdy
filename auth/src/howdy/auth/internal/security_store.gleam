@@ -547,3 +547,65 @@ pub fn prune(conn: Repo) -> service.Result(Nil) {
     )
   })
 }
+
+/// Authenticator secrets after a user id, for resealing: `(user_id, user_id, secret)`.
+pub fn sealed_factors(
+  conn: Repo,
+  after: String,
+) -> service.Result(List(#(String, String, String))) {
+  db.query(
+    conn,
+    "SELECT user_id, secret FROM howdy_auth_mfa WHERE method = 'totp' AND user_id > $1 ORDER BY user_id LIMIT 100",
+    [sql.string(after)],
+    {
+      use user_id <- decode.field(0, decode.string)
+      use secret <- decode.field(1, decode.string)
+      decode.success(#(user_id, user_id, secret))
+    },
+  )
+}
+
+pub fn reseal_factor(
+  conn: Repo,
+  user_id: String,
+  old: String,
+  new: String,
+) -> service.Result(Nil) {
+  db.execute(
+    conn,
+    "UPDATE howdy_auth_mfa SET secret = $1 WHERE user_id = $2 AND secret = $3",
+    [sql.string(new), sql.string(user_id), sql.string(old)],
+  )
+}
+
+/// Unexpired authenticator enrollments after a digest, for resealing:
+/// `(digest, user_id, payload)`.
+pub fn sealed_setups(
+  conn: Repo,
+  after: String,
+) -> service.Result(List(#(String, String, String))) {
+  db.query(
+    conn,
+    "SELECT digest, user_id, payload FROM howdy_auth_ceremonies WHERE kind = 'mfa-setup' AND label = 'totp' AND expires_at > $1 AND digest > $2 ORDER BY digest LIMIT 100",
+    [sql.int(token.now()), sql.string(after)],
+    {
+      use digest <- decode.field(0, decode.string)
+      use user_id <- decode.field(1, decode.string)
+      use payload <- decode.field(2, decode.string)
+      decode.success(#(digest, user_id, payload))
+    },
+  )
+}
+
+pub fn reseal_setup(
+  conn: Repo,
+  digest: String,
+  old: String,
+  new: String,
+) -> service.Result(Nil) {
+  db.execute(
+    conn,
+    "UPDATE howdy_auth_ceremonies SET payload = $1 WHERE digest = $2 AND payload = $3",
+    [sql.string(new), sql.string(digest), sql.string(old)],
+  )
+}

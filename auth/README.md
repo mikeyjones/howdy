@@ -38,9 +38,33 @@ let identity = auth.with_mfa(identity, config)
 The MFA key must be **32 random bytes encoded as unpadded base64url**, kept
 outside the auth database and shared by all application nodes. Generate it once
 (for example `openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'`) and retain it
-across restarts and restores. Changing it prevents existing TOTP secrets from
-being decrypted; automatic key rotation is not implemented. Removing MFA
-configuration does not bypass enrollment: affected logins fail closed.
+across restarts and restores. Removing MFA configuration does not bypass
+enrollment: affected logins fail closed.
+
+To rotate the key without re-enrolling anyone or failing a sign-in:
+
+```gleam
+// 1. Deploy everywhere: the new key opens secrets but seals nothing yet.
+let assert Ok(config) = mfa.new("My application", old_key)
+let assert Ok(config) = mfa.with_decryption_keys(config, [new_key])
+
+// 2. Deploy everywhere: the new key seals, the old key still opens.
+let assert Ok(config) = mfa.new("My application", new_key)
+let assert Ok(config) = mfa.with_decryption_keys(config, [old_key])
+
+// 3. Once, from any node: re-encrypt what the old key sealed.
+let assert Ok(_resealed) = auth.reseal_mfa(identity)
+```
+
+Then deploy with `new_key` alone. `reseal_mfa` rewrites stored authenticator
+secrets and enrollments in progress, returning how many it changed; it is safe
+to run while serving and to rerun, returning 0 once nothing still depends on
+the old key. Step 1 is only needed when nodes restart one at a time: it lets a
+node still sealing with the old key read what an updated node seals. Stored
+values carry no key identifier. Each configured key is tried in turn and
+authenticated encryption rejects the wrong ones, so values sealed before this
+release open unchanged. SSO connections rotate the same way with
+`connection.with_decryption_keys` and `connections.reseal`.
 
 The starter login/account pages include passkey enrollment, sign-in, rename and
 removal, authenticator setup, delivered-code and recovery-code verification,
@@ -596,7 +620,8 @@ import howdy/auth/connection
 import howdy/auth/connections
 
 // A stable, 32-byte base64url key kept outside the database. Client secrets
-// are sealed with it at rest. It may be the MFA key.
+// are sealed with it at rest. It may be the MFA key, and rotates the same way:
+// `connection.with_decryption_keys`, then `connections.reseal`.
 let assert Ok(sso) = connection.config(sso_encryption_key)
 let identity = auth.with_sso(identity, sso)
 

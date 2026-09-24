@@ -369,3 +369,33 @@ pub fn set_trusts_mfa(
     ],
   )
 }
+
+/// Sealed protocols after a connection id, for resealing: `(id, id, config)`.
+pub fn sealed(
+  conn: Repo,
+  after: String,
+) -> service.Result(List(#(String, String, String))) {
+  db.query(
+    conn,
+    "SELECT id, config FROM howdy_auth_sso_connections WHERE id > $1 ORDER BY id LIMIT 100",
+    [sql.string(after)],
+    {
+      use id <- decode.field(0, decode.string)
+      use sealed <- decode.field(1, decode.string)
+      decode.success(#(id, id, sealed))
+    },
+  )
+}
+
+pub fn reseal(
+  conn: Repo,
+  id: String,
+  old: String,
+  new: String,
+) -> service.Result(Nil) {
+  db.execute(
+    conn,
+    "UPDATE howdy_auth_sso_connections SET config = $1 WHERE id = $2 AND config = $3",
+    [sql.string(new), sql.string(id), sql.string(old)],
+  )
+}

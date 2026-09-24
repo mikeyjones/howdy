@@ -1,10 +1,11 @@
 //// Optional second-factor configuration. Keep the encryption key outside the
 //// auth database; all nodes must use the same stable, 32-byte base64url key.
+//// Rotate it with `with_decryption_keys` and `auth.reseal_mfa`.
 
-import gleam/bit_array
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import howdy/auth/internal/keyring.{type Keyring}
 import howdy/auth/secret
 import howdy/auth/user.{type User}
 import howdy/service
@@ -12,7 +13,7 @@ import howdy/service
 pub opaque type Config {
   Config(
     issuer: String,
-    key: secret.Secret,
+    keys: Keyring,
     deliver: Option(fn(User, secret.Secret) -> Result(Nil, Nil)),
     trust_seconds: Int,
     trust_renewal: Bool,
@@ -24,32 +25,37 @@ pub opaque type Config {
 pub const default_trust_seconds = 2_592_000
 
 pub fn new(issuer: String, encryption_key: String) -> service.Result(Config) {
-  use key <- result.try(
-    bit_array.base64_url_decode(encryption_key)
-    |> result.replace_error(service.Invalid(
-      "MFA encryption key must be 32 random bytes encoded as base64url",
-    )),
+  use keys <- result.try(
+    keyring.new(encryption_key) |> result.replace_error(invalid_key),
   )
-  case bit_array.byte_size(key) == 32 {
-    False ->
-      Error(service.Invalid(
-        "MFA encryption key must be 32 random bytes encoded as base64url",
-      ))
-    True ->
-      case string.trim(issuer) != "" && string.byte_size(issuer) <= 128 {
-        True ->
-          Ok(Config(
-            issuer,
-            secret.wrap(encryption_key),
-            None,
-            default_trust_seconds,
-            False,
-            10,
-          ))
-        False ->
-          Error(service.Invalid("MFA issuer must contain 1 to 128 bytes"))
-      }
+  case string.trim(issuer) != "" && string.byte_size(issuer) <= 128 {
+    True -> Ok(Config(issuer, keys, None, default_trust_seconds, False, 10))
+    False -> Error(service.Invalid("MFA issuer must contain 1 to 128 bytes"))
   }
+}
+
+const invalid_key = service.Invalid(
+  "MFA encryption key must be 32 random bytes encoded as base64url",
+)
+
+/// Keys that still decrypt authenticator secrets but never encrypt new ones,
+/// replacing any given before. To rotate without failing a sign-in:
+///
+/// 1. On every node, add the new key here, keeping the old key in `new`.
+/// 2. On every node, swap them: the new key in `new`, the old key here.
+/// 3. Run `auth.reseal_mfa` once, then drop the old key.
+///
+/// The first step lets a node still sealing with the old key read what an
+/// updated node seals; skip it only if all nodes restart together.
+pub fn with_decryption_keys(
+  config: Config,
+  keys: List(String),
+) -> service.Result(Config) {
+  use keys <- result.map(
+    keyring.with_decryption_keys(config.keys, keys)
+    |> result.replace_error(invalid_key),
+  )
+  Config(..config, keys:)
 }
 
 /// Deliver to a separately verified channel owned by this user. The application
@@ -143,12 +149,6 @@ pub fn otp() -> String
 @internal
 pub fn backup() -> String
 
-@external(erlang, "howdy_auth_mfa_ffi", "seal")
-fn encrypt(key: String, owner: String, value: String) -> Result(String, Nil)
-
-@external(erlang, "howdy_auth_mfa_ffi", "open")
-fn decrypt(key: String, owner: String, value: String) -> Result(String, Nil)
-
 @external(erlang, "howdy_auth_mfa_ffi", "verify_totp")
 @internal
 pub fn verify_totp(
@@ -159,12 +159,17 @@ pub fn verify_totp(
 ) -> Result(Int, Nil)
 
 @internal
+pub fn keys(config: Config) -> Keyring {
+  config.keys
+}
+
+@internal
 pub fn seal(
   config: Config,
   user_id: String,
   value: String,
 ) -> service.Result(String) {
-  encrypt(secret.reveal(config.key), user_id, value)
+  keyring.seal(config.keys, user_id, value)
   |> result.replace_error(service.Internal("MFA encryption failed"))
 }
 
@@ -174,6 +179,6 @@ pub fn open(
   user_id: String,
   value: String,
 ) -> service.Result(String) {
-  decrypt(secret.reveal(config.key), user_id, value)
+  keyring.open(config.keys, user_id, value)
   |> result.replace_error(service.Internal("MFA secret could not be decrypted"))
 }

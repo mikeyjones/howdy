@@ -1,7 +1,9 @@
 //// SSO connections: configuration at rest, domains, and group binding.
 
+import gleam/dynamic/decode
 import gleam/json
 import gleam/string
+import gloo/repo
 import howdy/auth
 import howdy/auth/connection
 import howdy/auth/connections
@@ -283,4 +285,47 @@ pub fn a_connection_is_renamed_reconfigured_disabled_and_deleted_test() {
   let assert Ok(Nil) = connections.delete(identity, "acme", by: user.System)
   assert count(database, "SELECT COUNT(*) FROM howdy_auth_sso_domains") == 0
   let assert Error(service.NotFound(_)) = connections.get(identity, "acme")
+}
+
+pub fn connections_reseal_under_a_rotated_key_test() {
+  use database, identity, _, _ <- fixture
+  let old = token.new()
+  let new = token.new()
+  let assert Ok(before) = connection.config(old)
+  let assert Ok(_) =
+    connections.create_with_id(
+      auth.with_sso(identity, before),
+      id: "acme",
+      group: group.default_id,
+      name: "Acme",
+      protocol: okta(),
+      domains: ["acme.com"],
+      by: user.System,
+    )
+  let sealed = fn() {
+    let assert Ok([value]) =
+      repo.all(
+        database,
+        "SELECT config FROM howdy_auth_sso_connections",
+        [],
+        decode.field(0, decode.string, decode.success),
+      )
+    value
+  }
+  let original = sealed()
+  let assert Ok(after) = connection.config(new)
+  let assert Error(service.Internal(message)) =
+    connections.reseal(auth.with_sso(identity, after))
+  assert string.contains(message, "acme")
+  let assert Ok(rotating) = connection.with_decryption_keys(after, [old])
+  let rotating = auth.with_sso(identity, rotating)
+  let assert Ok(_) = connections.get(rotating, "acme")
+  assert connections.reseal(rotating) == Ok(1)
+  assert connections.reseal(rotating) == Ok(0)
+  assert sealed() != original
+  let assert Ok(connection.Connection(
+    protocol: connection.Oidc(client_secret:, ..),
+    ..,
+  )) = connections.get(auth.with_sso(identity, after), "acme")
+  assert secret.reveal(client_secret) == "hunter2-client-secret"
 }

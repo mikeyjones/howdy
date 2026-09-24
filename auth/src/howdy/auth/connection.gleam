@@ -7,7 +7,6 @@
 //// inside the connection's own `domains`, and its users only ever land in the
 //// connection's group.
 
-import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/json
 import gleam/list
@@ -16,6 +15,7 @@ import gleam/result
 import gleam/string
 import gleam/time/timestamp.{type Timestamp}
 import gleam/uri
+import howdy/auth/internal/keyring.{type Keyring}
 import howdy/auth/internal/provider_keys
 import howdy/auth/internal/sso_transport
 import howdy/auth/secret
@@ -23,32 +23,40 @@ import howdy/auth/user
 import howdy/service
 
 /// Keep the encryption key outside the auth database; all nodes must use the
-/// same stable, 32-byte base64url key. It may be the MFA key.
+/// same stable, 32-byte base64url key. It may be the MFA key. Rotate it with
+/// `with_decryption_keys` and `connections.reseal`.
 pub opaque type Config {
-  Config(
-    key: secret.Secret,
-    send: sso_transport.Send,
-    cache: provider_keys.Cache,
-  )
+  Config(keys: Keyring, send: sso_transport.Send, cache: provider_keys.Cache)
 }
 
 pub fn config(encryption_key: String) -> service.Result(Config) {
-  let invalid =
-    service.Invalid(
-      "SSO encryption key must be 32 random bytes encoded as base64url",
-    )
-  use key <- result.try(
-    bit_array.base64_url_decode(encryption_key) |> result.replace_error(invalid),
+  use keys <- result.map(
+    keyring.new(encryption_key) |> result.replace_error(invalid_key),
   )
-  case bit_array.byte_size(key) == 32 {
-    True ->
-      Ok(Config(
-        secret.wrap(encryption_key),
-        sso_transport.send,
-        provider_keys.new(),
-      ))
-    False -> Error(invalid)
-  }
+  Config(keys, sso_transport.send, provider_keys.new())
+}
+
+const invalid_key = service.Invalid(
+  "SSO encryption key must be 32 random bytes encoded as base64url",
+)
+
+/// Keys that still decrypt connections but never encrypt new ones, replacing
+/// any given before. Rotate in the same three steps as `mfa.with_decryption_keys`,
+/// finishing with `connections.reseal`.
+pub fn with_decryption_keys(
+  config: Config,
+  keys: List(String),
+) -> service.Result(Config) {
+  use keys <- result.map(
+    keyring.with_decryption_keys(config.keys, keys)
+    |> result.replace_error(invalid_key),
+  )
+  Config(..config, keys:)
+}
+
+@internal
+pub fn keys(config: Config) -> Keyring {
+  config.keys
 }
 
 /// Internal network seam: tests exercise the real signature and claims
@@ -241,12 +249,6 @@ fn https_url(value: String) -> Bool {
 @external(erlang, "howdy_auth_sso_ffi", "valid_certificate")
 fn valid_certificate(pem: String) -> Bool
 
-@external(erlang, "howdy_auth_mfa_ffi", "seal")
-fn encrypt(key: String, owner: String, value: String) -> Result(String, Nil)
-
-@external(erlang, "howdy_auth_mfa_ffi", "open")
-fn decrypt(key: String, owner: String, value: String) -> Result(String, Nil)
-
 /// The stored form of a protocol, sealed to its connection: a row copied
 /// under another id does not open.
 @internal
@@ -270,7 +272,7 @@ pub fn seal(
           #("certificates", json.array(certificates, json.string)),
         ])
     })
-  encrypt(secret.reveal(config.key), id, plain)
+  keyring.seal(config.keys, id, plain)
   |> result.replace_error(service.Internal("SSO encryption failed"))
 }
 
@@ -283,7 +285,7 @@ pub fn open(
 ) -> service.Result(Protocol) {
   let failed = service.Internal("SSO connection could not be decrypted")
   use plain <- result.try(
-    decrypt(secret.reveal(config.key), id, sealed)
+    keyring.open(config.keys, id, sealed)
     |> result.replace_error(failed),
   )
   let decoder = case kind {

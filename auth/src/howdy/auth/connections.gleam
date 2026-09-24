@@ -16,6 +16,7 @@ import howdy/auth/connection.{type Connection, type Protocol}
 import howdy/auth/group.{Single}
 import howdy/auth/internal/connection_store
 import howdy/auth/internal/database as db
+import howdy/auth/internal/keyring
 import howdy/auth/internal/store
 import howdy/auth/internal/token
 import howdy/auth/user.{type Actor}
@@ -105,6 +106,25 @@ pub fn list(identity: Auth) -> service.Result(List(Connection)) {
   use config <- result.try(auth.sso_config(identity))
   use conn <- db.connect(auth.repo(identity))
   connection_store.all(conn, config, None)
+}
+
+/// Re-encrypt every connection with the key given to `connection.config`: the
+/// last step of a rotation (see `connection.with_decryption_keys`). Returns how
+/// many needed it; once every node seals with the new key, a rerun returns 0
+/// and the old key can be dropped. Safe to run while serving. A connection no
+/// configured key opens stops it with an error naming the connection.
+pub fn reseal(identity: Auth) -> service.Result(Int) {
+  use config <- result.try(auth.sso_config(identity))
+  use conn <- db.connect(auth.repo(identity))
+  keyring.reseal_all(
+    connection.keys(config),
+    conn,
+    page: connection_store.sealed,
+    replace: connection_store.reseal,
+    unreadable: fn(id) {
+      service.Internal("SSO connection could not be decrypted: " <> id)
+    },
+  )
 }
 
 /// One group's connections, by name.

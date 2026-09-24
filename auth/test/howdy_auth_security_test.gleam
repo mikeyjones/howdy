@@ -1450,3 +1450,81 @@ pub fn multi_session_keeps_the_current_account_while_another_passes_mfa_test() {
   let assert Ok(p) = auth.authenticate(identity, active)
   assert p.user.email == "ada@example.com"
 }
+
+pub fn mfa_key_rotates_without_failing_a_sign_in_test() {
+  use database, identity, _, mailbox <- fixture
+  let old = token.new()
+  let new = token.new()
+  let assert Ok(before) = mfa.new("Howdy tests", old)
+  let assert Ok(identity) = auth.with_passkeys(identity, "Howdy tests")
+  let session = signup(identity, mailbox, "ada@example.com")
+  let #(seed, _) = enroll(auth.with_mfa(identity, before), session)
+  let other = signup(identity, mailbox, "grace@example.com")
+  let assert Ok(setup) =
+    auth.begin_mfa(
+      auth.with_mfa(identity, before),
+      principal(identity, other),
+      auth.Totp,
+    )
+  let secrets = fn() {
+    let assert Ok(values) =
+      repo.all(
+        database,
+        "SELECT secret FROM howdy_auth_mfa UNION ALL SELECT payload FROM howdy_auth_ceremonies WHERE kind = 'mfa-setup'",
+        [],
+        decode.field(0, decode.string, decode.success),
+      )
+    values
+  }
+  let original = secrets()
+
+  // Step 1: every node learns the new key before any seals with it.
+  let assert Ok(learning) = mfa.with_decryption_keys(before, [new])
+  assert auth.reseal_mfa(auth.with_mfa(identity, learning)) == Ok(0)
+  assert secrets() == original
+
+  // Step 2: the new key seals; the old one still opens.
+  let assert Ok(after) = mfa.new("Howdy tests", new)
+  let assert Ok(rotating) = mfa.with_decryption_keys(after, [old])
+  let rotating = auth.with_mfa(identity, rotating)
+  let assert Error(service.Internal(_)) =
+    auth.reseal_mfa(auth.with_mfa(identity, after))
+  let challenge = pending(rotating, mailbox)
+  let assert Ok(_) =
+    auth.verify_mfa(
+      rotating,
+      challenge,
+      auth.Totp,
+      totp_code(seed, token.now() + 30),
+      False,
+    )
+
+  // Step 3: reseal, then the old key can go.
+  assert auth.reseal_mfa(rotating) == Ok(2)
+  assert auth.reseal_mfa(rotating) == Ok(0)
+  let resealed = secrets()
+  assert list.all(resealed, fn(value) { !list.contains(original, value) })
+  let finished = auth.with_mfa(identity, after)
+  assert auth.reseal_mfa(finished) == Ok(0)
+  // Only the replay fence stops the same code working twice.
+  exec(database, "UPDATE howdy_auth_mfa SET last_step = -1")
+  let challenge = pending(finished, mailbox)
+  let assert Ok(_) =
+    auth.verify_mfa(
+      finished,
+      challenge,
+      auth.Totp,
+      totp_code(seed, token.now()),
+      False,
+    )
+  let assert Some(key) = setup.key
+  let assert Ok(_) =
+    auth.confirm_mfa(
+      finished,
+      principal(identity, other),
+      secret.reveal(setup.challenge),
+      totp_code(secret.reveal(key), token.now()),
+    )
+  assert mfa.with_decryption_keys(after, [old, "too-short"])
+    |> result.is_error
+}
