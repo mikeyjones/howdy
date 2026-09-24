@@ -22,12 +22,16 @@
 //// development or write one with `howdy/ui/export` for publishing, and
 //// link it with `stylesheet`. Use `live` to add the Lustre client runtime
 //// when the body mounts a server component.
+////
+//// Every page includes `howdy/ui/behaviour`, the small script behind menus,
+//// tabs, selects and tooltips, in the page and in its live views.
 
 import ewe
 import gleam/http/response.{type Response}
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import howdy/controller.{type GuardedContext}
+import howdy/ui/behaviour
 import howdy/ui/internal/stylesheet
 import howdy/ui/live
 import howdy/ui/theme.{type Themes}
@@ -125,6 +129,7 @@ pub fn render(page: Page(msg)) -> Element(msg) {
         ],
         styles(page),
         page.head,
+        [behaviour.script()],
         runtime,
       ]),
     ),

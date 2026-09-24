@@ -24,7 +24,8 @@ pub const version = "0.1.0"
 /// The components that can be copied, in the order `list` shows them.
 pub const components = [
   "button", "heading", "typography", "input", "field", "checkbox", "layout",
-  "card", "badge", "alert", "table", "loading",
+  "card", "badge", "alert", "table", "loading", "dialog", "popover", "tooltip",
+  "menu", "tabs", "accordion", "select",
 ]
 
 /// Run a command and print what happened.

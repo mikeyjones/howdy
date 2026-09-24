@@ -166,6 +166,7 @@ pub fn insert_challenge(
   expires_at expires_at: Int,
   password_hash password_hash: Option(String),
   passkey passkey: Option(String),
+  code_digest code_digest: Option(String),
   keep keep: Int,
 ) -> service.Result(Nil) {
   use _ <- result.try(
@@ -192,7 +193,7 @@ pub fn insert_challenge(
   )
   db.execute(
     conn,
-    "INSERT INTO howdy_auth_challenges(digest, email, intent, expires_at, password_hash, created_at, password_normalized, group_id, passkey) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8)",
+    "INSERT INTO howdy_auth_challenges(digest, email, intent, expires_at, password_hash, created_at, password_normalized, group_id, passkey, code_digest) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8, $9)",
     [
       sql.string(digest),
       sql.string(email),
@@ -202,6 +203,7 @@ pub fn insert_challenge(
       sql.int(now),
       sql.nullable(sql.string, group_id),
       sql.nullable(sql.string, passkey),
+      sql.nullable(sql.string, code_digest),
     ],
   )
 }
@@ -222,6 +224,7 @@ pub fn claim_challenge(
   live_after live_after: Int,
   password_hash password_hash: Option(String),
   passkey passkey: Option(String),
+  code_digest code_digest: Option(String),
   keep keep: Int,
 ) -> service.Result(Bool) {
   use _ <- result.try(lock_address(conn, address_key))
@@ -253,6 +256,7 @@ pub fn claim_challenge(
         expires_at:,
         password_hash:,
         passkey:,
+        code_digest:,
         keep:,
       ))
       Ok(True)
@@ -315,6 +319,47 @@ pub fn consume_challenge(
     [sql.string(digest), sql.int(now)],
     row,
   )
+}
+
+/// Wrong guesses an emailed code survives. The token beside it still works.
+pub const code_attempts = 3
+
+/// Spend the live challenge for this address whose code has this digest, or
+/// count a wrong guess against every live code for the address, retiring
+/// those that reach `code_attempts`. Returns no challenge on a wrong guess,
+/// and the caller must commit either way.
+pub fn take_code(
+  conn: Repo,
+  email: String,
+  code_digest: String,
+  now: Int,
+) -> service.Result(List(Challenge)) {
+  use rows <- result.try(
+    db.query(
+      conn,
+      "SELECT c.digest, c.code_digest FROM howdy_auth_challenges c WHERE c.email = $1 AND c.expires_at > $2 AND c.code_digest IS NOT NULL"
+        <> db.for_update(conn, "c"),
+      [sql.string(email), sql.int(now)],
+      {
+        use digest <- decode.field(0, decode.string)
+        use stored <- decode.field(1, decode.string)
+        decode.success(#(digest, stored))
+      },
+    ),
+  )
+  case list.find(rows, fn(row) { row.1 == code_digest }) {
+    Ok(#(digest, _)) -> consume_challenge(conn, digest, now)
+    Error(_) -> {
+      use _ <- result.try(
+        db.execute(
+          conn,
+          "UPDATE howdy_auth_challenges SET code_attempts = code_attempts + 1, code_digest = CASE WHEN code_attempts + 1 >= $1 THEN NULL ELSE code_digest END WHERE email = $2 AND expires_at > $3 AND code_digest IS NOT NULL",
+          [sql.int(code_attempts), sql.string(email), sql.int(now)],
+        ),
+      )
+      Ok([])
+    }
+  }
 }
 
 pub fn delete_challenges_for_user(

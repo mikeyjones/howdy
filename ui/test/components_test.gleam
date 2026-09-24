@@ -61,7 +61,7 @@ pub fn text_controls_style_invalid_and_disabled_states_test() {
 pub fn select_wraps_the_native_element_test() {
   let html =
     render(
-      ui.select([attribute.name("plan")], [
+      ui.native_select([attribute.name("plan")], [
         html.option([attribute.value("free")], "Free"),
       ]),
     )

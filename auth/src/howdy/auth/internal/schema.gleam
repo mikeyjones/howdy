@@ -370,6 +370,16 @@ ALTER TABLE howdy_auth_sso_connections ADD COLUMN trusts_mfa INTEGER NOT NULL DE
 ALTER TABLE howdy_auth_challenges ADD COLUMN passkey TEXT;
 ",
     ),
+    // A short code emailed beside the token. Only its keyed digest is kept,
+    // and it stops working (NULL) after `code_attempts` wrong guesses.
+    gloo_migration.new(
+      16,
+      "add_email_codes",
+      "
+ALTER TABLE howdy_auth_challenges ADD COLUMN code_digest TEXT;
+ALTER TABLE howdy_auth_challenges ADD COLUMN code_attempts INTEGER NOT NULL DEFAULT 0;
+",
+    ),
   ])
 }
 

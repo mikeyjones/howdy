@@ -26,10 +26,12 @@ pub fn textarea(
   html.textarea([class(textarea_class()), ..attributes], content)
 }
 
-/// The browser's own select, styled to match the other controls. Children
+/// The browser's own select, styled to match the other controls. On
+/// phones it opens the system picker. For a list styled like the rest of
+/// the page, see `howdy/ui/select`. Children
 /// are `html.option` and `html.optgroup` elements. Attributes go on the
 /// `<select>`.
-pub fn select(
+pub fn native_select(
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {

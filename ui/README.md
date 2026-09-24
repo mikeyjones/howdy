@@ -115,7 +115,7 @@ re-exports them. Every one is a Sketch class built from tokens.
 | --- | --- |
 | `heading`, `typography` | `h1`–`h3`, `p`, `muted`, `link` |
 | `button` | `button` in `Primary`, `Secondary`, `Outline`, `Ghost`, `Link` and `Danger`; `sized_button` in `Small`, `Medium`, `Large` and `Icon`; `theme_toggle` |
-| `input` | `input`, `textarea`, `select` (the native one), `label` |
+| `input` | `input`, `textarea`, `native_select`, `label` |
 | `field` | `field`, `field_description`, `field_error`, `fieldset` |
 | `checkbox` | `checkbox`, `radio`, `choice` (a control with its label), `radio_group` |
 | `layout` | `container`, `stack`, `row`, `separator` |
@@ -124,6 +124,13 @@ re-exports them. Every one is a Sketch class built from tokens.
 | `alert` | `alert` in `Info` and `Danger`, `alert_title`, `alert_description` |
 | `table` | `table`, `table_caption`, `table_header`, `table_body`, `table_footer`, `table_row`, `table_head`, `table_cell` |
 | `loading` | `skeleton`, `spinner` |
+| `dialog` | `dialog`, `alert_dialog`, `sheet`, `dialog_trigger`, `dialog_close`, `dialog_header`, `dialog_title`, `dialog_description`, `dialog_footer` |
+| `popover` | `popover`, `popover_trigger`, `popover_close` |
+| `tooltip` | `tooltip`, `tooltip_trigger` |
+| `menu` | `menu`, `menu_trigger`, `menu_item`, `menu_link`, `menu_checkbox_item`, `menu_label`, `menu_separator` |
+| `tabs` | `tabs`, `tab` |
+| `accordion` | `accordion`, `accordion_item`, `collapsible` |
+| `select` | `select`, `select_item`, `select_group` (a styled list; `native_select` is the browser's own) |
 
 Controls follow their native state. `attribute.disabled(True)` dims them
 and `attribute.aria_invalid("true")` gives them the danger colour, so a form
@@ -140,6 +147,39 @@ ui.field([], [
   ui.field_error([attribute.id("email-error")], [text("Enter an email address.")]),
 ])
 ```
+
+### Interactive components
+
+Dialogs, popovers, menus, tooltips, tabs, accordions and selects are built
+on what the browser already does: `<dialog>` opened by an invoker command,
+the popover API, CSS anchor positioning and `<details>`. The browser keeps
+focus inside a modal, closes things on Escape or an outside click, puts
+floating panels above everything else and returns focus afterwards.
+
+A trigger and what it opens are tied by id. The trigger functions return
+attributes, so any button can open one:
+
+```gleam
+ui.button(Outline, ui.menu_trigger("account"), [text("Account")]),
+ui.menu("account", [], [
+  ui.menu_item([event.on_click(OpenProfile)], [text("Profile")]),
+  ui.menu_separator(),
+  ui.menu_link("/sign-out", [], [text("Sign out")]),
+])
+```
+
+`howdy/ui/behaviour` is a small script for what the browser does not do:
+arrow keys and typeahead in menus and selects, arrow keys between tabs,
+tooltips on hover and focus, and fallbacks for browsers without invoker
+commands or anchor positioning. Every page includes it. It listens on the
+document and follows events into live views' shadow roots, so a widget
+inside a live view works without a round trip to the server.
+
+The browser owns whether something is open and which tab or option is
+selected. A live view that wants to know listens for the native events:
+`close` on a dialog, `toggle` on a popover or accordion item, `change` on a
+select's hidden input, or `click` on a tab or menu item. Keep a trigger and
+its target in the same tree: both in the page, or both in one live view.
 
 ### Making a component your own
 

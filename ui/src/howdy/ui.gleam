@@ -73,21 +73,28 @@ import gleam/http/request
 import gleam/http/response
 import gleam/list
 import howdy/controller.{type Controller}
+import howdy/ui/accordion
 import howdy/ui/alert
 import howdy/ui/badge
 import howdy/ui/button
 import howdy/ui/card
 import howdy/ui/checkbox
 import howdy/ui/cli
+import howdy/ui/dialog
 import howdy/ui/field
 import howdy/ui/heading
 import howdy/ui/input
 import howdy/ui/internal/stylesheet
 import howdy/ui/layout
 import howdy/ui/loading
+import howdy/ui/menu
+import howdy/ui/popover
+import howdy/ui/select
 import howdy/ui/style
 import howdy/ui/table
+import howdy/ui/tabs
 import howdy/ui/theme.{type Themes}
+import howdy/ui/tooltip
 import howdy/ui/typography
 import lustre/attribute.{type Attribute}
 import lustre/element.{type Element}
@@ -127,6 +134,13 @@ pub fn classes() -> List(Class) {
     alert.classes(),
     table.classes(),
     loading.classes(),
+    dialog.classes(),
+    popover.classes(),
+    tooltip.classes(),
+    menu.classes(),
+    tabs.classes(),
+    accordion.classes(),
+    select.classes(),
   ])
 }
 
@@ -224,11 +238,11 @@ pub fn textarea(
   input.textarea(attributes, content)
 }
 
-pub fn select(
+pub fn native_select(
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {
-  input.select(attributes, children)
+  input.native_select(attributes, children)
 }
 
 pub fn label(
@@ -457,4 +471,193 @@ pub fn spinner(
   attributes: List(Attribute(msg)),
 ) -> Element(msg) {
   loading.spinner(label, attributes)
+}
+
+/// See `howdy/ui/dialog`.
+pub fn dialog(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  dialog.dialog(id, attributes, children)
+}
+
+pub fn alert_dialog(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  dialog.alert_dialog(id, attributes, children)
+}
+
+pub fn sheet(
+  id: String,
+  side: dialog.Side,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  dialog.sheet(id, side, attributes, children)
+}
+
+pub fn dialog_trigger(id: String) -> List(Attribute(msg)) {
+  dialog.trigger(id)
+}
+
+pub fn dialog_close(id: String) -> List(Attribute(msg)) {
+  dialog.close(id)
+}
+
+pub fn dialog_header(children: List(Element(msg))) -> Element(msg) {
+  dialog.header(children)
+}
+
+pub fn dialog_title(id: String, children: List(Element(msg))) -> Element(msg) {
+  dialog.title(id, children)
+}
+
+pub fn dialog_description(
+  id: String,
+  children: List(Element(msg)),
+) -> Element(msg) {
+  dialog.description(id, children)
+}
+
+pub fn dialog_footer(children: List(Element(msg))) -> Element(msg) {
+  dialog.footer(children)
+}
+
+/// See `howdy/ui/popover`.
+pub fn popover(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  popover.popover(id, attributes, children)
+}
+
+pub fn popover_trigger(id: String) -> List(Attribute(msg)) {
+  popover.trigger(id)
+}
+
+pub fn popover_close(id: String) -> List(Attribute(msg)) {
+  popover.close(id)
+}
+
+/// See `howdy/ui/tooltip`.
+pub fn tooltip(id: String, children: List(Element(msg))) -> Element(msg) {
+  tooltip.tooltip(id, children)
+}
+
+pub fn tooltip_trigger(id: String) -> List(Attribute(msg)) {
+  tooltip.trigger(id)
+}
+
+/// See `howdy/ui/menu`.
+pub fn menu(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  menu.menu(id, attributes, children)
+}
+
+pub fn menu_trigger(id: String) -> List(Attribute(msg)) {
+  menu.trigger(id)
+}
+
+pub fn menu_item(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  menu.item(attributes, children)
+}
+
+pub fn menu_link(
+  href: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  menu.link(href, attributes, children)
+}
+
+pub fn menu_checkbox_item(
+  checked: Bool,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  menu.checkbox_item(checked, attributes, children)
+}
+
+pub fn menu_label(children: List(Element(msg))) -> Element(msg) {
+  menu.label(children)
+}
+
+pub fn menu_separator() -> Element(msg) {
+  menu.separator()
+}
+
+/// See `howdy/ui/tabs`.
+pub fn tabs(
+  id: String,
+  selected selected: String,
+  attributes attributes: List(Attribute(msg)),
+  tabs items: List(tabs.Tab(msg)),
+) -> Element(msg) {
+  tabs.tabs(id, selected:, attributes:, tabs: items)
+}
+
+pub fn tab(
+  value: String,
+  attributes: List(Attribute(msg)),
+  label label: List(Element(msg)),
+  panel panel: List(Element(msg)),
+) -> tabs.Tab(msg) {
+  tabs.tab(value, attributes, label:, panel:)
+}
+
+/// See `howdy/ui/accordion`.
+pub fn accordion(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  accordion.accordion(attributes, children)
+}
+
+pub fn accordion_item(
+  group: String,
+  open open: Bool,
+  summary summary: List(Element(msg)),
+  content content: List(Element(msg)),
+) -> Element(msg) {
+  accordion.item(group, open:, summary:, content:)
+}
+
+pub fn collapsible(
+  attributes: List(Attribute(msg)),
+  open open: Bool,
+  summary summary: List(Element(msg)),
+  content content: List(Element(msg)),
+) -> Element(msg) {
+  accordion.collapsible(attributes, open:, summary:, content:)
+}
+
+/// See `howdy/ui/select`. For the browser's own select, see
+/// `native_select`.
+pub fn select(
+  id id: String,
+  name name: String,
+  value value: String,
+  placeholder placeholder: String,
+  attributes attributes: List(Attribute(msg)),
+  items items: List(select.Item),
+) -> Element(msg) {
+  select.select(id:, name:, value:, placeholder:, attributes:, items:)
+}
+
+pub fn select_item(value: String, label: String) -> select.Item {
+  select.item(value, label)
+}
+
+pub fn select_group(label: String, items: List(select.Item)) -> select.Item {
+  select.group(label, items)
 }

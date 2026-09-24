@@ -69,8 +69,11 @@ release open unchanged. SSO connections rotate the same way with
 The starter login/account pages include passkey enrollment, sign-in, rename and
 removal, authenticator setup, delivered-code and recovery-code verification,
 recovery replacement, MFA disablement and remembered-device revocation. TOTP
-setup displays a manual key; custom UIs can render the returned `otpauth:` URI
-locally as a QR code. Enrollment is not active until the code is verified.
+setup shows a QR code of the `otpauth:` URI beside the manual key. Custom UIs
+get the same code as `MfaSetup.qr_code` (`qr_code` in the JSON): a
+standalone SVG generated on the server, with no dependency or third-party
+service. It contains the key, so show it only to the user enrolling. Enrollment
+is not active until the code is verified.
 Successful enrollment/recovery replacement returns ten 80-bit recovery codes
 once and signs out all sessions. Save those codes before navigating away.
 `mfa.with_recovery_codes(config, 16)` issues a different number, from 4 to 32.
@@ -398,6 +401,37 @@ Do not log tokens, place them in URLs, or include them in analytics. A delivery
 error invalidates the challenge. An exchange spends the token even when it then
 fails (user suspended, method disabled). Registration is disabled until explicitly
 enabled and creates the user only after email verification.
+
+### Links and codes in the email
+
+Pasting a 43-character token is the fallback, not the experience to aim for.
+Two options put something easier in the same email:
+
+```gleam
+let assert Ok(identity) = auth.with_email_links(identity, at: "/auth")
+let identity = auth.with_email_codes(identity)
+```
+
+`delivery.link` is then a URL to the starter pages mounted at that path, such
+as `https://example.com/auth/login#token=…`. The token rides in the URL
+fragment, which browsers never send to a server, so it stays out of access logs
+and `Referer` headers. The page fills it in and waits for the reader to press
+Continue: security scanners that open every link in an email spend nothing,
+and nobody is signed in to an account by a link they did not choose to use.
+Email-change links open `/account` with `#email-confirm=` or `#email-approve=`.
+Notices get no link. Custom pages at the same path can read the same fragments.
+
+`delivery.code` is a six-digit code for `SignIn`, `Registration` and
+`AlreadyRegistered` emails. It is typed with the address it was sent to, into
+the same field as the token on the starter pages, or sent as
+`{"email", "code"}` to `/session` or `/token` (`auth.exchange_code_step`
+headlessly). A code and its token are one credential: using either spends both.
+Three wrong guesses retire the code; the token still works. Every guess also
+counts against the address and client limits that password guesses use, so
+codes add almost nothing to what an attacker can try. The trade-off is at rest:
+anyone who can read the auth database can recover a live code by trying all
+million against its keyed digest. A token's digest cannot be reversed that way.
+Migration **16** adds the two columns codes use; run it before this version.
 
 A token request that finds a usable token already waiting for that address
 sends no second email and still reports success: one is already in that inbox.

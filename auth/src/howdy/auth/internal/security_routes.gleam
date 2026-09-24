@@ -196,9 +196,7 @@ pub fn add(
           ),
           #(
             "qr_code",
-            json.nullable(setup.qr_code, fn(s) {
-              json.string(secret.reveal(s))
-            }),
+            json.nullable(setup.qr_code, fn(s) { json.string(secret.reveal(s)) }),
           ),
         ])
       })

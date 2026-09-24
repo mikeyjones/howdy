@@ -36,6 +36,8 @@ assurance cannot be inferred from matching feature names or counting tests.
 | Session renewal | Sliding expiry with optional absolute ceiling, idle expiry and updated external-store contract | Present, opt-in |
 | Account switching | Multiple accounts in one browser, explicit switching and logout fallback | Present, opt-in |
 | Encryption-key rotation | `mfa.with_decryption_keys` / `connection.with_decryption_keys` open with earlier keys; `auth.reseal_mfa` and `connections.reseal` re-encrypt online. Ciphertexts stay unversioned: authenticated trial decryption keeps existing values readable without a migration | Closed, including rolling deployments; Better Auth versions its ciphertexts instead ([secret rotation](https://better-auth.com/docs/reference/security#secret-rotation)) |
+| Magic links and email codes | `auth.with_email_links` adds a fragment-carried link that the starter pages fill in and confirm with a click; `auth.with_email_codes` adds a six-digit code limited to three guesses and the password guessing budgets | Closed; one email carries link, code and token together, where Better Auth splits [magic-link](https://better-auth.com/docs/plugins/magic-link) and [email-OTP](https://better-auth.com/docs/plugins/email-otp) into plugins |
+| Authenticator QR code | Server-rendered SVG in `MfaSetup.qr_code` and the enrollment JSON, shown on the starter account page | Closed; Better Auth leaves QR rendering to the application |
 | Apple login | Apple adapter, signed client-secret JWT, identity verification and POST callback handling | Present alongside Google, GitHub, Facebook and Entra |
 
 Local evidence: [auth API](../auth/src/howdy/auth.gleam),
@@ -70,17 +72,12 @@ A small Howdy client handling signed-out, pending-MFA and signed-in states,
 renewal and account switching would help more applications than another obscure
 login method. Native bearer support already exists; the gap is integration work.
 
-### 2. Email-login convenience — high user-visible impact
+### 2. Specialized login methods — product-dependent
 
-Howdy still asks users to paste a long emailed token. Built-in clickable magic
-links and short primary email OTP are absent. Delivered MFA OTP is a second
-factor, not a replacement for those login flows. Better Auth has optional
-[magic-link](https://better-auth.com/docs/plugins/magic-link) and
-[email-OTP](https://better-auth.com/docs/plugins/email-otp) plugins. Dedicated
-reset-link UX is also absent, although password recovery itself works.
-
-Username, phone, guest-to-registered/anonymous login and other specialized methods
-remain missing; choose them from product requirements rather than aiming for an
+Clickable magic links, short email codes and a starter-page QR code for
+authenticator setup are now built in (see the closed gaps above). Username,
+phone, guest-to-registered/anonymous login and other specialized methods remain
+missing; choose them from product requirements rather than aiming for an
 unweighted plugin count. [Plugin catalog](https://better-auth.com/docs/plugins)
 
 ### 3. Operational controls — high impact before broader deployment
@@ -138,11 +135,6 @@ intentional stronger requirements, not missing verification. Its signup retains
 mandatory email ownership proof. [Better Auth MFA](https://better-auth.com/docs/plugins/2fa),
 [passkey options](https://better-auth.com/docs/plugins/passkey)
 
-Howdy's starter MFA setup still displays a manual key. It already exposes the
-`otpauth` URI, so local QR rendering is a small useful UI improvement. Better
-Auth's docs likewise demonstrate application-supplied QR rendering; this is not
-an absent TOTP protocol feature or evidence of a supplied hosted UI.
-
 ## Strengths and differences worth preserving
 
 Howdy gates enrolled MFA across its ordinary email/password/social/passkey
@@ -162,7 +154,7 @@ or cached sessions solely to match a checklist. [Session tradeoffs](https://bett
 
 1. Dependency/release readiness and real-browser/device validation.
 2. Shared HTTP rate limiting before multi-instance deployment.
-3. A reusable auth client plus magic-link/short-email-code UX and local QR rendering.
+3. A reusable auth client.
 4. Public provider/extension contracts and focused administrative tools.
 5. API keys, memberships and more login methods only as required by the product.
 

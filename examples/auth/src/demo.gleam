@@ -4,6 +4,7 @@
 
 import gleam/erlang/process
 import gleam/io
+import gleam/option.{None, Some}
 import howdy
 import howdy/auth
 import howdy/auth/secret
@@ -19,7 +20,15 @@ pub fn print_email(delivery: auth.Delivery) -> Result(Nil, Nil) {
     <> " ["
     <> subject(delivery.purpose)
     <> "]: "
-    <> secret.reveal(delivery.token),
+    <> secret.reveal(delivery.token)
+    <> case delivery.code {
+      Some(code) -> "\n  or enter the code " <> secret.reveal(code)
+      None -> ""
+    }
+    <> case delivery.link {
+      Some(link) -> "\n  or open " <> secret.reveal(link)
+      None -> ""
+    },
   )
   Ok(Nil)
 }

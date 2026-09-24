@@ -83,7 +83,18 @@ pub type Purpose {
 /// The token expires after `policy.challenge_seconds` (ten minutes by default)
 /// and must be exchanged via POST.
 pub type Delivery {
-  Delivery(email: String, token: secret.Secret, purpose: Purpose)
+  Delivery(
+    email: String,
+    token: secret.Secret,
+    purpose: Purpose,
+    /// With `with_email_links`, a page URL that fills in `token` for its
+    /// reader to confirm. `None` for notices, which carry no token.
+    link: Option(secret.Secret),
+    /// With `with_email_codes`, a six-digit code that signs in like `token`
+    /// when entered with this address. Only for `SignIn`, `Registration` and
+    /// `AlreadyRegistered`, and only until three wrong guesses.
+    code: Option(secret.Secret),
+  )
 }
 
 pub opaque type Auth {
@@ -108,6 +119,8 @@ pub opaque type Auth {
     sso: Option(connection.Config),
     email_change_approval: Bool,
     multi_session: Option(Int),
+    email_links: Option(String),
+    email_codes: Bool,
   )
 }
 
@@ -191,6 +204,8 @@ pub fn new(
     None,
     False,
     None,
+    None,
+    False,
   ))
 }
 
@@ -696,6 +711,10 @@ fn send(
   owner: Option(String),
 ) -> service.Result(Nil) {
   let secret = token.new()
+  let code = case auth.email_codes {
+    True -> Some(token.code())
+    False -> None
+  }
   use sending <- result.try({
     use conn <- db.transaction(auth.repo)
     use sending <- result.try(store.claim_challenge(
@@ -710,6 +729,7 @@ fn send(
       live_after: now + auth.policy.email_coalesce_margin_seconds,
       password_hash: password,
       passkey:,
+      code_digest: option.map(code, email_code_digest(auth, email, _)),
       keep: auth.policy.live_challenges,
     ))
     // Attributable only when the address has an account. Someone investigating
@@ -731,7 +751,7 @@ fn send(
   case sending {
     False -> Ok(Nil)
     True ->
-      case auth.deliver(Delivery(email, secret.wrap(secret), purpose)) {
+      case auth.deliver(delivery(auth, email, secret, purpose, code)) {
         Ok(Nil) -> Ok(Nil)
         Error(Nil) -> {
           let _ =
@@ -830,6 +850,67 @@ fn redeem(
     use conn <- db.transaction(auth.repo)
     store.consume_challenge(conn, token.digest(secret), token.now())
   })
+  redeem_challenge(auth, consumed, client)
+}
+
+/// A code is tried against the address it was sent to. Every guess spends the
+/// same budgets as a password guess first, so codes add no guessing capacity
+/// of their own beyond the three each emailed code allows.
+fn redeem_code(
+  auth: Auth,
+  email: String,
+  code: String,
+  client: String,
+) -> service.Result(Issued) {
+  use _ <- result.try(case email_codes_enabled(auth) {
+    True -> Ok(Nil)
+    False -> Error(service.Forbidden)
+  })
+  use email <- result.try(
+    address.normalize_email(email)
+    |> result.replace_error(service.Unauthorized),
+  )
+  let code = string.trim(code)
+  use _ <- result.try(
+    case
+      string.length(code) == 6
+      && list.all(string.to_graphemes(code), string.contains("0123456789", _))
+    {
+      True -> Ok(Nil)
+      False -> Error(service.Unauthorized)
+    },
+  )
+  use within <- result.try(target(auth, False))
+  let address_key = address_key(auth, within, email)
+  let client_key =
+    token.keyed_digest(
+      auth.throttle_key,
+      account_key(auth, within, email) <> "\u{0}" <> client,
+    )
+  use _ <- result.try(password_attempt(auth, address_key, client_key))
+  use consumed <- result.try({
+    use conn <- db.transaction(auth.repo)
+    store.take_code(
+      conn,
+      email,
+      email_code_digest(auth, email, code),
+      token.now(),
+    )
+  })
+  use issued <- result.try(redeem_challenge(auth, consumed, client))
+  let _ =
+    db.transaction(auth.repo, fn(conn) {
+      use _ <- result.try(store.clear_password_attempts(conn, address_key))
+      store.clear_password_client(conn, client_key)
+    })
+  Ok(issued)
+}
+
+fn redeem_challenge(
+  auth: Auth,
+  consumed: List(store.Challenge),
+  client: String,
+) -> service.Result(Issued) {
   use challenge <- result.try(case consumed {
     [value] -> Ok(value)
     _ -> Error(service.Unauthorized)
@@ -1417,7 +1498,7 @@ pub fn change_password_from(
     use _ <- result.try(security_store.clear(conn, user.id))
     event_from(conn, user.id, "password.changed", Acting(principal), "", client)
   })
-  let _ = auth.deliver(Delivery(user.email, secret.wrap(""), PasswordChanged))
+  let _ = auth.deliver(delivery(auth, user.email, "", PasswordChanged, None))
   Ok(Nil)
 }
 
@@ -1926,6 +2007,82 @@ pub fn with_email_tokens(
 
 pub fn email_tokens_enabled(auth: Auth) -> Bool {
   auth.email_tokens
+}
+
+/// Put a link in each emailed token's `Delivery`, beside the token, to the
+/// starter pages mounted `at` this path, such as "/auth". A sign-in link opens
+/// `<path>/login`; an email-change link opens `<path>/account`. The token
+/// travels in the URL fragment (`#token=`, `#email-confirm=` or
+/// `#email-approve=`), which browsers never send to a server, so it stays out
+/// of access logs and `Referer` headers. The pages fill it in and wait for a
+/// click, so a mail scanner that opens links spends nothing. Custom pages at
+/// that path can read the same fragments.
+pub fn with_email_links(auth: Auth, at path: String) -> service.Result(Auth) {
+  case
+    string.starts_with(path, "/")
+    && !string.ends_with(path, "/")
+    && list.all(string.to_graphemes(path), fn(c) {
+      string.contains(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/-_",
+        c,
+      )
+    })
+  {
+    True -> Ok(Auth(..auth, email_links: Some(path)))
+    False ->
+      Error(service.Invalid(
+        "email link path must be absolute, without a trailing slash, using letters, digits, '/', '-' and '_'",
+      ))
+  }
+}
+
+/// Email a six-digit code beside each sign-in or registration token, for a
+/// reader who would rather type than paste; see `exchange_code_step`. A code
+/// is weaker than a token, so it only works with its address, dies after
+/// three wrong guesses, and every guess counts against the same per-address
+/// and per-client limits as a password. Anyone who can read the auth database
+/// can recover a live code from its digest by trying all million, which a
+/// token's digest does not allow; leave codes off if that matters.
+pub fn with_email_codes(auth: Auth) -> Auth {
+  Auth(..auth, email_codes: True)
+}
+
+pub fn email_codes_enabled(auth: Auth) -> Bool {
+  auth.email_tokens && auth.email_codes
+}
+
+fn delivery(
+  auth: Auth,
+  email: String,
+  token: String,
+  purpose: Purpose,
+  code: Option(String),
+) -> Delivery {
+  let page = case purpose {
+    SignIn | Registration | AlreadyRegistered -> Some("/login#token=")
+    EmailChange -> Some("/account#email-confirm=")
+    EmailChangeApproval -> Some("/account#email-approve=")
+    EmailChanged | PasswordChanged -> None
+  }
+  let link = case auth.email_links, page {
+    Some(path), Some(page) ->
+      Some(secret.wrap(auth.origin <> path <> page <> token))
+    _, _ -> None
+  }
+  Delivery(
+    email,
+    secret.wrap(token),
+    purpose,
+    link,
+    option.map(code, secret.wrap),
+  )
+}
+
+fn email_code_digest(auth: Auth, email: String, code: String) -> String {
+  token.keyed_digest(
+    auth.throttle_key,
+    "email-code\u{0}" <> email <> "\u{0}" <> code,
+  )
 }
 
 fn require_email_tokens(auth: Auth) -> service.Result(Nil) {
@@ -2641,8 +2798,8 @@ pub fn request_email_change(
     Ok(user)
   })
   deliver_email_change(auth, digest, case auth.email_change_approval {
-    True -> Delivery(user.email, secret.wrap(secret), EmailChangeApproval)
-    False -> Delivery(email, secret.wrap(secret), EmailChange)
+    True -> delivery(auth, user.email, secret, EmailChangeApproval, None)
+    False -> delivery(auth, email, secret, EmailChange, None)
   })
 }
 
@@ -2702,7 +2859,7 @@ pub fn approve_email_change(
   deliver_email_change(
     auth,
     token.digest(confirmation),
-    Delivery(change.new_email, secret.wrap(confirmation), EmailChange),
+    delivery(auth, change.new_email, confirmation, EmailChange, None),
   )
 }
 
@@ -2783,8 +2940,7 @@ pub fn confirm_email_change(
     use _ <- result.try(account_store.revoke(conn, user.id))
     event(conn, user.id, "email.changed", Acting(principal), "")
   })
-  let _ =
-    auth.deliver(Delivery(change.old_email, secret.wrap(""), EmailChanged))
+  let _ = auth.deliver(delivery(auth, change.old_email, "", EmailChanged, None))
   Ok(Nil)
 }
 
@@ -3166,6 +3322,20 @@ pub fn exchange_step(
   client: String,
 ) -> service.Result(LoginStep) {
   redeem(auth, token, client) |> result.try(publish_step(auth, _))
+}
+
+/// As `exchange_step`, redeeming the six-digit code from `Delivery.code`
+/// with the address it was sent to. Forbidden unless `with_email_codes`.
+/// A wrong code, or one already retired by three wrong guesses, is
+/// Unauthorized; too many guesses at an address or from a client are
+/// TooManyRequests, as for passwords. The emailed token still works.
+pub fn exchange_code_step(
+  auth: Auth,
+  email: String,
+  code: String,
+  client: String,
+) -> service.Result(LoginStep) {
+  redeem_code(auth, email, code, client) |> result.try(publish_step(auth, _))
 }
 
 pub fn login_password_step(

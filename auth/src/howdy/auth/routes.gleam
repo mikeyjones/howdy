@@ -23,7 +23,8 @@ import howdy/rate_limit
 import howdy/service
 
 /// POST /login and /register deliver email tokens; POST /session exchanges
-/// for a browser cookie; POST /token exchanges for a bearer token.
+/// for a browser cookie; POST /token exchanges for a bearer token. Both take
+/// `{"token"}`, or with `auth.with_email_codes`, `{"email", "code"}`.
 /// POST /password/register sends verification; /password/session and
 /// /password/token authenticate with email/password when enabled.
 /// POST /password sets or replaces the caller's password; see
@@ -134,11 +135,11 @@ pub fn api_limited_by(
     "/session",
     strict(fn(ctx) {
       use _ <- guard.require(ctx, fn(ctx) { auth.check_origin(identity, ctx) })
-      use secret <- body.json_with_limit(ctx, body_limit, field("token"))
+      use proof <- body.json_with_limit(ctx, body_limit, email_proof())
       browser_session(
         identity,
         ctx,
-        auth.exchange_step(identity, secret, client(ctx)),
+        exchange(identity, proof, client(ctx)),
         required,
       )
     }),
@@ -146,8 +147,8 @@ pub fn api_limited_by(
   |> controller.post(
     "/token",
     strict(fn(ctx) {
-      use secret <- body.json_with_limit(ctx, body_limit, field("token"))
-      auth.exchange_step(identity, secret, client(ctx))
+      use proof <- body.json_with_limit(ctx, body_limit, email_proof())
+      exchange(identity, proof, client(ctx))
       |> login_transport.bearer(identity, ctx, _)
     }),
   )
@@ -416,6 +417,30 @@ fn request_email(identity, ctx, intent, client) {
   })
   auth.request_token_from(within(identity, group), email, intent, client)
   |> email_response(ctx)
+}
+
+type EmailProof {
+  Token(String)
+  Code(email: String, code: String, group: Option(String))
+}
+
+fn email_proof() -> decode.Decoder(EmailProof) {
+  decode.one_of(decode.map(field("token"), Token), [
+    {
+      use email <- decode.field("email", decode.string)
+      use code <- decode.field("code", decode.string)
+      use group <- decode.then(group())
+      decode.success(Code(email, code, group))
+    },
+  ])
+}
+
+fn exchange(identity: Auth, proof: EmailProof, client: String) {
+  case proof {
+    Token(secret) -> auth.exchange_step(identity, secret, client)
+    Code(email, code, group) ->
+      auth.exchange_code_step(within(identity, group), email, code, client)
+  }
 }
 
 fn group() -> decode.Decoder(Option(String)) {

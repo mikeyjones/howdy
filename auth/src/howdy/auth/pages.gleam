@@ -206,7 +206,12 @@ fn page(
       <> " characters. We will email a token to verify your address before creating the account."
     True, False -> "Enter your email address and password."
     False, _ ->
-      "We will email you a single-use token. It expires in "
+      "We will email you "
+      <> case auth.email_codes_enabled(identity) {
+        True -> "a six-digit code and a single-use token"
+        False -> "a single-use token"
+      }
+      <> ". It expires in "
       <> int.to_string(auth.policy(identity).challenge_seconds / 60)
       <> " minutes."
   }
@@ -217,7 +222,12 @@ fn page(
   let exchange = case password && !register {
     True -> ""
     False ->
-      "<form method=\"post\" id=\"exchange\"><label>Email token <input name=\"token\" autocomplete=\"one-time-code\" required minlength=\"43\" maxlength=\"43\"></label><button>Continue</button></form>"
+      case auth.email_codes_enabled(identity) {
+        True ->
+          "<form method=\"post\" id=\"exchange\"><label>Code or token from the email <input name=\"token\" autocomplete=\"one-time-code\" required minlength=\"6\" maxlength=\"43\"></label><button>Continue</button></form>"
+        False ->
+          "<form method=\"post\" id=\"exchange\"><label>Email token <input name=\"token\" autocomplete=\"one-time-code\" required minlength=\"43\" maxlength=\"43\"></label><button>Continue</button></form>"
+      }
   }
   let alternative = case password, auth.passwords_enabled(identity) {
     True, _ ->
@@ -453,8 +463,28 @@ requestForm?.addEventListener('submit', event => {
 });
 exchangeForm?.addEventListener('submit', event => {
   event.preventDefault();
-  submit(exchangeForm, 'session', {token: exchangeForm.elements.token.value.trim()});
+  const value = exchangeForm.elements.token.value.trim();
+  if (!/^\\d{6}$/.test(value)) return submit(exchangeForm, 'session', {token: value});
+  // A code only works with the address it was sent to.
+  const email = requestForm?.elements.email.value.trim();
+  if (!email) { status.textContent = 'Enter the email address the code was sent to.'; requestForm?.elements.email.focus(); return; }
+  const payload = {email, code: value};
+  const group = new URLSearchParams(location.search).get('group');
+  if (group) payload.group = group;
+  submit(exchangeForm, 'session', payload);
 });
+// An emailed link carries its token in the fragment, which is never sent to
+// a server. Fill it in and wait for a click: a mail scanner that opens the
+// link must not spend the token.
+const linked = new URLSearchParams(location.hash.slice(1));
+if (['token', 'email-approve', 'email-confirm'].some(key => linked.has(key)))
+  history.replaceState(null, '', location.pathname + location.search);
+function prefill(form, value, message) {
+  if (!form || !value) return;
+  form.hidden = false; form.elements.token.value = value;
+  status.textContent = message; form.querySelector('button').focus();
+}
+prefill(exchangeForm, linked.get('token'), 'Press Continue to sign in.');
 async function refreshSessions() {
   const sessions = await call('sessions');
   const list = document.getElementById('sessions');
@@ -532,6 +562,8 @@ if (account) {
   accountForm('email-change', 'email/change', 'email', '');
   accountForm('email-approve', 'email/approve', 'token', '');
   accountForm('email-confirm', 'email/confirm', 'token', 'Email changed. You are signed out. Sign in using your new address.');
+  prefill(document.getElementById('email-approve'), linked.get('email-approve'), 'Press Approve change to allow the new address.');
+  prefill(document.getElementById('email-confirm'), linked.get('email-confirm'), 'Press Confirm new email to finish the change.');
   accountForm('account-delete', 'account/delete', 'email', 'Your account has been deleted.');
   refreshSessions().catch(error => status.textContent = error.message);
   document.getElementById('refresh-sessions').addEventListener('click', () =>

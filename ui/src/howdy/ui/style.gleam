@@ -1,5 +1,7 @@
 //// Attach Sketch classes to elements.
 
+import gleam/list
+import gleam/string
 import howdy/ui/internal/stylesheet
 import lustre/attribute.{type Attribute}
 import lustre/element.{type Element}
@@ -18,3 +20,23 @@ pub fn class(class: Class) -> Attribute(msg) {
 pub fn styles() -> Element(msg) {
   html.style([], stylesheet.css())
 }
+
+/// A CSS anchor name derived from an element id, for tying a floating
+/// element such as a popover to the element that opens it. Characters that
+/// cannot appear in a CSS identifier become `_`.
+pub fn anchor_name(id: String) -> String {
+  "--howdy-anchor-"
+  <> {
+    id
+    |> string.to_graphemes
+    |> list.map(fn(char) {
+      case string.contains(identifier_chars, char) {
+        True -> char
+        False -> "_"
+      }
+    })
+    |> string.concat
+  }
+}
+
+const identifier_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"

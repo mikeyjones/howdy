@@ -21,5 +21,9 @@ pub fn keyed_digest(key: String, value: String) -> String {
   |> bit_array.base64_url_encode(False)
 }
 
+/// Six random decimal digits.
+@external(erlang, "howdy_auth_mfa_ffi", "otp")
+pub fn code() -> String
+
 @external(erlang, "howdy_auth_ffi", "now")
 pub fn now() -> Int

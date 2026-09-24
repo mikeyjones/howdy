@@ -9,6 +9,11 @@ const gleam = readFileSync(new URL('../src/howdy/auth/pages.gleam', import.meta.
 const encoded = gleam.slice(gleam.indexOf('const script = "') + 'const script = '.length).trim();
 const script = JSON.parse(encoded.replaceAll('\n', '\\n'));
 const settle = () => new Promise(resolve => setImmediate(resolve));
+// Browser globals every page has, under whatever a test supplies.
+const run = context => vm.runInNewContext(script, {
+  URLSearchParams, history: {replaceState() {}}, ...context,
+  location: {search: '', hash: '', ...context.location},
+});
 
 class Element {
   constructor() { this.children = []; this.handlers = {}; this.dataset = {}; this.elements = {}; }
@@ -52,7 +57,7 @@ function accountPage({ lifecycle = false, fail = null, approval = false } = {}) 
     { id: 'digest-current', current: true, method: 'email', created_at: 100, last_seen_at: 200 },
     { id: 'digest-other', current: false, method: 'password', created_at: 100, last_seen_at: 200 },
   ];
-  vm.runInNewContext(script, {
+  run({
     document: { getElementById: id => ids[id] || null, createElement: () => new Element() },
     fetch: async (url, options) => {
       calls.push({ url, ...options });
@@ -121,7 +126,7 @@ test('revoking the current session leaves the page signed out', async () => {
 
 test('Google-only login page works without an email form or account controls', () => {
   const status = new Element();
-  vm.runInNewContext(script, {
+  run({
     document: { getElementById: id => id === 'status' ? status : null },
     fetch: () => { throw Error('provider-only login must use its browser form'); },
   });
@@ -196,7 +201,7 @@ test('device accounts list, switch and sign-out reload into the remaining accoun
   ids.account.dataset.api = '/api/auth';
   ids.account.buttons = [ids.logout, ids['logout-all']];
   const calls = []; let reloads = 0;
-  vm.runInNewContext(script, {
+  run({
     document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
     location: {search: '', reload: () => { reloads += 1; }},
     fetch: async (url, options) => {
@@ -237,7 +242,7 @@ function passkeyPage({ cancelled = false, mfa = true } = {}) {
   ids['mfa-verify'].button = new Element();
   ids['mfa-verify'].elements = {method: {value: 'recovery'}, code: {value: ' BACKUP '}, remember: {checked: true}};
   const calls = [], ceremonies = [];
-  vm.runInNewContext(script, {
+  run({
     document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
     location: {search: '?group=team'}, URLSearchParams, atob, btoa,
     navigator: {credentials: {get: async options => {
@@ -287,7 +292,7 @@ function autofillPage({ available = true } = {}) {
   ids.request.dataset.api = '/api/auth';
   const calls = [], ceremonies = [], timers = [];
   let choose;
-  vm.runInNewContext(script, {
+  run({
     document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
     location: {search: ''}, URLSearchParams, atob, btoa, AbortController,
     setInterval: (callback, delay) => timers.push({callback, delay}),
@@ -358,7 +363,7 @@ test('passkey signup creates the credential before asking for the emailed token'
   ids['passkey-signup'].button = new Element();
   ids['passkey-signup'].elements = {email: {value: 'ada@example.com'}, name: {value: 'Laptop'}};
   const calls = [];
-  vm.runInNewContext(script, {
+  run({
     document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
     location: {search: '?group=team'}, URLSearchParams, atob, btoa,
     navigator: {credentials: {create: async options => {
@@ -385,7 +390,7 @@ test('passkey signup creates the credential before asking for the emailed token'
 
 test('recovery codes render on separate lines and enrollment secrets are cleared', () => {
   const ids = Object.fromEntries(['status', 'sessions', 'recovery-codes', 'mfa-setup-key'].map(id => [id, new Element()]));
-  const context = {document: {getElementById: id => ids[id] || null}};
+  const context = {document: {getElementById: id => ids[id] || null}, URLSearchParams, location: {search: '', hash: ''}};
   vm.createContext(context);
   vm.runInContext(script, context);
   vm.runInContext("signedOut = message => { document.getElementById('status').textContent = message; }", context);
@@ -393,4 +398,64 @@ test('recovery codes render on separate lines and enrollment secrets are cleared
   assert.equal(ids['recovery-codes'].textContent, 'ONE\nTWO');
   assert.equal(ids['mfa-setup-key'].textContent, '');
   assert.match(ids.status.textContent, /Save your recovery codes/);
+});
+
+function emailLoginPage(hash = '') {
+  const ids = Object.fromEntries(['status', 'request', 'exchange'].map(id => [id, new Element()]));
+  ids.request.dataset.api = '/api/auth';
+  ids.request.elements.email = {value: '', focus() { this.focused = true; }};
+  ids.exchange.button = {focus() { this.focused = true; }, disabled: false};
+  ids.exchange.elements.token = {value: '', focus() {}};
+  const calls = [], replaced = [];
+  run({
+    document: {getElementById: id => ids[id] || null},
+    location: {search: '?group=team', hash, pathname: '/auth/login'},
+    history: {replaceState: (_, __, url) => replaced.push(url)},
+    fetch: async (url, options) => {
+      calls.push({url, ...options});
+      return {status: 200, ok: true, json: async () => ({id: 'user'})};
+    },
+  });
+  return {ids, calls, replaced};
+}
+
+test('an emailed link fills in its token, drops it from the address and waits for a click', async () => {
+  const {ids, calls, replaced} = emailLoginPage('#token=emailed-token');
+  assert.equal(ids.exchange.elements.token.value, 'emailed-token');
+  assert.deepEqual(replaced, ['/auth/login?group=team']);
+  assert.equal(ids.exchange.button.focused, true);
+  assert.equal(calls.length, 0);
+  await ids.exchange.fire('submit');
+  assert.deepEqual(JSON.parse(calls[0].body), {token: 'emailed-token'});
+});
+
+test('a six-digit code is sent with the address it was emailed to', async () => {
+  const {ids, calls, replaced} = emailLoginPage();
+  assert.deepEqual(replaced, []);
+  ids.exchange.elements.token.value = ' 012345 ';
+  await ids.exchange.fire('submit');
+  assert.equal(calls.length, 0);
+  assert.match(ids.status.textContent, /email address/);
+  assert.equal(ids.request.elements.email.focused, true);
+  ids.request.elements.email.value = 'ada@example.com';
+  await ids.exchange.fire('submit');
+  assert.ok(calls[0].url.endsWith('/session'));
+  assert.deepEqual(JSON.parse(calls[0].body), {email: 'ada@example.com', code: '012345', group: 'team'});
+});
+
+test('an emailed email-change link opens and fills in its confirmation form', () => {
+  const ids = Object.fromEntries(['account', 'status', 'sessions', 'refresh-sessions', 'logout', 'email-confirm'].map(id => [id, new Element()]));
+  ids.account.dataset.api = '/api/auth';
+  ids['email-confirm'].hidden = true;
+  ids['email-confirm'].button = {focus() { this.focused = true; }};
+  ids['email-confirm'].elements.token = {value: ''};
+  run({
+    document: {getElementById: id => ids[id] || null, createElement: () => new Element()},
+    location: {hash: '#email-confirm=confirmation-token', pathname: '/auth/account'},
+    fetch: async () => ({status: 200, ok: true, json: async () => []}),
+  });
+  assert.equal(ids['email-confirm'].hidden, false);
+  assert.equal(ids['email-confirm'].elements.token.value, 'confirmation-token');
+  assert.equal(ids['email-confirm'].button.focused, true);
+  assert.match(ids.status.textContent, /Confirm new email/);
 });

@@ -1,15 +1,16 @@
 //// Passwordless sign-in with emailed tokens: the smallest useful setup.
 ////
-//// Someone enters their address, receives a single-use token by email and
-//// pastes it back. Registration and sign-in are the same two steps. The same
+//// Someone enters their address, receives an email and proves they read it:
+//// by opening its link, typing its six-digit code, or pasting its token.
+//// Registration and sign-in are the same two steps. The same
 //// exchange serves browsers (an HttpOnly session cookie) and native clients
 //// (a bearer token), and `auth.required` accepts either.
 ////
 ////     gleam run -m migrate
 ////     gleam run -m flows/email_tokens
 ////
-//// Open http://localhost:8787/auth/register, paste the token printed in the
-//// terminal, then visit http://localhost:8787/account/me.
+//// Open http://localhost:8787/auth/register, open the link printed in the
+//// terminal (or type its code), then visit http://localhost:8787/account/me.
 
 import database
 import demo
@@ -32,7 +33,11 @@ pub fn configure(
   let assert Ok(identity) = auth.new(repo: db, origin: demo.origin, deliver:)
   // Registration is off until you say otherwise. Without it, only accounts
   // created by trusted code (`auth.provision`) can sign in.
-  auth.allow_registration(identity)
+  let identity = auth.allow_registration(identity)
+  // Each email also gets a link to the starter pages mounted below, and a
+  // short code to type instead of pasting the token.
+  let assert Ok(identity) = auth.with_email_links(identity, at: "/auth")
+  auth.with_email_codes(identity)
 }
 
 pub fn app(identity: auth.Auth) -> howdy.App {
