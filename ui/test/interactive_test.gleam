@@ -169,7 +169,7 @@ pub fn select_shows_the_chosen_option_or_placeholder_test() {
   assert string.contains(html, "type=\"hidden\"")
   assert string.contains(html, "name=\"plan\"")
   assert string.contains(html, "value=\"basic\"")
-  assert string.contains(html, "<span data-howdy-select-value>Basic</span>")
+  assert string.contains(html, "data-howdy-select-value>Basic</span>")
   assert !string.contains(html, "data-placeholder")
   assert string.contains(html, "popovertarget=\"plan-listbox\"")
   assert string.contains(html, "role=\"listbox\"")

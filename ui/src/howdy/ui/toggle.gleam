@@ -48,7 +48,10 @@ pub fn toggle(
   )
 }
 
-/// Toggles joined into one control. Label it with `aria-label`.
+/// Toggles joined into one control. Label it with `aria-label`; pass
+/// `attribute.aria_orientation("vertical")` to stack them, which also makes
+/// up and down the keys that move between them. The group is one stop in
+/// the tab order, and the arrow keys move within it.
 pub fn group(
   selection: Selection,
   attributes: List(Attribute(msg)),
@@ -107,6 +110,9 @@ pub fn toggle_class() -> Class {
 pub fn group_class() -> Class {
   css.class([
     css.display("inline-flex"),
+    css.selector("[aria-orientation=\"vertical\"]", [
+      css.flex_direction("column"),
+    ]),
     css.gap(rem(0.125)),
     css.padding(rem(0.125)),
     css.border("1px solid " <> tokens.border),

@@ -23,6 +23,21 @@ import lustre/element/html
 import sketch/css.{type Class}
 import sketch/css/length.{rem}
 
+pub type Orientation {
+  /// Tabs in a row above the panels. Left and right move between them.
+  Horizontal
+  /// Tabs in a column beside the panels. Up and down move between them.
+  Vertical
+}
+
+/// How the tabs are drawn.
+pub type Look {
+  /// Tabs on a muted track, the selected one raised.
+  Segmented
+  /// Plain tabs over a line, the selected one underlined.
+  Line
+}
+
 /// One tab and its panel.
 pub opaque type Tab(msg) {
   Tab(
@@ -52,12 +67,31 @@ pub fn tabs(
   attributes attributes: List(Attribute(msg)),
   tabs tabs: List(Tab(msg)),
 ) -> Element(msg) {
+  styled(
+    id,
+    selected:,
+    orientation: Horizontal,
+    look: Segmented,
+    attributes:,
+    tabs:,
+  )
+}
+
+/// Tabs laid out and drawn another way.
+pub fn styled(
+  id: String,
+  selected selected: String,
+  orientation orientation: Orientation,
+  look look: Look,
+  attributes attributes: List(Attribute(msg)),
+  tabs tabs: List(Tab(msg)),
+) -> Element(msg) {
   let triggers =
     list.map(tabs, fn(tab) {
       let is_selected = tab.value == selected
       html.button(
         [
-          class(tab_class()),
+          class(tab_class(look, orientation)),
           attribute.type_("button"),
           attribute.role("tab"),
           attribute.id(tab_id(id, tab.value)),
@@ -86,10 +120,29 @@ pub fn tabs(
         tab.panel,
       )
     })
-  html.div([attribute.id(id), attribute.data("howdy-tabs", ""), ..attributes], [
-    html.div([class(list_class()), attribute.role("tablist")], triggers),
-    ..panels
-  ])
+  let orientation_name = case orientation {
+    Horizontal -> "horizontal"
+    Vertical -> "vertical"
+  }
+  html.div(
+    [
+      class(root_class(orientation)),
+      attribute.id(id),
+      attribute.data("howdy-tabs", ""),
+      ..attributes
+    ],
+    [
+      html.div(
+        [
+          class(list_class(look, orientation)),
+          attribute.role("tablist"),
+          attribute.aria_orientation(orientation_name),
+        ],
+        triggers,
+      ),
+      html.div([class(panels_class())], panels),
+    ],
+  )
 }
 
 fn tab_id(id: String, value: String) -> String {
@@ -102,48 +155,129 @@ fn panel_id(id: String, value: String) -> String {
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [list_class(), tab_class(), panel_class()]
+  [
+    root_class(Horizontal),
+    root_class(Vertical),
+    list_class(Segmented, Horizontal),
+    list_class(Segmented, Vertical),
+    list_class(Line, Horizontal),
+    list_class(Line, Vertical),
+    tab_class(Segmented, Horizontal),
+    tab_class(Segmented, Vertical),
+    tab_class(Line, Horizontal),
+    tab_class(Line, Vertical),
+    panels_class(),
+    panel_class(),
+  ]
 }
 
-pub fn list_class() -> Class {
-  css.class([
-    css.display("inline-flex"),
-    css.align_items("center"),
-    css.gap(rem(0.25)),
-    css.padding(rem(0.25)),
-    css.background(tokens.muted),
-    css.property("border-radius", tokens.radius_medium),
-    css.property("max-width", "100%"),
-    css.overflow_x("auto"),
-  ])
+pub fn root_class(orientation: Orientation) -> Class {
+  case orientation {
+    Horizontal -> css.class([css.display("block")])
+    Vertical ->
+      css.class([
+        css.display("flex"),
+        css.align_items("flex-start"),
+        css.gap(rem(1.5)),
+        css.selector(" > div > [role=\"tabpanel\"]", [css.margin(rem(0.0))]),
+      ])
+  }
 }
 
-pub fn tab_class() -> Class {
-  css.class([
-    css.padding_("0.375rem " <> tokens.space_3),
-    css.border("0"),
-    css.property("border-radius", tokens.radius_small),
-    css.background("transparent"),
-    css.color(tokens.text_muted),
-    css.font_family(tokens.font_body),
-    css.font_size(rem(0.875)),
-    css.font_weight("500"),
-    css.line_height("1.25"),
-    css.white_space("nowrap"),
-    css.cursor("pointer"),
-    css.transition("background 120ms, color 120ms"),
-    css.hover([css.color(tokens.text)]),
-    css.selector("[aria-selected=\"true\"]", [
-      css.background(tokens.surface),
-      css.color(tokens.text),
-      css.box_shadow("0 1px 3px rgb(0 0 0 / 0.12)"),
-    ]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("default")]),
-  ])
+pub fn list_class(look: Look, orientation: Orientation) -> Class {
+  let direction = case orientation {
+    Horizontal -> [
+      css.display("inline-flex"),
+      css.flex_direction("row"),
+      css.align_items("center"),
+      css.property("max-width", "100%"),
+      css.overflow_x("auto"),
+    ]
+    Vertical -> [
+      css.display("flex"),
+      css.flex_direction("column"),
+      css.align_items("stretch"),
+      css.flex_shrink(0.0),
+    ]
+  }
+  let drawn = case look, orientation {
+    Segmented, _ -> [
+      css.gap(rem(0.25)),
+      css.padding(rem(0.25)),
+      css.background(tokens.muted),
+      css.property("border-radius", tokens.radius_medium),
+    ]
+    Line, Horizontal -> [
+      css.gap(rem(1.0)),
+      css.property("border-bottom", "1px solid " <> tokens.border),
+    ]
+    Line, Vertical -> [
+      css.gap(rem(0.25)),
+      css.property("border-inline-start", "1px solid " <> tokens.border),
+    ]
+  }
+  css.class(list.append(direction, drawn))
+}
+
+pub fn tab_class(look: Look, orientation: Orientation) -> Class {
+  let drawn = case look, orientation {
+    Segmented, _ -> [
+      css.padding_("0.375rem " <> tokens.space_3),
+      css.property("border-radius", tokens.radius_small),
+      css.selector("[aria-selected=\"true\"]", [
+        css.background(tokens.surface),
+        css.color(tokens.text),
+        css.box_shadow("0 1px 3px rgb(0 0 0 / 0.12)"),
+      ]),
+    ]
+    // The underline sits on the list's own line.
+    Line, Horizontal -> [
+      css.padding_(tokens.space_2 <> " " <> tokens.space_1),
+      css.property("border-radius", "0"),
+      css.property("margin-block-end", "-1px"),
+      css.property("border-bottom", "2px solid transparent"),
+      css.selector("[aria-selected=\"true\"]", [
+        css.color(tokens.text),
+        css.property("border-color", tokens.primary),
+      ]),
+    ]
+    Line, Vertical -> [
+      css.padding_(tokens.space_2 <> " " <> tokens.space_3),
+      css.property("border-radius", "0"),
+      css.property("margin-inline-start", "-1px"),
+      css.property("border-inline-start", "2px solid transparent"),
+      css.selector("[aria-selected=\"true\"]", [
+        css.color(tokens.text),
+        css.property("border-color", tokens.primary),
+      ]),
+    ]
+  }
+  css.class(list.append(
+    [
+      css.border("0"),
+      css.background("transparent"),
+      css.color(tokens.text_muted),
+      css.font_family(tokens.font_body),
+      css.font_size(rem(0.875)),
+      css.font_weight("500"),
+      css.line_height("1.25"),
+      css.white_space("nowrap"),
+      css.text_align("start"),
+      css.cursor("pointer"),
+      css.transition("background 120ms, color 120ms"),
+      css.hover([css.color(tokens.text)]),
+      css.focus_visible([
+        css.outline("2px solid " <> tokens.focus),
+        css.property("outline-offset", "2px"),
+      ]),
+      css.disabled([css.property("opacity", "0.5"), css.cursor("default")]),
+    ],
+    drawn,
+  ))
+}
+
+pub fn panels_class() -> Class {
+  css.class([css.property("flex", "1"), css.property("min-width", "0")])
 }
 
 pub fn panel_class() -> Class {

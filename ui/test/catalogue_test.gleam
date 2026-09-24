@@ -1,11 +1,12 @@
 import gleam/float
 import gleam/int
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{None}
 import gleam/string
 import howdy
 import howdy/testing
 import howdy/ui
+import howdy/ui/attachment
 import howdy/ui/chat
 import howdy/ui/gallery
 import howdy/ui/gallery/examples
@@ -185,11 +186,11 @@ pub fn conversations_are_logs_laid_out_from_the_bottom_test() {
       ui.chat_note([text("Today")]),
       ui.chat_message(
         chat.Outgoing,
+        attributes: [],
         avatar: element.none(),
         header: [],
-        content: [
-          ui.chat_bubble(chat.Outgoing, [text("Hi")]),
-        ],
+        content: [ui.chat_bubble(chat.Outgoing, [text("Hi")])],
+        footer: [],
       ),
     ])
     |> render
@@ -220,7 +221,8 @@ pub fn attachments_show_their_type_and_upload_test() {
       ui.attachment(
         name: "report.pdf",
         detail: "2 MB",
-        uploaded: Some(40),
+        status: attachment.Uploading(40),
+        media: None,
         actions: [],
       ),
     )
@@ -228,7 +230,13 @@ pub fn attachments_show_their_type_and_upload_test() {
   assert string.contains(uploading, "aria-valuenow=\"40\"")
   let done =
     render(
-      ui.attachment(name: "notes", detail: "", uploaded: None, actions: []),
+      ui.attachment(
+        name: "notes",
+        detail: "",
+        status: attachment.Done,
+        media: None,
+        actions: [],
+      ),
     )
   assert string.contains(done, ">FILE</span>")
   assert !string.contains(done, "progressbar")

@@ -138,7 +138,7 @@ pub fn row_class() -> Class {
 pub fn head_class() -> Class {
   css.class([
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
-    css.text_align("left"),
+    css.text_align("start"),
     css.vertical_align("middle"),
     css.font_weight("500"),
     css.white_space("nowrap"),

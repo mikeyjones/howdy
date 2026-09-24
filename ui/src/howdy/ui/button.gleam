@@ -27,16 +27,33 @@ pub type Variant {
 
 /// How big a button is.
 pub type Size {
+  ExtraSmall
   Small
   Medium
   Large
-  /// A square button for a single icon. Give it an `aria-label`.
+  /// A square button for a single icon, as tall as a medium button. Give
+  /// it an `aria-label`.
   Icon
+  /// A square icon button as tall as an extra-small one.
+  IconExtraSmall
+  /// A square icon button as tall as a small one.
+  IconSmall
+  /// A square icon button as tall as a large one.
+  IconLarge
 }
 
 const variants = [Primary, Secondary, Outline, Ghost, Link, Danger]
 
-const sizes = [Small, Medium, Large, Icon]
+const sizes = [
+  ExtraSmall,
+  Small,
+  Medium,
+  Large,
+  Icon,
+  IconExtraSmall,
+  IconSmall,
+  IconLarge,
+]
 
 /// A medium button.
 pub fn button(
@@ -48,6 +65,10 @@ pub fn button(
 }
 
 /// A button of the given size.
+///
+/// These buttons do not submit a form; use `submit` for one that does.
+/// Passing `attribute.type_("submit")` instead would give the button two
+/// types, which a page and a live view resolve differently.
 pub fn sized(
   variant: Variant,
   size: Size,
@@ -56,6 +77,28 @@ pub fn sized(
 ) -> Element(msg) {
   html.button(
     [class(sized_class(variant, size)), attribute.type_("button"), ..attributes],
+    children,
+  )
+}
+
+/// A medium button that submits its form.
+pub fn submit(
+  variant: Variant,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  sized_submit(variant, Medium, attributes, children)
+}
+
+/// A button of the given size that submits its form.
+pub fn sized_submit(
+  variant: Variant,
+  size: Size,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  html.button(
+    [class(sized_class(variant, size)), attribute.type_("submit"), ..attributes],
     children,
   )
 }
@@ -128,7 +171,20 @@ pub fn sized_class(variant: Variant, size: Size) -> Class {
   }
   // Every size keeps the same line height and 1px border, so buttons of
   // one size line up whatever their variant.
+  let square = fn(side: String) {
+    [
+      css.justify_content("center"),
+      css.padding(rem(0.0)),
+      css.property("width", "calc(" <> side <> " + 2px)"),
+      css.property("height", "calc(" <> side <> " + 2px)"),
+    ]
+  }
   let dimensions = case size {
+    ExtraSmall -> [
+      css.padding_("0.125rem " <> tokens.space_2),
+      css.font_size(rem(0.75)),
+      css.gap(rem(0.25)),
+    ]
     Small -> [
       css.padding_(tokens.space_1 <> " " <> tokens.space_3),
       css.font_size(rem(0.875)),
@@ -141,13 +197,10 @@ pub fn sized_class(variant: Variant, size: Size) -> Class {
       css.padding_(tokens.space_3 <> " " <> tokens.space_6),
       css.font_size(rem(1.0)),
     ]
-    Icon -> [
-      css.justify_content("center"),
-      css.padding(rem(0.0)),
-      css.property("width", "calc(2.25rem + 2px)"),
-      css.property("height", "calc(2.25rem + 2px)"),
-      css.font_size(rem(1.0)),
-    ]
+    Icon -> [css.font_size(rem(1.0)), ..square("2.25rem")]
+    IconExtraSmall -> [css.font_size(rem(0.75)), ..square("1.375rem")]
+    IconSmall -> [css.font_size(rem(0.875)), ..square("1.75rem")]
+    IconLarge -> [css.font_size(rem(1.125)), ..square("2.75rem")]
   }
   css.class(
     list.flatten([

@@ -179,14 +179,9 @@ fn shell(
               }),
             ),
             html.noscript([], [
-              button.sized(
-                button.Outline,
-                button.Small,
-                [attribute.type_("submit")],
-                [
-                  text("Use"),
-                ],
-              ),
+              button.sized_submit(button.Outline, button.Small, [], [
+                text("Use"),
+              ]),
             ]),
           ]),
           button.theme_toggle([text("Light / dark")], from: "light", to: "dark"),

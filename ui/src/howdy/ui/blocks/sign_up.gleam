@@ -133,11 +133,9 @@ pub fn sign_up(
           ),
           message("terms", error("terms")),
         ]),
-        button.button(
-          button.Primary,
-          [attribute.type_("submit"), class(wide_class())],
-          [text("Create account")],
-        ),
+        button.submit(button.Primary, [class(wide_class())], [
+          text("Create account"),
+        ]),
       ],
     ),
     card.footer([], [

@@ -32,6 +32,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import howdy/controller.{type GuardedContext}
 import howdy/ui/behaviour
+import howdy/ui/direction
 import howdy/ui/internal/stylesheet
 import howdy/ui/live
 import howdy/ui/theme.{type Themes}
@@ -45,6 +46,7 @@ pub opaque type Page(msg) {
   Page(
     title: String,
     lang: String,
+    dir: Option(String),
     themes: Themes,
     theme: Option(String),
     head: List(Element(msg)),
@@ -60,6 +62,7 @@ pub fn new(title: String) -> Page(msg) {
   Page(
     title:,
     lang: "en",
+    dir: None,
     themes: theme.default_themes(),
     theme: None,
     head: [],
@@ -72,6 +75,18 @@ pub fn new(title: String) -> Page(msg) {
 /// Set the `lang` attribute of the root element.
 pub fn lang(page: Page(msg), lang: String) -> Page(msg) {
   Page(..page, lang:)
+}
+
+/// Which way the page's text runs. See `howdy/ui/direction`.
+pub fn direction(page: Page(msg), direction: direction.Direction) -> Page(msg) {
+  Page(
+    ..page,
+    dir: Some(case direction {
+      direction.Ltr -> "ltr"
+      direction.Rtl -> "rtl"
+      direction.Auto -> "auto"
+    }),
+  )
 }
 
 /// The themes this page offers. See `howdy/ui/theme`.
@@ -115,26 +130,33 @@ pub fn render(page: Page(msg)) -> Element(msg) {
     True -> [server_component.script(), live.script()]
     False -> []
   }
-  html.html([attribute.lang(page.lang), ..theme_attribute(page)], [
-    html.head(
-      [],
-      list.flatten([
-        [
-          html.meta([attribute.attribute("charset", "utf-8")]),
-          html.meta([
-            attribute.name("viewport"),
-            attribute.content("width=device-width, initial-scale=1"),
-          ]),
-          html.title([], page.title),
-        ],
-        styles(page),
-        page.head,
-        [behaviour.script()],
-        runtime,
-      ]),
-    ),
-    html.body([], page.body),
-  ])
+  let dir = case page.dir {
+    Some(dir) -> [attribute.attribute("dir", dir)]
+    None -> []
+  }
+  html.html(
+    [attribute.lang(page.lang), ..list.append(dir, theme_attribute(page))],
+    [
+      html.head(
+        [],
+        list.flatten([
+          [
+            html.meta([attribute.attribute("charset", "utf-8")]),
+            html.meta([
+              attribute.name("viewport"),
+              attribute.content("width=device-width, initial-scale=1"),
+            ]),
+            html.title([], page.title),
+          ],
+          styles(page),
+          page.head,
+          [behaviour.script()],
+          runtime,
+        ]),
+      ),
+      html.body([], page.body),
+    ],
+  )
 }
 
 /// The finished document as HTML, with the doctype.

@@ -41,15 +41,15 @@ pub fn group_class(orientation: Orientation) -> Class {
   let #(direction, joined_start, joined_end, overlap) = case orientation {
     Horizontal -> #(
       "row",
-      ["border-top-left-radius", "border-bottom-left-radius"],
-      ["border-top-right-radius", "border-bottom-right-radius"],
-      "margin-left",
+      ["border-start-start-radius", "border-end-start-radius"],
+      ["border-start-end-radius", "border-end-end-radius"],
+      "margin-inline-start",
     )
     Vertical -> #(
       "column",
-      ["border-top-left-radius", "border-top-right-radius"],
-      ["border-bottom-left-radius", "border-bottom-right-radius"],
-      "margin-top",
+      ["border-start-start-radius", "border-start-end-radius"],
+      ["border-end-start-radius", "border-end-end-radius"],
+      "margin-block-start",
     )
   }
   let square = fn(corners: List(String)) {

@@ -33,6 +33,8 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/order.{type Order}
+import howdy/ui/button
+import howdy/ui/menu
 import howdy/ui/style.{class}
 import howdy/ui/theme/tokens
 import lustre/attribute.{type Attribute}
@@ -109,6 +111,7 @@ pub opaque type DataTable(row, msg) {
     selection: Option(Selection(row, msg)),
     empty: List(Element(msg)),
     caption: List(Element(msg)),
+    hidden: List(String),
   )
 }
 
@@ -124,6 +127,7 @@ pub fn new(
     selection: None,
     empty: [text("No results.")],
     caption: [],
+    hidden: [],
   )
 }
 
@@ -170,6 +174,40 @@ pub fn caption(
   DataTable(..table, caption: children)
 }
 
+/// Leave out the columns with these keys, such as those a person has
+/// turned off with `columns_menu`.
+pub fn hide(
+  table: DataTable(row, msg),
+  keys: List(String),
+) -> DataTable(row, msg) {
+  DataTable(..table, hidden: keys)
+}
+
+/// A "Columns" button with a menu that turns each column on or off. `id`
+/// names the menu; `toggle` gives the attributes of a column's menu item,
+/// such as a click handler, given its key and whether it is shown now.
+/// Keep the hidden keys in your model and pass them to `hide`.
+pub fn columns_menu(
+  table: DataTable(row, msg),
+  id id: String,
+  label label: String,
+  toggle toggle: fn(String, Bool) -> List(Attribute(msg)),
+) -> Element(msg) {
+  html.div([], [
+    button.sized(button.Outline, button.Small, menu.trigger(id), [text(label)]),
+    menu.menu(
+      id,
+      [],
+      list.map(table.columns, fn(column) {
+        let shown = !list.contains(table.hidden, column.key)
+        menu.checkbox_item(shown, toggle(column.key, shown), [
+          text(column.header),
+        ])
+      }),
+    ),
+  ])
+}
+
 /// The rows as `table` shows them: sorted by its current sort.
 pub fn sorted_rows(table: DataTable(row, msg)) -> List(row) {
   case table.sort {
@@ -190,6 +228,13 @@ pub fn sorted_rows(table: DataTable(row, msg)) -> List(row) {
 
 pub fn view(table: DataTable(row, msg)) -> Element(msg) {
   let rows = sorted_rows(table)
+  let table =
+    DataTable(
+      ..table,
+      columns: list.filter(table.columns, fn(column) {
+        !list.contains(table.hidden, column.key)
+      }),
+    )
   let width =
     list.length(table.columns)
     + case table.selection {
@@ -399,11 +444,11 @@ pub fn caption_class() -> Class {
 pub fn head_class() -> Class {
   css.class([
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
-    css.text_align("left"),
+    css.text_align("start"),
     css.font_weight("500"),
     css.white_space("nowrap"),
     css.property("border-bottom", "1px solid " <> tokens.border),
-    css.selector("[data-numeric]", [css.text_align("right")]),
+    css.selector("[data-numeric]", [css.text_align("end")]),
   ])
 }
 
@@ -447,7 +492,7 @@ pub fn cell_class() -> Class {
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
     css.vertical_align("middle"),
     css.selector("[data-numeric]", [
-      css.text_align("right"),
+      css.text_align("end"),
       css.property("font-variant-numeric", "tabular-nums"),
     ]),
   ])

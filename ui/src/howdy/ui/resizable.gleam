@@ -11,10 +11,18 @@
 ////
 //// Sizes are shares of the group: give the panels sizes that add up to
 //// 100. A handle can be dragged, or focused and moved with the arrow keys,
-//// Home and End; screen readers hear the size of the panel before it. No
-//// panel shrinks below a tenth of the group.
+//// Home and End; screen readers hear the size of the panel before it.
+////
+//// No panel shrinks below a tenth of the group, or the share given with
+//// `minimum`. A `collapsible` panel folds away, and back, when the handle
+//// after it is double-clicked or focused and Enter pressed. With
+//// `remember`, sizes are kept in a cookie called `resizable-<id>`: read it
+//// with `sizes_from_cookie` and pass the sizes back to render the panels
+//// as they were left.
 
 import gleam/int
+import gleam/list
+import gleam/string
 import howdy/ui/style.{class}
 import howdy/ui/theme/tokens
 import lustre/attribute.{type Attribute}
@@ -63,6 +71,37 @@ pub fn panel(
     ],
     children,
   )
+}
+
+/// The smallest share a panel can shrink to, out of 100.
+pub fn minimum(share: Int) -> Attribute(msg) {
+  attribute.data("min", int.to_string(share))
+}
+
+/// Let a panel fold away with the handle after it.
+pub fn collapsible() -> Attribute(msg) {
+  attribute.data("collapsible", "")
+}
+
+/// Keep the group's sizes in a `resizable-<id>` cookie as they change.
+pub fn remember(id: String) -> Attribute(msg) {
+  attribute.data("howdy-remember", id)
+}
+
+/// Read sizes kept by `remember`, such as `30_70`. Returns `default` when
+/// the cookie is missing or does not have one size per panel.
+pub fn sizes_from_cookie(
+  value: String,
+  default default: List(Int),
+) -> List(Int) {
+  let sizes =
+    value
+    |> string.split("_")
+    |> list.filter_map(int.parse)
+  case list.length(sizes) == list.length(default) {
+    True -> sizes
+    False -> default
+  }
 }
 
 /// A handle between two panels. `label` names what it resizes.

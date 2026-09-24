@@ -18,9 +18,18 @@ pub fn h3(content: String) -> Element(msg) {
   html.h3([class(heading_class("1.25rem"))], [text(content)])
 }
 
+pub fn h4(content: String) -> Element(msg) {
+  html.h4([class(heading_class("1.125rem"))], [text(content)])
+}
+
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [heading_class("2rem"), heading_class("1.5rem"), heading_class("1.25rem")]
+  [
+    heading_class("2rem"),
+    heading_class("1.5rem"),
+    heading_class("1.25rem"),
+    heading_class("1.125rem"),
+  ]
 }
 
 pub fn heading_class(size: String) -> Class {

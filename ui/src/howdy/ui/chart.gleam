@@ -51,6 +51,13 @@ pub type Kind {
   Bar
   Line
   Area
+  /// Parts of a whole, as slices; `hole` is the inner radius as a share of
+  /// the outer, so `0.0` is a pie and about `0.6` a donut.
+  Pie(hole: Float)
+  /// Values out of `max`, as concentric rings.
+  Radial(max: Float)
+  /// Several measures around a circle, one polygon per series.
+  Radar
 }
 
 pub opaque type Chart {
@@ -62,6 +69,53 @@ pub opaque type Chart {
     colours: List(Int),
     format: fn(Float) -> String,
   )
+}
+
+/// Parts of a whole as slices, with each part's value and share in the
+/// legend. Use it for a few parts, six at most; to compare values, a bar
+/// chart reads better.
+pub fn pie(
+  title title: String,
+  labels labels: List(String),
+  values values: List(Float),
+) -> Chart {
+  Chart(
+    ..new(Pie(0.0), title, labels, [Series(title, values)]),
+    colours: list.index_map(labels, fn(_, index) { index + 1 }),
+  )
+}
+
+/// A pie with a hole, showing the total in the middle.
+pub fn donut(
+  title title: String,
+  labels labels: List(String),
+  values values: List(Float),
+) -> Chart {
+  Chart(..pie(title:, labels:, values:), kind: Pie(0.62))
+}
+
+/// Each value out of `max` as a ring, such as goals reached.
+pub fn radial(
+  title title: String,
+  labels labels: List(String),
+  values values: List(Float),
+  max max: Float,
+) -> Chart {
+  Chart(
+    ..new(Radial(max), title, labels, [Series(title, values)]),
+    colours: list.index_map(labels, fn(_, index) { index + 1 }),
+  )
+}
+
+/// Several measures, one per axis around the circle, for comparing the
+/// shape of a few series. `axes` name the measures; each series has one
+/// value per axis.
+pub fn radar(
+  title title: String,
+  axes axes: List(String),
+  series series: List(Series),
+) -> Chart {
+  new(Radar, title, axes, series)
 }
 
 /// Columns, grouped by label when there are several series.
@@ -196,6 +250,13 @@ fn pct(value: Float) -> String {
 // -- View --------------------------------------------------------------------
 
 pub fn view(chart: Chart) -> Element(msg) {
+  case chart.kind {
+    Pie(_) | Radial(_) | Radar -> polar_view(chart)
+    Bar | Line | Area -> cartesian_view(chart)
+  }
+}
+
+fn cartesian_view(chart: Chart) -> Element(msg) {
   let values = list.flat_map(chart.series, fn(series) { series.values })
   let scale = scale(values)
   let count = list.length(chart.labels)
@@ -291,8 +352,8 @@ fn legend(chart: Chart) -> Element(msg) {
         [class(legend_class())],
         list.index_map(chart.series, fn(series, index) {
           let shape = case chart.kind {
-            Line -> key_line_class()
-            Bar | Area -> key_box_class()
+            Line | Radar -> key_line_class()
+            Bar | Area | Pie(_) | Radial(_) -> key_box_class()
           }
           html.li([], [
             html.span(
@@ -328,7 +389,7 @@ fn drawing(chart: Chart, scale: Scale, count: Int) -> Element(msg) {
       ])
     })
   let lines = case chart.kind {
-    Bar -> []
+    Bar | Pie(_) | Radial(_) | Radar -> []
     Line | Area ->
       list.flatten(
         list.index_map(chart.series, fn(series, s) {
@@ -384,7 +445,7 @@ fn drawing(chart: Chart, scale: Scale, count: Int) -> Element(msg) {
 /// end only.
 fn bars(chart: Chart, scale: Scale, count: Int) -> Element(msg) {
   case chart.kind {
-    Line | Area -> element.none()
+    Line | Area | Pie(_) | Radial(_) | Radar -> element.none()
     Bar -> {
       let zero = y_of(scale, 0.0)
       html.div(
@@ -442,7 +503,7 @@ fn dot(x: Float, y: Float, colour: String) -> Element(msg) {
 
 fn end_dots(chart: Chart, scale: Scale, count: Int) -> Element(msg) {
   case chart.kind {
-    Bar -> element.none()
+    Bar | Pie(_) | Radial(_) | Radar -> element.none()
     Line | Area ->
       html.div(
         [],
@@ -566,7 +627,8 @@ fn column_view(
       ", ",
     )
   let marker = case chart.kind {
-    Bar -> html.span([class(highlight_class())], [])
+    Bar | Pie(_) | Radial(_) | Radar ->
+      html.span([class(highlight_class())], [])
     Line | Area ->
       html.span([], [
         html.span([class(crosshair_class())], []),
@@ -612,6 +674,346 @@ fn column_view(
       ]),
     ],
   )
+}
+
+// -- Polar charts --------------------------------------------------------------
+//
+// Pies, rings and radars are drawn at a fixed size, so their text never
+// scales; they shrink only on screens too narrow for them.
+
+const polar_size = 240.0
+
+fn polar_view(chart: Chart) -> Element(msg) {
+  let values = case chart.series {
+    [series, ..] -> series.values
+    [] -> []
+  }
+  let drawing = case chart.kind {
+    Pie(hole) -> pie_drawing(chart, values, hole)
+    Radial(max) -> radial_drawing(chart, values, max)
+    _ -> radar_drawing(chart)
+  }
+  let legend = case chart.kind {
+    Radar -> legend(chart)
+    _ -> part_legend(chart, values)
+  }
+  html.figure([class(figure_class())], [
+    html.div([class(polar_class())], [
+      html.svg(
+        [
+          class(polar_svg_class()),
+          attribute.attribute("viewBox", case chart.kind {
+            // Room around a radar for its axis names.
+            Radar -> "-60 -24 360 288"
+            _ -> "0 0 240 240"
+          }),
+          attribute.role("group"),
+          attribute.aria_label(chart.title),
+        ],
+        drawing,
+      ),
+      legend,
+    ]),
+    data_view(chart),
+  ])
+}
+
+/// A legend of the parts, each with its value and, for a pie, its share.
+fn part_legend(chart: Chart, values: List(Float)) -> Element(msg) {
+  let total = list.fold(values, 0.0, float.add)
+  html.ul(
+    [class(part_legend_class())],
+    list.index_map(list.zip(chart.labels, values), fn(pair, index) {
+      let #(label, value) = pair
+      let share = case chart.kind, total >. 0.0 {
+        Pie(_), True ->
+          " · " <> int.to_string(float.round(value /. total *. 100.0)) <> "%"
+        Radial(max), _ -> " of " <> chart.format(max)
+        _, _ -> ""
+      }
+      html.li([], [
+        html.span(
+          [
+            class(key_box_class()),
+            attribute.style("background", colour(chart, index)),
+          ],
+          [],
+        ),
+        html.span([class(part_name_class())], [text(label)]),
+        html.strong([], [text(chart.format(value))]),
+        html.span([class(part_name_class())], [text(share)]),
+      ])
+    }),
+  )
+}
+
+const pi = 3.141592653589793
+
+fn polar(angle: Float, radius: Float) -> #(Float, Float) {
+  // 0 is straight up, turning clockwise.
+  let radians = { angle -. 90.0 } *. pi /. 180.0
+  #(
+    polar_size /. 2.0 +. radius *. cosine(radians),
+    polar_size /. 2.0 +. radius *. sine(radians),
+  )
+}
+
+@external(erlang, "math", "cos")
+fn cosine(radians: Float) -> Float
+
+@external(erlang, "math", "sin")
+fn sine(radians: Float) -> Float
+
+fn point(at: #(Float, Float)) -> String {
+  n(at.0) <> "," <> n(at.1)
+}
+
+/// A slice from `from` to `to` degrees, between radii `inner` and `outer`.
+fn slice(from: Float, to: Float, inner: Float, outer: Float) -> String {
+  let large = case to -. from >. 180.0 {
+    True -> "1"
+    False -> "0"
+  }
+  let outer_arc =
+    "M "
+    <> point(polar(from, outer))
+    <> " A "
+    <> n(outer)
+    <> " "
+    <> n(outer)
+    <> " 0 "
+    <> large
+    <> " 1 "
+    <> point(polar(to, outer))
+  case inner >. 0.0 {
+    True ->
+      outer_arc
+      <> " L "
+      <> point(polar(to, inner))
+      <> " A "
+      <> n(inner)
+      <> " "
+      <> n(inner)
+      <> " 0 "
+      <> large
+      <> " 0 "
+      <> point(polar(from, inner))
+      <> " Z"
+    False ->
+      outer_arc
+      <> " L "
+      <> point(#(polar_size /. 2.0, polar_size /. 2.0))
+      <> " Z"
+  }
+}
+
+fn pie_drawing(
+  chart: Chart,
+  values: List(Float),
+  hole: Float,
+) -> List(Element(msg)) {
+  let total = list.fold(values, 0.0, float.add)
+  let outer = polar_size /. 2.0 -. 4.0
+  let inner = outer *. hole
+  let #(slices, _) =
+    list.index_map(list.zip(chart.labels, values), fn(pair, index) {
+      #(pair, index)
+    })
+    |> list.fold(#([], 0.0), fn(acc, item) {
+      let #(slices, at) = acc
+      let #(#(label, value), index) = item
+      let sweep = case total >. 0.0 {
+        True -> value /. total *. 360.0
+        False -> 0.0
+      }
+      // A whole circle is two halves; an arc cannot end where it starts.
+      let d = case sweep >=. 359.99 {
+        True ->
+          slice(0.0, 180.0, inner, outer)
+          <> " "
+          <> slice(180.0, 360.0, inner, outer)
+        False -> slice(at, at +. sweep, inner, outer)
+      }
+      let share = case total >. 0.0 {
+        True -> int.to_string(float.round(value /. total *. 100.0)) <> "%"
+        False -> "0%"
+      }
+      let part =
+        svg.g(
+          [
+            class(part_class()),
+            attribute.tabindex(0),
+            attribute.role("img"),
+            attribute.aria_label(
+              label <> ": " <> chart.format(value) <> ", " <> share,
+            ),
+          ],
+          [
+            svg.path([
+              attribute.attribute("d", d),
+              attribute.style("fill", colour(chart, index)),
+            ]),
+          ],
+        )
+      #([part, ..slices], at +. sweep)
+    })
+  let centre = case hole >. 0.0 {
+    True -> [
+      svg.text(
+        [
+          class(centre_value_class()),
+          attribute.attribute("x", "120"),
+          attribute.attribute("y", "118"),
+          attribute.attribute("text-anchor", "middle"),
+        ],
+        chart.format(total),
+      ),
+      svg.text(
+        [
+          class(centre_label_class()),
+          attribute.attribute("x", "120"),
+          attribute.attribute("y", "138"),
+          attribute.attribute("text-anchor", "middle"),
+        ],
+        "Total",
+      ),
+    ]
+    False -> []
+  }
+  list.append(list.reverse(slices), centre)
+}
+
+fn radial_drawing(
+  chart: Chart,
+  values: List(Float),
+  max: Float,
+) -> List(Element(msg)) {
+  let count = list.length(values)
+  let width = float.min(18.0, 90.0 /. int.to_float(int.max(count, 1)) -. 4.0)
+  list.index_map(list.zip(chart.labels, values), fn(pair, index) {
+    let #(label, value) = pair
+    let radius =
+      110.0 -. width /. 2.0 -. int.to_float(index) *. { width +. 4.0 }
+    let share = float.clamp(value /. float.max(max, 1.0e-9), 0.0, 1.0)
+    let circumference = 2.0 *. pi *. radius
+    let ring = fn(extra) {
+      svg.circle([
+        attribute.attribute("cx", "120"),
+        attribute.attribute("cy", "120"),
+        attribute.attribute("r", n(radius)),
+        attribute.attribute("fill", "none"),
+        attribute.attribute("stroke-width", n(width)),
+        ..extra
+      ])
+    }
+    svg.g(
+      [
+        class(part_class()),
+        attribute.tabindex(0),
+        attribute.role("img"),
+        attribute.aria_label(
+          label <> ": " <> chart.format(value) <> " of " <> chart.format(max),
+        ),
+      ],
+      [
+        ring([class(ring_track_class())]),
+        ring([
+          attribute.style("stroke", colour(chart, index)),
+          attribute.attribute("stroke-linecap", "round"),
+          attribute.attribute(
+            "stroke-dasharray",
+            n(share *. circumference) <> " " <> n(circumference),
+          ),
+          attribute.attribute("transform", "rotate(-90 120 120)"),
+        ]),
+      ],
+    )
+  })
+}
+
+fn radar_drawing(chart: Chart) -> List(Element(msg)) {
+  let count = int.max(list.length(chart.labels), 3)
+  let values = list.flat_map(chart.series, fn(series) { series.values })
+  let top = scale(values).high
+  let radius = 100.0
+  let angle = fn(index) { 360.0 /. int.to_float(count) *. int.to_float(index) }
+  let ring = fn(share) {
+    list.repeat(Nil, count)
+    |> list.index_map(fn(_, index) {
+      point(polar(angle(index), radius *. share))
+    })
+    |> string.join(" ")
+  }
+  let grid =
+    list.map([0.25, 0.5, 0.75, 1.0], fn(share) {
+      svg.polygon([
+        class(radar_grid_class()),
+        attribute.attribute("points", ring(share)),
+      ])
+    })
+  let spokes =
+    list.index_map(chart.labels, fn(label, index) {
+      let end = polar(angle(index), radius)
+      let at = polar(angle(index), radius +. 14.0)
+      let anchor = case at.0 {
+        x if x <. 110.0 -> "end"
+        x if x >. 130.0 -> "start"
+        _ -> "middle"
+      }
+      svg.g([], [
+        svg.line([
+          class(radar_grid_class()),
+          attribute.attribute("x1", "120"),
+          attribute.attribute("y1", "120"),
+          attribute.attribute("x2", n(end.0)),
+          attribute.attribute("y2", n(end.1)),
+        ]),
+        svg.text(
+          [
+            class(radar_label_class()),
+            attribute.attribute("x", n(at.0)),
+            attribute.attribute("y", n(at.1)),
+            attribute.attribute("text-anchor", anchor),
+            attribute.attribute("dominant-baseline", "middle"),
+          ],
+          label,
+        ),
+      ])
+    })
+  let shapes =
+    list.index_map(chart.series, fn(series, s) {
+      let points =
+        list.index_map(series.values, fn(value, index) {
+          point(polar(angle(index), radius *. value /. float.max(top, 1.0e-9)))
+        })
+        |> string.join(" ")
+      let spoken =
+        series.name
+        <> ": "
+        <> string.join(
+          list.map2(chart.labels, series.values, fn(label, value) {
+            label <> " " <> chart.format(value)
+          }),
+          ", ",
+        )
+      svg.g(
+        [
+          class(part_class()),
+          attribute.tabindex(0),
+          attribute.role("img"),
+          attribute.aria_label(spoken),
+        ],
+        [
+          svg.polygon([
+            class(radar_shape_class()),
+            attribute.attribute("points", points),
+            attribute.style("stroke", colour(chart, s)),
+            attribute.style("fill", colour(chart, s)),
+          ]),
+        ],
+      )
+    })
+  list.flatten([grid, [svg.g([attribute.aria_hidden(True)], spokes)], shapes])
 }
 
 /// The numbers as a table, behind "Show data".
@@ -684,6 +1086,17 @@ fn group_thousands(digits: String) -> String {
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
   [
+    polar_class(),
+    polar_svg_class(),
+    part_legend_class(),
+    part_name_class(),
+    part_class(),
+    centre_value_class(),
+    centre_label_class(),
+    ring_track_class(),
+    radar_grid_class(),
+    radar_label_class(),
+    radar_shape_class(),
     figure_class(),
     chart_class(),
     gutter_class(),
@@ -726,6 +1139,8 @@ pub fn figure_class() -> Class {
 
 pub fn chart_class() -> Class {
   css.class([
+    // Axes run left to right, as charts usually do in right-to-left text.
+    css.property("direction", "ltr"),
     css.position("relative"),
     css.font_family(tokens.font_body),
     css.font_size_("12px"),
@@ -1008,7 +1423,7 @@ pub fn table_class() -> Class {
     css.property("font-variant-numeric", "tabular-nums"),
     css.selector(" th", cell_styles()),
     css.selector(" td", cell_styles()),
-    css.selector(" th[scope=\"row\"]", [css.text_align("left")]),
+    css.selector(" th[scope=\"row\"]", [css.text_align("start")]),
   ])
 }
 
@@ -1016,14 +1431,113 @@ fn cell_styles() -> List(css.Style) {
   [
     css.padding_(tokens.space_1 <> " " <> tokens.space_3),
     css.property("border-bottom", "1px solid " <> tokens.border),
-    css.text_align("right"),
+    css.text_align("end"),
   ]
 }
 
 pub fn caption_class() -> Class {
   css.class([
-    css.text_align("left"),
+    css.text_align("start"),
     css.padding_("0 0 " <> tokens.space_1),
     css.color(tokens.text_muted),
+  ])
+}
+
+pub fn polar_class() -> Class {
+  css.class([
+    css.display("flex"),
+    css.flex_wrap("wrap"),
+    css.align_items("center"),
+    css.gap(rem(1.5)),
+  ])
+}
+
+pub fn polar_svg_class() -> Class {
+  css.class([
+    css.display("block"),
+    css.property("width", "min(100%, 15rem)"),
+    css.height_("auto"),
+    css.font_family(tokens.font_body),
+    css.overflow("visible"),
+    // Pointing at one part fades the others.
+    css.selector(":has(g[tabindex]:hover) g[tabindex]:not(:hover)", [
+      css.property("opacity", "0.35"),
+    ]),
+    css.selector(
+      ":has(g[tabindex]:focus-visible) g[tabindex]:not(:focus-visible)",
+      [
+        css.property("opacity", "0.35"),
+      ],
+    ),
+  ])
+}
+
+pub fn part_legend_class() -> Class {
+  css.class([
+    css.display("grid"),
+    css.grid_template_columns("auto 1fr auto auto"),
+    css.align_items("center"),
+    css.column_gap(rem(0.5)),
+    css.row_gap(rem(0.375)),
+    css.margin(rem(0.0)),
+    css.padding(rem(0.0)),
+    css.list_style("none"),
+    css.font_size(rem(0.875)),
+    css.property("font-variant-numeric", "tabular-nums"),
+    css.selector(" > li", [css.display("contents")]),
+  ])
+}
+
+pub fn part_name_class() -> Class {
+  css.class([css.color(tokens.text_muted)])
+}
+
+pub fn part_class() -> Class {
+  css.class([
+    css.outline("none"),
+    css.transition("opacity 120ms"),
+    css.selector(" path", [
+      css.property("stroke", tokens.surface),
+      css.property("stroke-width", "2"),
+    ]),
+    css.selector(":focus-visible", [
+      css.property("filter", "drop-shadow(0 0 2px " <> tokens.focus <> ")"),
+    ]),
+  ])
+}
+
+pub fn centre_value_class() -> Class {
+  css.class([
+    css.property("fill", tokens.text),
+    css.font_size_("22px"),
+    css.font_weight("600"),
+  ])
+}
+
+pub fn centre_label_class() -> Class {
+  css.class([css.property("fill", tokens.text_muted), css.font_size_("11px")])
+}
+
+pub fn ring_track_class() -> Class {
+  css.class([css.property("stroke", tokens.muted)])
+}
+
+pub fn radar_grid_class() -> Class {
+  css.class([
+    css.property("fill", "none"),
+    css.property("stroke", tokens.border),
+    css.property("stroke-width", "1"),
+  ])
+}
+
+pub fn radar_label_class() -> Class {
+  css.class([css.property("fill", tokens.text_muted), css.font_size_("11px")])
+}
+
+pub fn radar_shape_class() -> Class {
+  css.class([
+    css.property("fill-opacity", "0.1"),
+    css.property("stroke-width", "2"),
+    css.property("stroke-linejoin", "round"),
   ])
 }

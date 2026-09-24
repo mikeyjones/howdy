@@ -139,6 +139,27 @@ pub fn on_value(name: String, message: fn(String) -> msg) -> Attribute(msg) {
   |> server_component.include(["target.name", "target.value"])
 }
 
+/// Hear every value of a control that holds several, such as
+/// `howdy/ui/command.multiple_combobox` called `name`, each time the set
+/// changes.
+pub fn on_values(
+  name: String,
+  message: fn(List(String)) -> msg,
+) -> Attribute(msg) {
+  event.on("howdy-values", {
+    use field <- decode.subfield(["detail", "name"], decode.string)
+    use values <- decode.subfield(
+      ["detail", "values"],
+      decode.list(decode.string),
+    )
+    case field == name {
+      True -> decode.success(message(values))
+      False -> decode.failure(message(values), "a change to " <> name)
+    }
+  })
+  |> server_component.include(["detail.name", "detail.values"])
+}
+
 /// Name the document from a live view. When the outlet mounts a view that
 /// contains a title, the document title changes to match, so history
 /// entries are named after the page they lead to. Put it anywhere in the

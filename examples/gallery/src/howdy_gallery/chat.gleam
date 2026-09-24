@@ -154,7 +154,7 @@ fn view(model: Model) -> Element(Msg) {
           attribute.autocomplete("off"),
           event.on_input(Draft),
         ]),
-        ui.button(Primary, [attribute.type_("submit")], [text("Send")]),
+        ui.submit_button(Primary, [], [text("Send")]),
       ],
     ),
   ])
@@ -165,14 +165,22 @@ fn message(message: Message) -> Element(Msg) {
   case message.author {
     Me ->
       html.div([id], [
-        ui.chat_message(Outgoing, avatar: element.none(), header: [], content: [
-          ui.chat_bubble(Outgoing, [text(message.text)]),
-        ]),
+        ui.chat_message(
+          Outgoing,
+          attributes: [],
+          avatar: element.none(),
+          header: [],
+          content: [
+            ui.chat_bubble(Outgoing, [text(message.text)]),
+          ],
+          footer: [],
+        ),
       ])
     Bot ->
       html.div([id], [
         ui.chat_message(
           Incoming,
+          attributes: [],
           avatar: ui.avatar_initials("HB"),
           header: [text("Howdy bot")],
           content: [
@@ -183,6 +191,7 @@ fn message(message: Message) -> Element(Msg) {
               },
             ]),
           ],
+          footer: [],
         ),
       ])
   }

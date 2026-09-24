@@ -131,52 +131,55 @@ re-exports them. Every one is a Sketch class built from tokens.
 
 | Module | Components |
 | --- | --- |
-| `heading`, `typography` | `h1`–`h3`, `p`, `muted`, `link` |
-| `button` | `button` in `Primary`, `Secondary`, `Outline`, `Ghost`, `Link` and `Danger`; `sized_button` in `Small`, `Medium`, `Large` and `Icon`; `theme_toggle` |
+| `heading`, `typography` | `h1`–`h4`, `p`, `muted`, `link`, `prose` (styles plain elements such as rendered Markdown, in three sizes) |
+| `button` | `button` in `Primary`, `Secondary`, `Outline`, `Ghost`, `Link` and `Danger`; `sized_button` in `ExtraSmall`, `Small`, `Medium`, `Large`, `Icon`, `IconExtraSmall`, `IconSmall` and `IconLarge`; `submit_button` for one that submits its form (don't pass `type="submit"` to `button`: a page and a live view resolve two types differently); `theme_toggle` |
 | `input` | `input`, `textarea`, `native_select`, `label` |
 | `field` | `field`, `field_description`, `field_error`, `fieldset` |
 | `checkbox` | `checkbox`, `radio`, `choice` (a control with its label), `radio_group` |
 | `layout` | `container`, `stack`, `row`, `separator` |
-| `card` | `card`, `card_header`, `card_title`, `card_description`, `card_action`, `card_content`, `card_footer` |
+| `card` | `card` (or `card.sized` for `Compact`), `card_header`, `card_title`, `card_description`, `card_action`, `card_content`, `card_footer` |
 | `badge` | `badge` in `Primary`, `Secondary`, `Outline` and `Danger` |
 | `alert` | `alert` in `Info` and `Danger`, `alert_title`, `alert_description` |
 | `table` | `table`, `table_caption`, `table_header`, `table_body`, `table_footer`, `table_row`, `table_head`, `table_cell` |
 | `loading` | `skeleton`, `spinner` |
 | `dialog` | `dialog`, `alert_dialog`, `sheet`, `dialog_trigger`, `dialog_close`, `dialog_header`, `dialog_title`, `dialog_description`, `dialog_footer` |
+| `drawer` | `drawer`, `drawer_trigger`: a bottom panel dragged by its handle, with `drawer.snap_points` |
+| `direction` | `direction` for a right-to-left part of a page; `page.direction` for the whole page |
 | `popover` | `popover`, `popover_trigger`, `popover_close` |
 | `tooltip` | `tooltip`, `tooltip_trigger` |
-| `menu` | `menu`, `menu_trigger`, `menu_item`, `menu_link`, `menu_checkbox_item`, `menu_label`, `menu_separator` |
-| `tabs` | `tabs`, `tab` |
+| `menu` | `menu`, `menu_trigger`, `menu_item`, `menu_link`, `menu_checkbox_item`, `menu_radio_group`, `menu_radio_item`, `menu_submenu`, `menu_label`, `menu_separator` |
+| `tabs` | `tabs`, `tab`; `tabs.styled` for `Vertical` and the underlined `Line` look |
 | `accordion` | `accordion`, `accordion_item`, `collapsible` |
 | `select` | `select`, `select_item`, `select_group` (a styled list; `native_select` is the browser's own) |
-| `toast` | `toast_region`, `toast` in `Info` and `Danger`, `toast_title`, `toast_description`, `toast_close`; `toast.duration`, `toast.persistent` |
-| `sidebar` | `sidebar_layout`, `sidebar`, `sidebar_trigger`, `sidebar_header`, `sidebar_content`, `sidebar_footer`, `sidebar_group`, `sidebar_link`, `sidebar_button` |
+| `toast` | `toast_region`, `toast` in `Info`, `Success`, `Loading` and `Danger`, `toast_title`, `toast_description`, `toast_close`; `toast.duration`, `toast.persistent`; `toast.queue` for a live view's model: the browser reports when a toast fades or is held open, so cleanup never removes one being read |
+| `sidebar` | `sidebar_layout`, `sidebar`, `sidebar_trigger`, `sidebar_header`, `sidebar_content`, `sidebar_footer`, `sidebar_group`, `sidebar_link`, `sidebar_button`; `sidebar.styled_layout` for a `Rail` or `Floating`/`Inset` sidebar, `sidebar.icon_link`, `sidebar.submenu` |
 | `pagination` | `pagination`; `pagination.live_pagination` for live views |
-| `command` | `command`, `command_group`, `command_item`, `command_link`, `command_empty`, `command_dialog` (with a ⌘K shortcut), `combobox`, `combobox_option` |
-| `calendar` | `calendar.new(...)` built up with `selected`, `today`, `disabled`, `navigation` and `name`, shown with `view` or as a date `picker` |
-| `data_table` | `data_table.new(columns, rows)` with `sort`, `selectable`, `empty` and `caption` |
-| `chart` | `chart.bar`, `chart.line` and `chart.area`, shown with `view` |
+| `command` | `command`, `command_group`, `command_item`, `command_link`, `command_empty`, `command_dialog` (with a ⌘K shortcut), `combobox`, `multiple_combobox` (chips, one form field per value; `live.on_values` in a live view), `combobox_option` |
+| `calendar` | `calendar.new(...)` built up with `selected`, `range`, `multiple`, `months`, `today`, `disabled`, `sunday_first`, `locale`, `navigation` and `name`, shown with `view` or as a date `picker` |
+| `data_table` | `data_table.new(columns, rows)` with `sort`, `selectable`, `hide`, `empty` and `caption`; `columns_menu` |
+| `chart` | `chart.bar`, `line`, `area`, `pie`, `donut`, `radial` and `radar`, shown with `view` |
 | `avatar` | `avatar` with initials behind the picture, `avatar_initials` |
-| `progress` | `progress` |
+| `progress` | `progress`, `progress_indeterminate` |
 | `effects` | `scroll_fade`, `shimmer` |
-| `chat` | `chat_conversation`, `chat_message`, `chat_bubble`, `chat_note`; `chat.reactions`, `chat.reaction` |
-| `attachment` | `attachment`, with an optional upload bar |
+| `chat` | `chat_conversation`, `chat_message`, `chat_bubble`, `chat_note`; `chat.conversation_with` (a jump-to-newest button), `remember`, `start_at`, `on_older` (load history as the reader scrolls back, keeping their place), `styled_bubble`, `tinted_note`, `status`, `jump`, `reactions`, `reaction` |
+| `attachment` | `attachment` (uploading, processing, failed or done, with a thumbnail and actions), `attachment_group`; `attachment.styled` for `Compact` and `Tile` |
 | `kbd` | `kbd`, `shortcut` |
 | `button_group` | `button_group` |
 | `toggle` | `toggle`, `toggle_group` (single or multiple) |
-| `switch`, `slider` | `switch`, `slider` (the browser's own controls, themed) |
-| `input_group` | `input_group`, `input_group_input`, `input_group_addon` |
-| `input_otp` | `input_otp`: one input drawn as a box per character |
+| `switch`, `slider` | `switch`, `slider` (the browser's own controls, themed); `slider.range` with two thumbs, `slider.thumbs` with any number, either way up; `slider.vertical` |
+| `input_group` | `input_group`, `input_group_input`, `input_group_addon`; `input_group.textarea`, `block_start`, `block_end` |
+| `input_otp` | `input_otp`: one input drawn as a box per character; `input_otp.grouped` for `1234-5678` |
 | `aspect_ratio`, `scroll_area` | `aspect_ratio`, `scroll_area` |
-| `resizable` | `resizable_group`, `resizable_panel`, `resizable_handle` |
+| `resizable` | `resizable_group`, `resizable_panel`, `resizable_handle`; `resizable.minimum`, `collapsible`, `remember` |
 | `context_menu` | `context_menu_area`, `context_menu`, with `menu_item`s |
 | `menubar` | `menubar`, `menubar_button`, with `menu`s |
 | `hover_card` | `hover_card`, `hover_card_trigger` |
 | `breadcrumb` | `breadcrumb`, `breadcrumb_link`, `breadcrumb_page`, `breadcrumb_ellipsis` |
 | `navigation_menu` | `navigation_menu`, `navigation_link`, `navigation_panel`, `navigation_panel_link` |
-| `carousel` | `carousel`, `carousel_slide` |
+| `carousel` | `carousel`, `carousel_slide`; `carousel.styled` for `Vertical` and looping, `carousel.autoplay` (with a pause button, still for reduced motion), `carousel.on_change` |
 | `item` | `item_group`, `item`, `item_link` |
 | `empty` | `empty` |
+| `questionnaire` | `questionnaire.question`s asked one at a time with back, skip and next, checked as they go; works as a plain form or in a live view |
 
 `calendar`, `data_table` and `chart` are builders with several options, so
 use them from their own modules rather than through `howdy/ui`.
@@ -548,3 +551,16 @@ rejects path dependencies.
 cd ui
 gleam test
 ```
+
+The interactive behaviour is tested in a real browser. With the gallery
+running (`cd examples/gallery && gleam run`), drive Chromium through its
+DevTools protocol; it needs Node 22 or later and nothing else:
+
+```sh
+node ui/browser_test/run.mjs          # every test
+node ui/browser_test/run.mjs drawer   # the ones whose name contains "drawer"
+```
+
+Most tests open a component's gallery preview. The live ones use the
+gallery's `/lab` page, a live view that shows the server's view of each
+component beside it, and `/survey`, a questionnaire posted as a plain form.

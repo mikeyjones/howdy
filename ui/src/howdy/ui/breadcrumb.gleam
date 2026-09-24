@@ -72,6 +72,7 @@ pub fn item_class() -> Class {
       css.content("\"›\""),
       css.color(tokens.text_muted),
     ]),
+    css.selector(":dir(rtl):not(:first-child)::before", [css.content("\"‹\"")]),
   ])
 }
 

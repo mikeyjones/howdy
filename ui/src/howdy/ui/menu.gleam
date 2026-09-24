@@ -88,9 +88,9 @@ pub fn link(
   )
 }
 
-/// An item that turns a setting on or off, with a tick when it is on. The
-/// menu does not change `checked` itself: update it when the item is
-/// clicked.
+/// An item that turns a setting on or off, with a tick when it is on.
+/// Choosing it flips the tick in the browser; a live view that keeps the
+/// setting should update it from the item's click, so the two agree.
 pub fn checkbox_item(
   checked: Bool,
   attributes: List(Attribute(msg)),
@@ -112,6 +112,73 @@ pub fn checkbox_item(
   )
 }
 
+/// Items of which exactly one is chosen, such as a sort order. Label the
+/// group; it is announced before its items.
+pub fn radio_group(label: String, items: List(Element(msg))) -> Element(msg) {
+  html.div([attribute.role("group"), attribute.aria_label(label)], items)
+}
+
+/// One choice in a `radio_group`, with a dot when it is the chosen one.
+/// Choosing it moves the dot in the browser; update your own state from
+/// its click too.
+pub fn radio_item(
+  checked: Bool,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  html.button(
+    [
+      class(item_class()),
+      attribute.type_("button"),
+      attribute.role("menuitemradio"),
+      attribute.aria_checked(case checked {
+        True -> "true"
+        False -> "false"
+      }),
+      attribute.tabindex(-1),
+      ..attributes
+    ],
+    children,
+  )
+}
+
+/// An item that opens a menu of its own beside it: with the right arrow,
+/// Enter, a click, or by pointing at it. The left arrow or Escape closes
+/// it again. `id` must be unique in the document.
+pub fn submenu(
+  id: String,
+  label label: List(Element(msg)),
+  items items: List(Element(msg)),
+) -> Element(msg) {
+  // The submenu sits inside its parent, so opening it keeps the parent open.
+  html.div([attribute.role("none")], [
+    html.button(
+      [
+        class(item_class()),
+        attribute.type_("button"),
+        attribute.role("menuitem"),
+        attribute.aria_haspopup("menu"),
+        attribute.tabindex(-1),
+        attribute.attribute("popovertarget", id),
+        attribute.data("howdy-submenu-trigger", ""),
+        attribute.style("anchor-name", anchor_name(id)),
+      ],
+      label,
+    ),
+    html.div(
+      [
+        class(menu_class()),
+        class(submenu_class()),
+        attribute.id(id),
+        attribute.popover("auto"),
+        attribute.role("menu"),
+        attribute.style("position-anchor", anchor_name(id)),
+      ],
+      items,
+    ),
+  ])
+}
+
 /// A heading for the items after it.
 pub fn label(children: List(Element(msg))) -> Element(msg) {
   html.div([class(label_class()), attribute.role("presentation")], children)
@@ -123,7 +190,13 @@ pub fn separator() -> Element(msg) {
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [menu_class(), item_class(), label_class(), separator_class()]
+  [
+    menu_class(),
+    submenu_class(),
+    item_class(),
+    label_class(),
+    separator_class(),
+  ]
 }
 
 pub fn menu_class() -> Class {
@@ -158,7 +231,7 @@ pub fn item_class() -> Class {
     css.font_family(tokens.font_body),
     css.font_size(rem(0.875)),
     css.line_height("1.25"),
-    css.text_align("left"),
+    css.text_align("start"),
     css.text_decoration("none"),
     css.cursor("pointer"),
     css.property("user-select", "none"),
@@ -170,15 +243,44 @@ pub fn item_class() -> Class {
       css.cursor("default"),
       css.property("pointer-events", "none"),
     ]),
-    // A checkbox item keeps room for its tick, so labels line up.
+    // Checkbox and radio items keep room for their mark, so labels line up.
     css.selector("[role=\"menuitemcheckbox\"]", [
-      css.property("padding-left", "1.75rem"),
+      css.property("padding-inline-start", "1.75rem"),
       css.position("relative"),
     ]),
-    css.selector("[aria-checked=\"true\"]::before", [
+    css.selector("[role=\"menuitemradio\"]", [
+      css.property("padding-inline-start", "1.75rem"),
+      css.position("relative"),
+    ]),
+    css.selector("[role=\"menuitemradio\"][aria-checked=\"true\"]::before", [
       css.content("\"\""),
       css.position("absolute"),
-      css.property("left", "0.7rem"),
+      css.property("inset-inline-start", "0.6rem"),
+      css.property("top", "50%"),
+      css.property("width", "0.4rem"),
+      css.property("height", "0.4rem"),
+      css.property("border-radius", "999px"),
+      css.background("currentColor"),
+      css.transform_("translateY(-50%)"),
+    ]),
+    // A submenu's item ends with a chevron pointing the way it opens.
+    css.selector("[aria-haspopup=\"menu\"]::after", [
+      css.content("\"\""),
+      css.property("margin-inline-start", "auto"),
+      css.property("width", "0.4rem"),
+      css.property("height", "0.4rem"),
+      css.property("border-right", "2px solid " <> tokens.text_muted),
+      css.property("border-bottom", "2px solid " <> tokens.text_muted),
+      css.transform_("rotate(-45deg)"),
+    ]),
+    css.selector(":dir(rtl)[aria-haspopup=\"menu\"]::after", [
+      css.transform_("rotate(135deg)"),
+    ]),
+    css.selector("[aria-expanded=\"true\"]", [css.background(tokens.muted)]),
+    css.selector("[role=\"menuitemcheckbox\"][aria-checked=\"true\"]::before", [
+      css.content("\"\""),
+      css.position("absolute"),
+      css.property("inset-inline-start", "0.7rem"),
       css.property("top", "45%"),
       css.property("width", "0.3rem"),
       css.property("height", "0.55rem"),
@@ -186,6 +288,16 @@ pub fn item_class() -> Class {
       css.property("border-bottom", "2px solid currentColor"),
       css.transform_("translateY(-50%) rotate(45deg)"),
     ]),
+  ])
+}
+
+/// A submenu opens beside its item, or on the other side if there is no
+/// room.
+pub fn submenu_class() -> Class {
+  css.class([
+    css.margin_("0 0.25rem"),
+    css.property("position-area", "inline-end span-block-end"),
+    css.property("position-try-fallbacks", "flip-inline, flip-block"),
   ])
 }
 

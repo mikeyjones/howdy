@@ -85,11 +85,7 @@ pub fn sign_in(
             text("Keep me signed in"),
           ]),
         ]),
-        button.button(
-          button.Primary,
-          [attribute.type_("submit"), class(wide_class())],
-          [text("Sign in")],
-        ),
+        button.submit(button.Primary, [class(wide_class())], [text("Sign in")]),
       ],
     ),
     card.footer([], [

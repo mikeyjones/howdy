@@ -55,6 +55,8 @@ const watched = new WeakSet();
 const tooltips = new WeakMap();
 // Popovers closing because another is taking over, so focus stays put.
 const handingOver = new WeakSet();
+// Popovers opened by pointing, which should not take focus.
+const quiet = new WeakSet();
 
 const byId = (node, id) => (id ? node.getRootNode().getElementById(id) : null);
 const inPath = (event, selector) =>
@@ -62,12 +64,29 @@ const inPath = (event, selector) =>
 const enabled = (container, selector) =>
   [...container.querySelectorAll(selector)].filter((el) => !el.matches(':disabled, [aria-disabled=true]'));
 const isOpen = (popover) => popover.matches(':popover-open');
+// A menu's or listbox's own items, not those of a submenu inside it.
+const ownItems = (popup) =>
+  enabled(popup, '[role^=menuitem], [role=option]').filter((el) => el.closest('[role=menu], [role=listbox]') === popup);
+// The menu a submenu, or its submenu, belongs to.
+const outermost = (el) => {
+  let menu = el.closest('[role=menu][popover]');
+  while (menu?.parentElement?.closest('[role=menu][popover]')) menu = menu.parentElement.closest('[role=menu][popover]');
+  return menu;
+};
 const wide = matchMedia('(min-width: 768px)');
 // The document and the shadow roots of the live views on it.
 const roots = () => [
   document,
   ...[...document.querySelectorAll('lustre-server-component')].map((host) => host.shadowRoot).filter(Boolean),
 ];
+// Left and right as the reader sees them: swapped in right-to-left text.
+const rtl = (el) => getComputedStyle(el).direction === 'rtl';
+const logical = (key, el) => {
+  if (!rtl(el)) return key;
+  if (key === 'ArrowLeft') return 'ArrowRight';
+  if (key === 'ArrowRight') return 'ArrowLeft';
+  return key;
+};
 const deepFocus = () => {
   let focused = document.activeElement;
   while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
@@ -103,7 +122,9 @@ const watch = (popover) => {
   });
   popover.addEventListener('toggle', (event) => {
     const opener = openers.get(popover);
-    if (opener?.closest('[role=menubar]')) opener.setAttribute('aria-expanded', String(event.newState === 'open'));
+    if (opener?.matches('[role=menubar] > *, [data-howdy-submenu-trigger]')) {
+      opener.setAttribute('aria-expanded', String(event.newState === 'open'));
+    }
     // Browsers put focus back on the shadow host, not the trigger, when a
     // popover in a live view closes, so put it back ourselves.
     if (event.newState === 'closed') {
@@ -113,8 +134,9 @@ const watch = (popover) => {
       return;
     }
     place(popover, openers.get(popover));
+    if (quiet.delete(popover)) return;
     if (popover.matches('[role=menu], [role=listbox]')) {
-      const items = enabled(popover, '[role^=menuitem], [role=option]');
+      const items = ownItems(popover);
       (items.find((el) => el.getAttribute('aria-selected') === 'true') || items[0])?.focus();
       return;
     }
@@ -161,29 +183,113 @@ const setValue = (input, value) => {
 // A select, combobox or date picker: show the choice, close, keep the value.
 const settle = (root, value, label, from) => {
   setText(root.querySelector('[data-howdy-select-value]'), label);
-  root.querySelector(':scope > button').removeAttribute('data-placeholder');
+  root.querySelector('[data-howdy-select-trigger]').removeAttribute('data-placeholder');
+  const clear = root.querySelector('[data-howdy-select-clear]');
+  if (clear) clear.hidden = false;
   close(from.closest('[popover]'));
   setValue(root.querySelector(':scope > input'), value);
+};
+
+// Show whatever options are chosen: their labels, or the placeholder. A
+// multiple combobox shows chips instead, and sends one field per value by
+// enabling that value's hidden input.
+const showChosen = (root) => {
+  const chosen = [...root.querySelectorAll('[role=option][aria-selected=true]')];
+  if (root.hasAttribute('data-multiple')) {
+    const values = chosen.map((o) => o.dataset.value);
+    for (const chip of root.querySelectorAll('[data-howdy-chip]')) chip.hidden = !values.includes(chip.dataset.value);
+    for (const input of root.querySelectorAll(':scope > input[data-howdy-choice]')) input.disabled = !values.includes(input.value);
+    root.querySelector('[data-howdy-select-trigger]').toggleAttribute('data-placeholder', !values.length);
+    const clear = root.querySelector('[data-howdy-select-clear]');
+    if (clear) clear.hidden = !values.length;
+    root.dispatchEvent(new CustomEvent('howdy-values', { bubbles: true, composed: true, detail: { name: root.dataset.name, values } }));
+    return;
+  }
+  const value = root.querySelector('[data-howdy-select-value]');
+  setText(value, chosen.length ? chosen.map((o) => o.textContent.trim()).join(', ') : value.dataset.howdyPlaceholder);
+  root.querySelector('[data-howdy-select-trigger]').toggleAttribute('data-placeholder', !chosen.length);
+  const clear = root.querySelector('[data-howdy-select-clear]');
+  if (clear) clear.hidden = !chosen.length;
+  setValue(root.querySelector(':scope > input'), chosen.map((o) => o.dataset.value).join(','));
 };
 
 const choose = (option) => {
   if (option.matches('[aria-disabled=true]')) return;
   const root = option.closest('[data-howdy-select]');
+  // Choosing in a multiple combobox toggles the option and stays open.
+  if (root.hasAttribute('data-multiple')) {
+    option.setAttribute('aria-selected', String(option.getAttribute('aria-selected') !== 'true'));
+    return showChosen(root);
+  }
   for (const other of root.querySelectorAll('[role=option]')) {
     other.setAttribute('aria-selected', String(other === option));
   }
   settle(root, option.dataset.value, option.textContent.trim(), option);
 };
 
+// A day chosen in a calendar: one date, the start or end of a range, or one
+// of several dates, kept in the hidden input as the server expects it.
 const pickDay = (day) => {
   const calendar = day.closest('[data-howdy-calendar]');
-  for (const other of calendar.querySelectorAll('[data-date]')) {
-    other.setAttribute('aria-pressed', String(other === day));
-    other.tabIndex = other === day ? 0 : -1;
-  }
   const picker = day.closest('[data-howdy-select]');
-  if (picker) settle(picker, day.dataset.date, day.dataset.label, day);
-  else setValue(calendar.querySelector(':scope > input'), day.dataset.date);
+  const input = (picker || calendar).querySelector(':scope > input');
+  const mode = calendar.dataset.mode || 'single';
+  const date = day.dataset.date;
+  const days = [...calendar.querySelectorAll('[data-date]')];
+  const mark = (chosen, from, to) => {
+    for (const other of days) {
+      const it = other.dataset.date;
+      other.setAttribute('aria-pressed', String(chosen.includes(it)));
+      other.toggleAttribute('data-in-range', Boolean(from && to && it > from && it < to));
+      other.tabIndex = other === day ? 0 : -1;
+    }
+  };
+  if (mode === 'multiple') {
+    const chosen = new Set((input?.value || '').split(',').filter(Boolean));
+    if (chosen.has(date)) chosen.delete(date);
+    else chosen.add(date);
+    const value = [...chosen].sort();
+    mark(value, null, null);
+    if (picker) {
+      const labels = value.map((it) => days.find((d) => d.dataset.date === it)?.dataset.label || it);
+      setText(picker.querySelector('[data-howdy-select-value]'), labels.length ? labels.join(', ') : picker.querySelector('[data-howdy-select-value]').dataset.howdyPlaceholder);
+      picker.querySelector('[data-howdy-select-trigger]').toggleAttribute('data-placeholder', !labels.length);
+    }
+    setValue(input, value.join(','));
+    return;
+  }
+  if (mode === 'range') {
+    let [from, to] = (input?.value || '/').split('/');
+    if (!from || to) {
+      from = date;
+      to = '';
+    } else if (date < from) {
+      to = from;
+      from = date;
+    } else {
+      to = date;
+    }
+    mark([from, to].filter(Boolean), from, to);
+    if (picker) {
+      // The start may be in a month no longer shown; remember its label.
+      const labelOf = (it) =>
+        days.find((d) => d.dataset.date === it)?.dataset.label ||
+        (it === picker.dataset.fromDate ? picker.dataset.fromLabel : it);
+      const text = labelOf(from) + ' – ' + (to ? labelOf(to) : '…');
+      if (!to) {
+        picker.dataset.fromDate = date;
+        picker.dataset.fromLabel = day.dataset.label;
+      }
+      setText(picker.querySelector('[data-howdy-select-value]'), text);
+      picker.querySelector('[data-howdy-select-trigger]').removeAttribute('data-placeholder');
+      if (to) close(day.closest('[popover]'));
+    }
+    setValue(input, from + '/' + to);
+    return;
+  }
+  mark([date], null, null);
+  if (picker) settle(picker, date, day.dataset.label, day);
+  else setValue(input, date);
 };
 
 const moveDay = (day, days) => {
@@ -339,23 +445,63 @@ wide.addEventListener('change', () => {
 
 // Move a resizable handle by `delta`, in the same shares as the panels'
 // sizes. No panel goes below a tenth of the group.
+// A panel's share; a collapsed panel's is 0, not missing.
+const grow = (panel) => {
+  const share = parseFloat(panel.style.flexGrow);
+  return Number.isNaN(share) ? 1 : share;
+};
 const shares = (group) =>
   [...group.children]
     .filter((el) => el.getAttribute('role') !== 'separator')
-    .reduce((sum, el) => sum + (parseFloat(el.style.flexGrow) || 1), 0);
+    .reduce((sum, el) => sum + grow(el), 0);
+const minShare = (panel, all) =>
+  panel.hasAttribute('data-collapsed') ? 0 : ((parseFloat(panel.dataset.min) || 10) / 100) * all;
 const resizeBy = (handle, delta) => {
   const before = handle.previousElementSibling;
   const after = handle.nextElementSibling;
   if (!before || !after) return;
-  const a = parseFloat(before.style.flexGrow) || 1;
-  const b = parseFloat(after.style.flexGrow) || 1;
+  const a = grow(before);
+  const b = grow(after);
   const all = shares(handle.parentElement);
-  const min = all / 10;
-  const next = Math.min(Math.max(a + delta, min), a + b - min);
+  const next = Math.min(Math.max(a + delta, minShare(before, all)), a + b - minShare(after, all));
   before.style.flexGrow = String(next);
   after.style.flexGrow = String(a + b - next);
   handle.setAttribute('aria-valuenow', String(Math.round((next / all) * 100)));
 };
+// Remembered groups keep their sizes in a cookie, for the next page.
+const remember = (group) => {
+  const id = group.dataset.howdyRemember;
+  if (!id) return;
+  const sizes = [...group.children]
+    .filter((el) => el.getAttribute('role') !== 'separator')
+    .map((el) => Math.round(parseFloat(el.style.flexGrow) || 0));
+  document.cookie = 'resizable-' + id + '=' + sizes.join('_') + ';path=/;max-age=31536000;samesite=lax';
+};
+// A collapsible panel folds away into its neighbour, and back.
+const collapse = (handle) => {
+  const before = handle.previousElementSibling;
+  const after = handle.nextElementSibling;
+  if (!before?.hasAttribute('data-collapsible') || !after) return;
+  const a = parseFloat(before.style.flexGrow) || 0;
+  const b = parseFloat(after.style.flexGrow) || 0;
+  if (before.hasAttribute('data-collapsed')) {
+    const back = parseFloat(before.dataset.restore) || 25;
+    before.removeAttribute('data-collapsed');
+    before.style.flexGrow = String(back);
+    after.style.flexGrow = String(Math.max(b - back, 0));
+  } else {
+    before.dataset.restore = String(a);
+    before.setAttribute('data-collapsed', '');
+    before.style.flexGrow = '0';
+    after.style.flexGrow = String(a + b);
+  }
+  resizeBy(handle, 0);
+  remember(handle.parentElement);
+};
+document.addEventListener('dblclick', (event) => {
+  const handle = inPath(event, '[data-howdy-resizable] > [role=separator]');
+  if (handle) collapse(handle);
+});
 
 document.addEventListener('pointerdown', (event) => {
   const handle = inPath(event, '[data-howdy-resizable] > [role=separator]');
@@ -373,10 +519,12 @@ document.addEventListener('pointerdown', (event) => {
   } catch {}
   const move = (moved) => {
     const now = vertical ? moved.clientY : moved.clientX;
-    resizeBy(handle, ((now - last) / size) * all);
+    const flip = !vertical && rtl(group) ? -1 : 1;
+    resizeBy(handle, ((now - last) / size) * all * flip);
     last = now;
   };
   const stop = () => {
+    remember(group);
     handle.removeEventListener('pointermove', move);
     handle.removeEventListener('pointerup', stop);
     handle.removeEventListener('pointercancel', stop);
@@ -411,6 +559,26 @@ document.addEventListener('contextmenu', (event) => {
   if (r.bottom > innerHeight) popup.style.top = Math.max(4, y - r.height) + 'px';
 });
 
+// Pointing at a submenu's item opens it, without taking focus; pointing at
+// another item of the same menu closes it.
+document.addEventListener('pointerover', (event) => {
+  const item = inPath(event, '[role=menu][popover] [role^=menuitem]');
+  if (!item) return;
+  const menu = item.closest('[role=menu][popover]');
+  for (const sub of menu.querySelectorAll('[role=menu][popover]')) {
+    if (sub.parentElement.closest('[role=menu][popover]') === menu && isOpen(sub) && !sub.contains(item) && openers.get(sub) !== item) {
+      sub.hidePopover();
+    }
+  }
+  if (item.hasAttribute('data-howdy-submenu-trigger')) {
+    const sub = byId(item, item.getAttribute('popovertarget'));
+    if (sub && !isOpen(sub)) {
+      quiet.add(sub);
+      open(sub, item);
+    }
+  }
+});
+
 // Once a menubar menu is open, pointing at another button opens its menu.
 document.addEventListener('pointerover', (event) => {
   const button = inPath(event, '[role=menubar] > [data-howdy-menu-trigger]');
@@ -440,6 +608,293 @@ document.addEventListener('focusin', (event) => {
   if (handle instanceof Element && handle.matches('[data-howdy-resizable] > [role=separator]')) resizeBy(handle, 0);
 });
 
+// One-time codes keep out what cannot be part of them: anything but
+// digits for a numeric code, spaces otherwise. Pasted codes are cleaned.
+const codeAllows = (input, char) =>
+  input.inputMode === 'numeric' ? char >= '0' && char <= '9' : char.trim() !== '';
+document.addEventListener('beforeinput', (event) => {
+  const input = event.composedPath()[0];
+  if (!(input instanceof HTMLInputElement) || !input.hasAttribute('data-howdy-otp')) return;
+  const text = event.data ?? event.dataTransfer?.getData('text') ?? '';
+  if (!text || [...text].every((char) => codeAllows(input, char))) return;
+  event.preventDefault();
+  const clean = [...text].filter((char) => codeAllows(input, char)).join('');
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const room = Math.max(0, input.maxLength - (input.value.length - (end - start)));
+  input.setRangeText(clean.slice(0, room), start, end, 'end');
+  input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+});
+
+// Checkboxes marked partly checked on a page rendered once.
+for (const box of document.querySelectorAll('[data-howdy-indeterminate]')) box.indeterminate = true;
+
+// A range with several thumbs: none can pass its neighbours, and the fill
+// runs from the first to the last.
+document.addEventListener('input', (event) => {
+  const thumb = event.composedPath()[0];
+  const range = thumb instanceof HTMLInputElement ? thumb.parentElement : null;
+  if (!range?.matches('[data-howdy-range]')) return;
+  const thumbs = [...range.querySelectorAll(':scope > input')];
+  const i = thumbs.indexOf(thumb);
+  const floor = i > 0 ? Number(thumbs[i - 1].value) : -Infinity;
+  const ceiling = i < thumbs.length - 1 ? Number(thumbs[i + 1].value) : Infinity;
+  const value = Number(thumb.value);
+  if (value < floor) thumb.value = String(floor);
+  if (value > ceiling) thumb.value = String(ceiling);
+  const min = Number(thumb.min);
+  const span = Number(thumb.max) - min || 1;
+  const at = (input) => ((Number(input.value) - min) / span) * 100 + '%';
+  range.style.setProperty('--low', at(thumbs[0]));
+  range.style.setProperty('--high', at(thumbs[thumbs.length - 1]));
+});
+
+// Carousels: the buttons move one slide, or loop round at the ends; the
+// carousel says which slide is in view when it changes.
+const carousels = new WeakSet();
+const slideIndex = (viewport) => {
+  const vertical = viewport.parentElement.dataset.orientation === 'vertical';
+  const style = getComputedStyle(viewport);
+  const gap = parseFloat(vertical ? style.rowGap : style.columnGap) || 0;
+  const size = (vertical ? viewport.clientHeight : viewport.clientWidth) + gap;
+  return Math.round(Math.abs(vertical ? viewport.scrollTop : viewport.scrollLeft) / size);
+};
+const watchCarousel = (carousel) => {
+  if (carousels.has(carousel)) return;
+  carousels.add(carousel);
+  const viewport = carousel.querySelector(':scope > [id]');
+  let timer;
+  const settled = () => {
+    const index = slideIndex(viewport);
+    if (String(index) === carousel.dataset.index) return;
+    carousel.dataset.index = String(index);
+    carousel.dispatchEvent(new CustomEvent('howdy-slide', { bubbles: true, composed: true, detail: { index } }));
+  };
+  viewport.addEventListener('scroll', () => {
+    clearTimeout(timer);
+    timer = setTimeout(settled, 120);
+  });
+};
+const slide = (button) => {
+  const viewport = byId(button, button.getAttribute('aria-controls'));
+  if (!viewport) return;
+  const carousel = viewport.parentElement;
+  watchCarousel(carousel);
+  const vertical = carousel.dataset.orientation === 'vertical';
+  const forward = button.hasAttribute('data-howdy-carousel-next');
+  const flip = !vertical && rtl(viewport) ? -1 : 1;
+  const behavior = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
+  const size = vertical ? viewport.clientHeight : viewport.clientWidth;
+  const extent = (vertical ? viewport.scrollHeight : viewport.scrollWidth) - size;
+  const position = Math.abs(vertical ? viewport.scrollTop : viewport.scrollLeft);
+  const axis = vertical ? 'top' : 'left';
+  const loops = carousel.hasAttribute('data-loop');
+  if (loops && forward && position >= extent - 2) viewport.scrollTo({ [axis]: 0, behavior });
+  else if (loops && !forward && position <= 2) viewport.scrollTo({ [axis]: extent * flip, behavior });
+  else viewport.scrollBy({ [axis]: (forward ? size : -size) * flip, behavior });
+};
+// Carousels that play by themselves. One timer serves every carousel on
+// the page and in its live views, so one rendered later starts too.
+const lastMoved = new WeakMap();
+const stillPreferred = matchMedia('(prefers-reduced-motion: reduce)');
+const setPlaying = (carousel, playing) => {
+  carousel.toggleAttribute('data-paused', !playing);
+  const button = carousel.querySelector('[data-howdy-carousel-play]');
+  button?.setAttribute('aria-label', playing ? 'Pause slides' : 'Play slides');
+  // Announce slides only when someone is moving them.
+  carousel.querySelector(':scope > [id]')?.setAttribute('aria-live', playing ? 'off' : 'polite');
+};
+// Conversations that restore a place or open at a message start as soon
+// as they are found, in the page or in a live view rendered later.
+const findConversations = () => {
+  for (const root of roots()) {
+    for (const frame of root.querySelectorAll('[data-howdy-conversation]')) {
+      if (frame.firstElementChild?.matches('[data-howdy-remember], [data-howdy-start-at]')) watchConversation(frame);
+    }
+  }
+};
+setInterval(() => {
+  findConversations();
+  if (document.hidden) return;
+  const now = Date.now();
+  for (const root of roots()) {
+    for (const carousel of root.querySelectorAll('[data-howdy-carousel][data-autoplay]')) {
+      if (!lastMoved.has(carousel)) {
+        lastMoved.set(carousel, now);
+        setPlaying(carousel, !stillPreferred.matches);
+        continue;
+      }
+      if (carousel.hasAttribute('data-paused') || carousel.matches(':hover, :focus-within')) {
+        lastMoved.set(carousel, now);
+        continue;
+      }
+      if (now - lastMoved.get(carousel) < Number(carousel.dataset.autoplay)) continue;
+      lastMoved.set(carousel, now);
+      const next = carousel.querySelector('[data-howdy-carousel-next]');
+      watchCarousel(carousel);
+      // Wrap round at the end, looping or not.
+      const loops = carousel.hasAttribute('data-loop');
+      carousel.setAttribute('data-loop', '');
+      if (next) slide(next);
+      if (!loops) carousel.removeAttribute('data-loop');
+    }
+  }
+}, 250);
+
+const startCarousel = (event) => {
+  const carousel = inPath(event, '[data-howdy-carousel]');
+  if (carousel) watchCarousel(carousel);
+};
+document.addEventListener('pointerover', startCarousel);
+document.addEventListener('focusin', startCarousel);
+
+// Conversations: a button to the newest message appears once scrolled
+// back from it. Laid out from the bottom, the newest is at scroll 0.
+const conversations = new WeakSet();
+const watchConversation = (frame) => {
+  if (conversations.has(frame)) return;
+  conversations.add(frame);
+  const scroller = frame.firstElementChild;
+  const latest = frame.querySelector(':scope > [data-howdy-latest]');
+  // Laid out from the bottom: scrollTop is 0 at the newest message and
+  // grows negative going back.
+  const back = () => Math.abs(scroller.scrollTop);
+  const key = scroller.dataset.howdyRemember && 'howdy-chat-' + scroller.dataset.howdyRemember;
+  const saved = key ? sessionStorage.getItem(key) : null;
+  if (saved !== null) scroller.scrollTop = -Number(saved);
+  else if (scroller.dataset.howdyStartAt) byId(scroller, scroller.dataset.howdyStartAt)?.scrollIntoView({ block: 'start' });
+  latest.hidden = back() < 80;
+  // Keep the reader's place when messages are added above it, such as
+  // older history: note the first message in view, by id where it has one
+  // since a patch may reuse elements, and put it back where it was.
+  const log = scroller.firstElementChild;
+  let anchor = null;
+  let anchorId = '';
+  let offset = 0;
+  const top = () => scroller.getBoundingClientRect().top;
+  const note = () => {
+    const edge = top();
+    anchor = [...log.children].find((el) => el.getBoundingClientRect().bottom > edge) || null;
+    anchorId = anchor?.id || '';
+    offset = anchor ? anchor.getBoundingClientRect().top - edge : 0;
+  };
+  new ResizeObserver(() => {
+    const el = anchorId ? byId(scroller, anchorId) : anchor;
+    if (!el?.isConnected || back() < 80) return note();
+    const moved = el.getBoundingClientRect().top - top() - offset;
+    if (Math.abs(moved) > 1) scroller.scrollTop += moved;
+    note();
+  }).observe(log);
+  let asked = false;
+  let height = scroller.scrollHeight;
+  let timer;
+  const scrolled = () => {
+    note();
+    latest.hidden = back() < 80;
+    if (key) {
+      clearTimeout(timer);
+      timer = setTimeout(() => sessionStorage.setItem(key, String(Math.round(back()))), 150);
+    }
+    // Ask once for older messages, and again after some arrive.
+    if (scroller.scrollHeight !== height) {
+      height = scroller.scrollHeight;
+      asked = false;
+    }
+    if (!asked && scroller.scrollHeight - scroller.clientHeight - back() < 80) {
+      asked = true;
+      scroller.dispatchEvent(new CustomEvent('howdy-older', { bubbles: true, composed: true }));
+    }
+  };
+  scroller.addEventListener('scroll', scrolled);
+  // Found already scrolled back, such as by a restored place: act on it.
+  if (back() >= 80) scrolled();
+};
+findConversations();
+const startConversation = (event) => {
+  const frame = inPath(event, '[data-howdy-conversation]');
+  if (frame) watchConversation(frame);
+};
+document.addEventListener('pointerover', startConversation);
+document.addEventListener('focusin', startConversation);
+
+// Drawers: snap heights, dragging the handle, and closing by dragging it
+// down far enough.
+const snaps = (drawer) =>
+  (drawer.dataset.snaps || '')
+    .split(',')
+    .map(Number)
+    .filter((it) => it > 0)
+    .sort((a, b) => a - b)
+    .map((it) => (it / 100) * innerHeight);
+const setDrawerHeight = (drawer, px) => drawer.style.setProperty('--howdy-drawer-height', px + 'px');
+const openDrawer = (drawer) => {
+  drawer.style.setProperty('--howdy-drawer-drag', '0px');
+  const heights = snaps(drawer);
+  if (heights.length) setDrawerHeight(drawer, heights[0]);
+};
+const closeDrawer = (drawer) => {
+  drawer.close();
+  drawer.style.setProperty('--howdy-drawer-drag', '0px');
+};
+document.addEventListener('pointerdown', (event) => {
+  const handle = inPath(event, '[data-howdy-drawer-handle]');
+  if (!handle || event.button !== 0) return;
+  event.preventDefault();
+  const drawer = handle.closest('[data-howdy-drawer]');
+  const heights = snaps(drawer);
+  const start = event.clientY;
+  const height = drawer.getBoundingClientRect().height;
+  drawer.setAttribute('data-dragging', '');
+  try {
+    handle.setPointerCapture(event.pointerId);
+  } catch {}
+  let moved = 0;
+  const move = (e) => {
+    moved = e.clientY - start;
+    if (heights.length) {
+      setDrawerHeight(drawer, Math.min(Math.max(height - moved, 0), heights[heights.length - 1]));
+    } else {
+      drawer.style.setProperty('--howdy-drawer-drag', Math.max(0, moved) + 'px');
+    }
+  };
+  const stop = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', stop);
+    handle.removeEventListener('pointercancel', stop);
+    drawer.removeAttribute('data-dragging');
+    if (heights.length) {
+      const now = height - moved;
+      if (now < heights[0] * 0.6) return closeDrawer(drawer);
+      const nearest = heights.reduce((best, it) => (Math.abs(it - now) < Math.abs(best - now) ? it : best));
+      setDrawerHeight(drawer, nearest);
+    } else if (moved > height * 0.3) {
+      closeDrawer(drawer);
+    } else {
+      drawer.style.setProperty('--howdy-drawer-drag', '0px');
+    }
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+});
+document.addEventListener('keydown', (event) => {
+  const handle = event.composedPath()[0];
+  if (!(handle instanceof Element) || !handle.matches('[data-howdy-drawer-handle]')) return;
+  if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+  event.preventDefault();
+  const drawer = handle.closest('[data-howdy-drawer]');
+  const heights = snaps(drawer);
+  const now = drawer.getBoundingClientRect().height;
+  if (event.key === 'ArrowUp') {
+    const taller = heights.find((it) => it > now + 1);
+    if (taller) setDrawerHeight(drawer, taller);
+  } else {
+    const shorter = [...heights].reverse().find((it) => it < now - 1);
+    if (shorter) setDrawerHeight(drawer, shorter);
+    else closeDrawer(drawer);
+  }
+});
+
 // Capture, so popovers are watched before the browser opens them.
 document.addEventListener('click', (event) => {
   const invoker = inPath(event, '[popovertarget], [commandfor]');
@@ -450,6 +905,7 @@ document.addEventListener('click', (event) => {
     openers.set(target, invoker);
     watch(target);
   }
+  if (target.hasAttribute('data-howdy-drawer') && invoker.getAttribute('command') === 'show-modal') openDrawer(target);
   if (!hasCommands && invoker.hasAttribute('commandfor')) {
     const command = invoker.getAttribute('command');
     if (command === 'show-modal' && !target.open) target.showModal();
@@ -468,8 +924,36 @@ document.addEventListener('click', (event) => {
   if (tab) selectTab(tab);
   const option = inPath(event, '[data-howdy-select] [role=option]');
   if (option) choose(option);
+  // A chip's remove button unchooses its option.
+  const removeChip = inPath(event, '[data-howdy-chip-remove]');
+  if (removeChip) {
+    const root = removeChip.closest('[data-howdy-select]');
+    const value = removeChip.closest('[data-howdy-chip]').dataset.value;
+    for (const option of root.querySelectorAll('[role=option]')) {
+      if (option.dataset.value === value) option.setAttribute('aria-selected', 'false');
+    }
+    showChosen(root);
+    root.querySelector('[data-howdy-select-trigger]').focus();
+  }
+  const clearButton = inPath(event, '[data-howdy-select-clear]');
+  if (clearButton) {
+    const root = clearButton.closest('[data-howdy-select]');
+    for (const other of root.querySelectorAll('[role=option]')) other.setAttribute('aria-selected', 'false');
+    showChosen(root);
+    root.querySelector('[data-howdy-select-trigger]').focus();
+  }
   const item = inPath(event, '[role=menu] [role^=menuitem]');
-  if (item && !item.matches('[aria-disabled=true]')) close(item.closest('[popover]'));
+  // Choosing an item closes its menu, and any menu it opened from. A
+  // checkbox item flips its tick first, and a radio item takes the dot.
+  if (item && !item.matches('[aria-disabled=true]') && !item.hasAttribute('data-howdy-submenu-trigger')) {
+    const role = item.getAttribute('role');
+    if (role === 'menuitemcheckbox') item.setAttribute('aria-checked', String(item.getAttribute('aria-checked') !== 'true'));
+    if (role === 'menuitemradio') {
+      const group = item.closest('[role=group]') || item.closest('[role=menu]');
+      for (const other of group.querySelectorAll('[role=menuitemradio]')) other.setAttribute('aria-checked', String(other === item));
+    }
+    close(outermost(item));
+  }
   const day = inPath(event, '[data-howdy-calendar] [data-date]');
   if (day) pickDay(day);
   const command = inPath(event, 'dialog [data-howdy-command] [role=option]');
@@ -483,13 +967,31 @@ document.addEventListener('click', (event) => {
     }
     toggle.setAttribute('aria-pressed', String(pressed));
   }
+  const play = inPath(event, '[data-howdy-carousel-play]');
+  if (play) {
+    const carousel = play.closest('[data-howdy-carousel]');
+    setPlaying(carousel, carousel.hasAttribute('data-paused'));
+  }
   const slideButton = inPath(event, '[data-howdy-carousel-previous], [data-howdy-carousel-next]');
-  if (slideButton) {
-    const viewport = byId(slideButton, slideButton.getAttribute('aria-controls'));
-    const forward = slideButton.hasAttribute('data-howdy-carousel-next');
-    const rtl = viewport && getComputedStyle(viewport).direction === 'rtl';
-    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    viewport?.scrollBy({ left: (forward !== rtl ? 1 : -1) * viewport.clientWidth, behavior: still ? 'instant' : 'smooth' });
+  if (slideButton) slide(slideButton);
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth';
+  const latest = inPath(event, '[data-howdy-latest]');
+  if (latest) {
+    latest.parentElement.firstElementChild.scrollTo({ top: 0, behavior: still });
+    latest.hidden = true;
+  }
+  // A jump scrolls to a message, picks it out for a moment and moves focus
+  // there, so a screen reader follows.
+  const jump = inPath(event, '[data-howdy-jump]');
+  if (jump) {
+    const message = byId(jump, jump.dataset.howdyJump);
+    if (message) {
+      message.scrollIntoView({ block: 'center', behavior: still });
+      if (!message.hasAttribute('tabindex')) message.tabIndex = -1;
+      message.focus({ preventScroll: true });
+      message.setAttribute('data-flash', '');
+      setTimeout(() => message.removeAttribute('data-flash'), 1600);
+    }
   }
   const toast = inPath(event, '[data-howdy-toast-close]');
   if (toast) toast.closest('[data-howdy-toast]').hidden = true;
@@ -507,14 +1009,27 @@ document.addEventListener('click', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
-  const { key } = event;
   const target = event.composedPath()[0];
   if (!(target instanceof Element)) return;
+  const key = logical(event.key, target);
   const arrows = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
 
   const popup = target.closest('[role=menu][popover], [role=listbox][popover]');
   if (popup) {
-    const items = enabled(popup, '[role^=menuitem], [role=option]');
+    const items = ownItems(popup);
+    // A submenu opens with the right arrow, Enter or Space, and closes
+    // with the left arrow, back to its item.
+    if (target.hasAttribute('data-howdy-submenu-trigger') && ['ArrowRight', 'Enter', ' '].includes(key)) {
+      event.preventDefault();
+      const sub = byId(target, target.getAttribute('popovertarget'));
+      if (sub) open(sub, target);
+      return;
+    }
+    if (key === 'ArrowLeft' && popup.parentElement?.closest('[role=menu][popover]')) {
+      event.preventDefault();
+      popup.hidePopover();
+      return;
+    }
     // In a menubar, left and right go to the neighbouring menu.
     const opener = openers.get(popup);
     const bar = opener?.closest('[role=menubar]');
@@ -560,19 +1075,22 @@ document.addEventListener('keydown', (event) => {
   const handle = target.closest('[data-howdy-resizable] > [role=separator]');
   if (handle) {
     const all = shares(handle.parentElement);
-    const before = parseFloat(handle.previousElementSibling?.style.flexGrow) || 1;
-    const after = parseFloat(handle.nextElementSibling?.style.flexGrow) || 1;
     const moves = {
       ArrowLeft: -all / 20,
       ArrowUp: -all / 20,
       ArrowRight: all / 20,
       ArrowDown: all / 20,
-      Home: all / 10 - before,
-      End: before + after - all / 10 - before,
+      // As far as the panels' minimums allow.
+      Home: -all,
+      End: all,
     };
     if (Object.hasOwn(moves, key)) {
       event.preventDefault();
       resizeBy(handle, moves[key]);
+      remember(handle.parentElement);
+    } else if (key === 'Enter') {
+      event.preventDefault();
+      collapse(handle);
     }
     return;
   }
@@ -610,7 +1128,17 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
-  const trigger = target.closest('[data-howdy-menu-trigger], [data-howdy-select] > button');
+  // Backspace on a multiple combobox's button removes the last chip.
+  if (key === 'Backspace' && target.matches('[data-multiple] [data-howdy-select-trigger]')) {
+    const chips = [...target.closest('[data-howdy-select]').querySelectorAll('[data-howdy-chip]:not([hidden]) [data-howdy-chip-remove]')];
+    if (chips.length) {
+      event.preventDefault();
+      chips[chips.length - 1].click();
+    }
+    return;
+  }
+
+  const trigger = target.closest('[data-howdy-menu-trigger], [data-howdy-select-trigger]');
   if (trigger && (key === 'ArrowDown' || key === 'ArrowUp')) {
     const popover = byId(trigger, trigger.getAttribute('popovertarget'));
     if (popover) {
@@ -620,12 +1148,40 @@ document.addEventListener('keydown', (event) => {
     return;
   }
 
+  // Tabs follow focus. The change is a click, so a live view hears it the
+  // same way whether the mouse or the keyboard made it.
   const tab = target.closest('[data-howdy-tabs] [role=tab]');
-  if (tab && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) {
+  if (tab) {
+    const list = tab.closest('[role=tablist]');
+    const vertical = list.getAttribute('aria-orientation') === 'vertical';
+    const keys = vertical ? ['ArrowUp', 'ArrowDown', 'Home', 'End'] : ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    if (!keys.includes(key)) return;
     event.preventDefault();
-    const next = step(enabled(tab.closest('[role=tablist]'), '[role=tab]'), tab, key);
+    const next = step(enabled(list, '[role=tab]'), tab, key);
     next.focus();
-    selectTab(next);
+    if (next !== tab) next.click();
+    return;
+  }
+
+  // A toggle group is one stop in the tab order; the arrows move within it.
+  const toggleButton = target.closest('[data-howdy-toggle-group] [data-howdy-toggle]');
+  if (toggleButton) {
+    const group = toggleButton.closest('[data-howdy-toggle-group]');
+    const vertical = group.getAttribute('aria-orientation') === 'vertical';
+    const keys = vertical ? ['ArrowUp', 'ArrowDown', 'Home', 'End'] : ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    if (!keys.includes(key)) return;
+    event.preventDefault();
+    const next = step(enabled(group, '[data-howdy-toggle]'), toggleButton, key);
+    next.focus();
+  }
+});
+
+// Roving focus: the toggle last focused is the group's stop in the tab order.
+document.addEventListener('focusin', (event) => {
+  const focused = event.composedPath()[0];
+  if (!(focused instanceof Element) || !focused.matches('[data-howdy-toggle-group] [data-howdy-toggle]')) return;
+  for (const other of focused.closest('[data-howdy-toggle-group]').querySelectorAll('[data-howdy-toggle]')) {
+    other.tabIndex = other === focused ? 0 : -1;
   }
 });
 }

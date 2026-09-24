@@ -32,9 +32,11 @@ import howdy/ui/data_table.{Ascending, Descending, Links, Sort}
 import howdy/ui/gallery
 import howdy/ui/live
 import howdy/ui/page
+import howdy/ui/questionnaire
 import howdy/ui/toast
 import howdy/validate
 import howdy_gallery/chat
+import howdy_gallery/lab
 import howdy_gallery/orders
 import lustre/attribute
 import lustre/element.{type Element, text}
@@ -58,6 +60,21 @@ pub fn app() -> howdy.App {
     |> controller.get("/chat", fn(ctx) {
       use page <- shell(ctx, "Chat", "/chat", [live.mount("/live/chat")])
       page.live(page)
+    })
+    |> controller.get("/lab", fn(ctx) {
+      use page <- shell(ctx, "Lab", "/lab", [live.mount("/live/lab")])
+      page.live(page)
+    })
+    // A questionnaire as a plain form, posted back to itself.
+    |> controller.get("/survey", fn(ctx) {
+      survey_page(ctx, questionnaire.start(lab.questions()))
+    })
+    |> controller.post("/survey", fn(ctx) {
+      use fields <- form.read(ctx)
+      survey_page(
+        ctx,
+        questionnaire.submit(lab.questions(), form.fields(fields)),
+      )
     })
     |> controller.get("/sign-in", fn(ctx) {
       auth_page(
@@ -102,11 +119,35 @@ pub fn app() -> howdy.App {
     })
     |> controller.get("/chat", fn(ctx) {
       live.serve(ctx, chat.app(), with: Nil)
-    }),
+    })
+    |> controller.get("/lab", fn(ctx) { live.serve(ctx, lab.app(), with: Nil) }),
   )
 }
 
 // -- Pages -------------------------------------------------------------------
+
+fn survey_page(ctx: Context, asked: questionnaire.Questionnaire) {
+  let content = case questionnaire.is_complete(asked) {
+    True -> [
+      ui.h2("Thank you"),
+      html.output([attribute.id("survey-answers")], [
+        text(
+          questionnaire.answers(asked)
+          |> list.map(fn(pair) { pair.0 <> "=" <> string.join(pair.1, ",") })
+          |> string.join(" "),
+        ),
+      ]),
+    ]
+    False -> [
+      questionnaire.view(asked, [
+        attribute.method("post"),
+        attribute.action("/survey"),
+      ]),
+    ]
+  }
+  use page <- shell(ctx, "Survey", "/survey", content)
+  page
+}
 
 fn shell(
   ctx: Context,
@@ -334,7 +375,7 @@ fn components(ctx: Context) {
               |> calendar.name("day")
               |> calendar.view,
             ui.row([], [
-              ui.button(Primary, [attribute.type_("submit")], [text("Choose")]),
+              ui.submit_button(Primary, [], [text("Choose")]),
               case chosen {
                 Ok(date) ->
                   ui.muted("You chose " <> calendar.long_date(date) <> ".")

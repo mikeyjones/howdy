@@ -23,12 +23,33 @@ import lustre/element/html
 import sketch/css.{type Class}
 import sketch/css/length.{rem}
 
+/// How much room a card leaves around and between its parts.
+pub type Size {
+  Default
+  /// Tighter padding and spacing, for dense layouts and lists of cards.
+  Compact
+}
+
 /// A raised surface with a border and padding.
 pub fn card(
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {
-  html.div([class(card_class()), ..attributes], children)
+  sized(Default, attributes, children)
+}
+
+/// A card of the given size. Its header and footer space themselves to
+/// match.
+pub fn sized(
+  size: Size,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  let size_class = case size {
+    Default -> card_class()
+    Compact -> compact_class()
+  }
+  html.div([class(size_class), ..attributes], children)
 }
 
 /// The top of a card: a title, a description and an action beside them.
@@ -76,6 +97,7 @@ pub fn footer(
 pub fn classes() -> List(Class) {
   [
     card_class(),
+    compact_class(),
     header_class(),
     title_class(),
     description_class(),
@@ -90,6 +112,17 @@ pub fn card_class() -> Class {
     css.border("1px solid " <> tokens.border),
     css.property("border-radius", tokens.radius_large),
     css.padding(rem(1.5)),
+    css.property("--howdy-card-gap", tokens.space_4),
+  ])
+}
+
+pub fn compact_class() -> Class {
+  css.class([
+    css.background(tokens.surface),
+    css.border("1px solid " <> tokens.border),
+    css.property("border-radius", tokens.radius_medium),
+    css.padding(rem(1.0)),
+    css.property("--howdy-card-gap", tokens.space_3),
   ])
 }
 
@@ -100,7 +133,7 @@ pub fn header_class() -> Class {
     css.property("grid-auto-rows", "min-content"),
     css.row_gap(rem(0.25)),
     css.column_gap(rem(1.0)),
-    css.margin_("0 0 " <> tokens.space_4),
+    css.margin_("0 0 var(--howdy-card-gap, " <> tokens.space_4 <> ")"),
   ])
 }
 
@@ -139,6 +172,6 @@ pub fn footer_class() -> Class {
     css.flex_wrap("wrap"),
     css.align_items("center"),
     css.gap(rem(0.75)),
-    css.margin_(tokens.space_4 <> " 0 0"),
+    css.margin_("var(--howdy-card-gap, " <> tokens.space_4 <> ") 0 0"),
   ])
 }

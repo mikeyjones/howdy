@@ -237,6 +237,7 @@ fn view(model: Model) -> Element(Msg) {
               },
               placeholder: "Any status",
               search: "Search statuses…",
+              attributes: [],
               options: [
                 ui.combobox_option("", selected: model.status == "", children: [
                   text("Any status"),

@@ -98,6 +98,8 @@ import howdy/ui/command
 import howdy/ui/context_menu
 import howdy/ui/data_table
 import howdy/ui/dialog
+import howdy/ui/direction
+import howdy/ui/drawer
 import howdy/ui/effects
 import howdy/ui/empty
 import howdy/ui/field
@@ -117,6 +119,7 @@ import howdy/ui/navigation_menu
 import howdy/ui/pagination
 import howdy/ui/popover
 import howdy/ui/progress
+import howdy/ui/questionnaire
 import howdy/ui/resizable
 import howdy/ui/scroll_area
 import howdy/ui/select
@@ -210,6 +213,9 @@ pub fn classes() -> List(Class) {
     slider.classes(),
     switch.classes(),
     toggle.classes(),
+    direction.classes(),
+    drawer.classes(),
+    questionnaire.classes(),
   ])
 }
 
@@ -254,6 +260,10 @@ pub fn h3(content: String) -> Element(msg) {
   heading.h3(content)
 }
 
+pub fn h4(content: String) -> Element(msg) {
+  heading.h4(content)
+}
+
 /// See `howdy/ui/typography`.
 pub fn p(children: List(Element(msg))) -> Element(msg) {
   typography.p(children)
@@ -265,6 +275,23 @@ pub fn muted(content: String) -> Element(msg) {
 
 pub fn link(href: String, children: List(Element(msg))) -> Element(msg) {
   typography.link(href, children)
+}
+
+/// Styles the plain elements inside it, such as rendered Markdown.
+pub fn prose(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  typography.prose(attributes, children)
+}
+
+/// See `howdy/ui/direction`.
+pub fn direction(
+  direction: direction.Direction,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  direction.provider(direction, attributes, children)
 }
 
 /// See `howdy/ui/button`. Variants are `button.Primary`, `Secondary`,
@@ -285,6 +312,15 @@ pub fn sized_button(
   children: List(Element(msg)),
 ) -> Element(msg) {
   button.sized(variant, size, attributes, children)
+}
+
+/// A button that submits its form.
+pub fn submit_button(
+  variant: button.Variant,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  button.submit(variant, attributes, children)
 }
 
 pub fn theme_toggle(
@@ -595,6 +631,20 @@ pub fn dialog_footer(children: List(Element(msg))) -> Element(msg) {
   dialog.footer(children)
 }
 
+/// See `howdy/ui/drawer`. Its header, title, description and footer are
+/// the dialog's.
+pub fn drawer(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  drawer.drawer(id, attributes, children)
+}
+
+pub fn drawer_trigger(id: String) -> List(Attribute(msg)) {
+  drawer.trigger(id)
+}
+
 /// See `howdy/ui/popover`.
 pub fn popover(
   id: String,
@@ -663,6 +713,29 @@ pub fn menu_label(children: List(Element(msg))) -> Element(msg) {
 
 pub fn menu_separator() -> Element(msg) {
   menu.separator()
+}
+
+pub fn menu_radio_group(
+  label: String,
+  items: List(Element(msg)),
+) -> Element(msg) {
+  menu.radio_group(label, items)
+}
+
+pub fn menu_radio_item(
+  checked: Bool,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  menu.radio_item(checked, attributes, children)
+}
+
+pub fn menu_submenu(
+  id: String,
+  label label: List(Element(msg)),
+  items items: List(Element(msg)),
+) -> Element(msg) {
+  menu.submenu(id, label:, items:)
 }
 
 /// See `howdy/ui/tabs`.
@@ -874,9 +947,39 @@ pub fn combobox(
   label label: String,
   placeholder placeholder: String,
   search search: String,
+  attributes attributes: List(Attribute(msg)),
   options options: List(Element(msg)),
 ) -> Element(msg) {
-  command.combobox(id:, name:, value:, label:, placeholder:, search:, options:)
+  command.combobox(
+    id:,
+    name:,
+    value:,
+    label:,
+    placeholder:,
+    search:,
+    attributes:,
+    options:,
+  )
+}
+
+pub fn multiple_combobox(
+  id id: String,
+  name name: String,
+  values values: List(String),
+  placeholder placeholder: String,
+  search search: String,
+  attributes attributes: List(Attribute(msg)),
+  options options: List(#(String, String)),
+) -> Element(msg) {
+  command.multiple_combobox(
+    id:,
+    name:,
+    values:,
+    placeholder:,
+    search:,
+    attributes:,
+    options:,
+  )
 }
 
 pub fn combobox_option(
@@ -909,6 +1012,10 @@ pub fn progress(
   progress.progress(label:, value:, max:)
 }
 
+pub fn progress_indeterminate(label label: String) -> Element(msg) {
+  progress.indeterminate(label:)
+}
+
 /// See `howdy/ui/effects`.
 pub fn scroll_fade() -> Attribute(msg) {
   effects.scroll_fade()
@@ -928,11 +1035,20 @@ pub fn chat_conversation(
 
 pub fn chat_message(
   side: chat.Side,
+  attributes attributes: List(Attribute(msg)),
   avatar avatar_element: Element(msg),
   header header: List(Element(msg)),
   content content: List(Element(msg)),
+  footer footer: List(Element(msg)),
 ) -> Element(msg) {
-  chat.message(side, avatar: avatar_element, header:, content:)
+  chat.message(
+    side,
+    attributes:,
+    avatar: avatar_element,
+    header:,
+    content:,
+    footer:,
+  )
 }
 
 pub fn chat_bubble(
@@ -950,10 +1066,15 @@ pub fn chat_note(children: List(Element(msg))) -> Element(msg) {
 pub fn attachment(
   name name: String,
   detail detail: String,
-  uploaded uploaded: option.Option(Int),
+  status status: attachment.Status,
+  media media: option.Option(Element(msg)),
   actions actions: List(Element(msg)),
 ) -> Element(msg) {
-  attachment.attachment(name:, detail:, uploaded:, actions:)
+  attachment.attachment(name:, detail:, status:, media:, actions:)
+}
+
+pub fn attachment_group(attachments: List(Element(msg))) -> Element(msg) {
+  attachment.group(attachments)
 }
 
 /// See `howdy/ui/switch`.

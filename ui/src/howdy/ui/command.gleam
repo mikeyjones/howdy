@@ -42,6 +42,16 @@ pub fn command(
   attributes attributes: List(Attribute(msg)),
   children children: List(Element(msg)),
 ) -> Element(msg) {
+  search_list(id, placeholder, attributes, children, [])
+}
+
+fn search_list(
+  id: String,
+  placeholder: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+  listbox: List(Attribute(msg)),
+) -> Element(msg) {
   html.div([class(command_class()), attribute.data("howdy-command", "")], [
     html.input([
       class(input_class()),
@@ -62,6 +72,7 @@ pub fn command(
         attribute.id(id <> "-list"),
         attribute.role("listbox"),
         attribute.aria_label(placeholder),
+        ..listbox
       ],
       children,
     ),
@@ -170,8 +181,10 @@ pub fn dialog(
 }
 
 /// A button showing the chosen option, or `placeholder`, that opens a
-/// searchable list. Choosing sets the hidden input called `name`. Each
-/// option is an `item` with a value, made with `option`.
+/// searchable list. Choosing sets the hidden input called `name`; a clear
+/// button beside it empties it again. Each option is an `item` with a
+/// value, made with `option`. `attributes` go on the button: pass
+/// `attribute.disabled(True)` or `attribute.aria_invalid("true")` there.
 pub fn combobox(
   id id: String,
   name name: String,
@@ -179,7 +192,159 @@ pub fn combobox(
   label label: String,
   placeholder placeholder: String,
   search search: String,
+  attributes attributes: List(Attribute(msg)),
   options options: List(Element(msg)),
+) -> Element(msg) {
+  picker(id, name, value, label, placeholder, search, attributes, options)
+}
+
+/// A combobox where several options can be chosen, from `options` given
+/// as `#(value, label)`. Choosing one toggles it and leaves the list open.
+/// The chosen options show as chips beside the button, each with its own
+/// remove button; Backspace on the button removes the last.
+///
+/// The form gets one field called `name` per chosen value, so values may
+/// hold any character; read them with `list.key_filter(fields, name)`. A
+/// live view hears the whole set with `howdy/ui/live.on_values`.
+pub fn multiple_combobox(
+  id id: String,
+  name name: String,
+  values values: List(String),
+  placeholder placeholder: String,
+  search search: String,
+  attributes attributes: List(Attribute(msg)),
+  options options: List(#(String, String)),
+) -> Element(msg) {
+  let popover = id <> "-popover"
+  let chosen = fn(value) { list.contains(values, value) }
+  let placeholder_mark = case values {
+    [] -> [attribute.data("placeholder", "")]
+    _ -> []
+  }
+  html.div(
+    [
+      class(combobox_class()),
+      attribute.data("howdy-select", ""),
+      attribute.data("multiple", ""),
+      attribute.data("name", name),
+    ],
+    list.flatten([
+      [
+        html.div(
+          [
+            class(chips_class()),
+            attribute.style("anchor-name", anchor_name(popover)),
+          ],
+          list.append(
+            list.map(options, fn(option) {
+              let #(value, label) = option
+              html.span(
+                [
+                  class(chip_class()),
+                  attribute.data("howdy-chip", ""),
+                  attribute.data("value", value),
+                  attribute.hidden(!chosen(value)),
+                ],
+                [
+                  html.span([], [text(label)]),
+                  html.button(
+                    [
+                      class(chip_remove_class()),
+                      attribute.type_("button"),
+                      attribute.aria_label("Remove " <> label),
+                      attribute.data("howdy-chip-remove", ""),
+                    ],
+                    [html.span([attribute.aria_hidden(True)], [text("×")])],
+                  ),
+                ],
+              )
+            }),
+            [
+              html.button(
+                [
+                  class(chips_trigger_class()),
+                  attribute.type_("button"),
+                  attribute.id(id),
+                  attribute.attribute("popovertarget", popover),
+                  attribute.aria_haspopup("listbox"),
+                  attribute.data("howdy-select-trigger", ""),
+                  ..list.append(placeholder_mark, attributes)
+                ],
+                [
+                  html.span(
+                    [
+                      class(value_class()),
+                      attribute.data("howdy-select-value", ""),
+                      attribute.data("howdy-placeholder", placeholder),
+                    ],
+                    [text(placeholder)],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+      // One field per option, sent only while it is chosen.
+      list.map(options, fn(option) {
+        html.input([
+          attribute.type_("hidden"),
+          attribute.name(name),
+          attribute.value(option.0),
+          attribute.data("howdy-choice", ""),
+          attribute.disabled(!chosen(option.0)),
+        ])
+      }),
+      [
+        html.button(
+          [
+            class(clear_class()),
+            attribute.type_("button"),
+            attribute.aria_label("Clear"),
+            attribute.data("howdy-select-clear", ""),
+            attribute.hidden(values == []),
+          ],
+          [html.span([attribute.aria_hidden(True)], [text("×")])],
+        ),
+        html.div(
+          [
+            class(popover_class()),
+            attribute.id(popover),
+            attribute.popover("auto"),
+            attribute.style("position-anchor", anchor_name(popover)),
+          ],
+          [
+            search_list(
+              id <> "-search",
+              search,
+              [],
+              list.map(options, fn(option) {
+                item(
+                  [
+                    attribute.data("value", option.0),
+                    attribute.aria_selected(chosen(option.0)),
+                  ],
+                  [text(option.1)],
+                )
+              }),
+              [attribute.aria_multiselectable(True)],
+            ),
+          ],
+        ),
+      ],
+    ]),
+  )
+}
+
+fn picker(
+  id: String,
+  name: String,
+  value: String,
+  label: String,
+  placeholder: String,
+  search: String,
+  attributes: List(Attribute(msg)),
+  options: List(Element(msg)),
 ) -> Element(msg) {
   let popover = id <> "-popover"
   let #(shown, mark) = case value {
@@ -199,10 +364,30 @@ pub fn combobox(
         attribute.id(id),
         attribute.attribute("popovertarget", popover),
         attribute.aria_haspopup("listbox"),
+        attribute.data("howdy-select-trigger", ""),
         attribute.style("anchor-name", anchor_name(popover)),
-        ..mark
+        ..list.append(mark, attributes)
       ],
-      [html.span([attribute.data("howdy-select-value", "")], [text(shown)])],
+      [
+        html.span(
+          [
+            class(value_class()),
+            attribute.data("howdy-select-value", ""),
+            attribute.data("howdy-placeholder", placeholder),
+          ],
+          [text(shown)],
+        ),
+      ],
+    ),
+    html.button(
+      [
+        class(clear_class()),
+        attribute.type_("button"),
+        attribute.aria_label("Clear"),
+        attribute.data("howdy-select-clear", ""),
+        attribute.hidden(value == ""),
+      ],
+      [html.span([attribute.aria_hidden(True)], [text("×")])],
     ),
     html.div(
       [
@@ -212,12 +397,7 @@ pub fn combobox(
         attribute.style("position-anchor", anchor_name(popover)),
       ],
       [
-        command(
-          id <> "-search",
-          placeholder: search,
-          attributes: [],
-          children: options,
-        ),
+        search_list(id <> "-search", search, [], options, []),
       ],
     ),
   ])
@@ -250,7 +430,13 @@ pub fn classes() -> List(Class) {
     dialog_class(),
     combobox_class(),
     trigger_class(),
+    value_class(),
+    clear_class(),
     popover_class(),
+    chips_class(),
+    chip_class(),
+    chip_remove_class(),
+    chips_trigger_class(),
   ]
 }
 
@@ -307,7 +493,8 @@ pub fn item_class() -> Class {
     css.align_items("center"),
     css.gap(rem(0.5)),
     css.position("relative"),
-    css.padding_("0.375rem 2rem 0.375rem " <> tokens.space_2),
+    css.padding_("0.375rem " <> tokens.space_2),
+    css.property("padding-inline-end", "2rem"),
     css.property("border-radius", tokens.radius_small),
     css.font_size(rem(0.875)),
     css.color(tokens.text),
@@ -324,7 +511,7 @@ pub fn item_class() -> Class {
     css.selector("[aria-selected=\"true\"]::after", [
       css.content("\"\""),
       css.position("absolute"),
-      css.property("right", "0.75rem"),
+      css.property("inset-inline-end", "0.75rem"),
       css.property("top", "45%"),
       css.property("width", "0.3rem"),
       css.property("height", "0.55rem"),
@@ -369,7 +556,11 @@ pub fn dialog_class() -> Class {
 }
 
 pub fn combobox_class() -> Class {
-  css.class([css.display("block"), css.width(percent(100))])
+  css.class([
+    css.position("relative"),
+    css.display("block"),
+    css.width(percent(100)),
+  ])
 }
 
 pub fn trigger_class() -> Class {
@@ -387,9 +578,13 @@ pub fn trigger_class() -> Class {
     css.font_family(tokens.font_body),
     css.font_size(rem(1.0)),
     css.line_height("1.5"),
-    css.text_align("left"),
+    css.text_align("start"),
     css.cursor("pointer"),
     css.selector("[data-placeholder]", [css.color(tokens.text_muted)]),
+    css.selector("[aria-invalid=\"true\"]", [
+      css.property("border-color", tokens.danger),
+    ]),
+    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
     css.focus_visible([
       css.outline("2px solid " <> tokens.focus),
       css.property("outline-offset", "2px"),
@@ -406,6 +601,43 @@ pub fn trigger_class() -> Class {
   ])
 }
 
+pub fn value_class() -> Class {
+  css.class([
+    css.overflow("hidden"),
+    css.property("text-overflow", "ellipsis"),
+    css.white_space("nowrap"),
+    // Room for the clear button over the end of the trigger.
+    css.property("padding-inline-end", "1.5rem"),
+  ])
+}
+
+pub fn clear_class() -> Class {
+  css.class([
+    css.position("absolute"),
+    css.property("inset-inline-end", "2.25rem"),
+    css.property("top", "50%"),
+    css.transform_("translateY(-50%)"),
+    css.display("inline-flex"),
+    css.align_items("center"),
+    css.justify_content("center"),
+    css.property("width", "1.5rem"),
+    css.property("height", "1.5rem"),
+    css.padding(rem(0.0)),
+    css.border("0"),
+    css.property("border-radius", tokens.radius_small),
+    css.background("transparent"),
+    css.color(tokens.text_muted),
+    css.font_size(rem(1.0)),
+    css.cursor("pointer"),
+    css.hover([css.color(tokens.text), css.background(tokens.muted)]),
+    css.focus_visible([
+      css.outline("2px solid " <> tokens.focus),
+      css.property("outline-offset", "1px"),
+    ]),
+    css.selector("[hidden]", [css.display("none")]),
+  ])
+}
+
 pub fn popover_class() -> Class {
   css.class([
     css.inset("auto"),
@@ -419,5 +651,100 @@ pub fn popover_class() -> Class {
     css.border("1px solid " <> tokens.border),
     css.property("border-radius", tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
+  ])
+}
+
+/// The box around a multiple combobox's chips and button, drawn as the
+/// field.
+pub fn chips_class() -> Class {
+  css.class([
+    css.display("flex"),
+    css.flex_wrap("wrap"),
+    css.align_items("center"),
+    css.gap(rem(0.25)),
+    css.width(percent(100)),
+    css.padding_(tokens.space_1),
+    css.property("padding-inline-end", "3.75rem"),
+    css.background(tokens.surface),
+    css.border("1px solid " <> tokens.border),
+    css.property("border-radius", tokens.radius_medium),
+    css.selector(":has([aria-invalid=\"true\"])", [
+      css.property("border-color", tokens.danger),
+    ]),
+    css.selector(":has(:disabled)", [css.property("opacity", "0.5")]),
+  ])
+}
+
+pub fn chip_class() -> Class {
+  css.class([
+    css.display("inline-flex"),
+    css.align_items("center"),
+    css.gap(rem(0.125)),
+    css.property("padding-block", "0.125rem"),
+    css.property("padding-inline", tokens.space_2 <> " 0.125rem"),
+    css.property("border-radius", tokens.radius_small),
+    css.background(tokens.muted),
+    css.color(tokens.text),
+    css.font_size(rem(0.875)),
+    css.line_height("1.5"),
+    css.selector("[hidden]", [css.display("none")]),
+  ])
+}
+
+pub fn chip_remove_class() -> Class {
+  css.class([
+    css.display("inline-flex"),
+    css.align_items("center"),
+    css.justify_content("center"),
+    css.property("width", "1.25rem"),
+    css.property("height", "1.25rem"),
+    css.padding(rem(0.0)),
+    css.border("0"),
+    css.property("border-radius", tokens.radius_small),
+    css.background("transparent"),
+    css.color(tokens.text_muted),
+    css.cursor("pointer"),
+    css.hover([css.color(tokens.text), css.background(tokens.border)]),
+    css.focus_visible([
+      css.outline("2px solid " <> tokens.focus),
+      css.property("outline-offset", "1px"),
+    ]),
+  ])
+}
+
+/// The button in a multiple combobox: it takes the rest of the row.
+pub fn chips_trigger_class() -> Class {
+  css.class([
+    css.display("flex"),
+    css.align_items("center"),
+    css.justify_content("space-between"),
+    css.gap(rem(0.5)),
+    css.property("flex", "1 1 6rem"),
+    css.property("min-width", "6rem"),
+    css.padding_(tokens.space_1 <> " " <> tokens.space_2),
+    css.background("transparent"),
+    css.color(tokens.text),
+    css.border("0"),
+    css.property("border-radius", tokens.radius_small),
+    css.font_family(tokens.font_body),
+    css.font_size(rem(1.0)),
+    css.line_height("1.5"),
+    css.text_align("start"),
+    css.cursor("pointer"),
+    css.selector("[data-placeholder]", [css.color(tokens.text_muted)]),
+    css.disabled([css.cursor("not-allowed")]),
+    css.focus_visible([
+      css.outline("2px solid " <> tokens.focus),
+      css.property("outline-offset", "2px"),
+    ]),
+    css.after([
+      css.content("\"\""),
+      css.flex_shrink(0.0),
+      css.property("width", "0.45rem"),
+      css.property("height", "0.45rem"),
+      css.property("border-right", "2px solid " <> tokens.text_muted),
+      css.property("border-bottom", "2px solid " <> tokens.text_muted),
+      css.transform_("translateY(-25%) rotate(45deg)"),
+    ]),
   ])
 }

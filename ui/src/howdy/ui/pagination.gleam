@@ -164,6 +164,10 @@ pub fn list_class() -> Class {
 
 pub fn link_class() -> Class {
   css.class([
+    css.selector(":dir(rtl) > span[aria-hidden=\"true\"]", [
+      css.display("inline-block"),
+      css.transform_("scaleX(-1)"),
+    ]),
     css.display("inline-flex"),
     css.align_items("center"),
     css.justify_content("center"),

@@ -1,7 +1,9 @@
-//// Progress bars, for work of a known size such as an upload.
+//// Progress bars: how much of some work is done, or that work is under
+//// way when how much is unknown.
 ////
 //// ```gleam
 //// progress.progress(label: "Uploading report.pdf", value: 40, max: 100)
+//// progress.indeterminate(label: "Preparing export")
 //// ```
 
 import gleam/int
@@ -42,10 +44,37 @@ pub fn progress(
   )
 }
 
+/// A bar for work whose size is not known yet. It sweeps while the work
+/// goes on, and holds still for people who ask for reduced motion.
+pub fn indeterminate(label label: String) -> Element(msg) {
+  html.div(
+    [
+      class(track_class()),
+      attribute.role("progressbar"),
+      attribute.aria_label(label),
+      attribute.data("howdy-indeterminate-progress", ""),
+    ],
+    [html.style([], sweep_css), html.div([class(sweep_class())], [])],
+  )
+}
+
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [track_class(), bar_class()]
+  [track_class(), bar_class(), sweep_class()]
 }
+
+pub fn sweep_class() -> Class {
+  css.class([
+    css.width(percent(40)),
+    css.height(percent(100)),
+    css.property("border-radius", "999px"),
+    css.background(tokens.primary),
+  ])
+}
+
+// Sketch classes cannot carry `@keyframes`, so the animation travels with
+// the element.
+const sweep_css = "@keyframes howdy-sweep{from{transform:translateX(-100%)}to{transform:translateX(250%)}}[data-howdy-indeterminate-progress]>div{animation:howdy-sweep 1.4s ease-in-out infinite}@media (prefers-reduced-motion:reduce){[data-howdy-indeterminate-progress]>div{animation:none;transform:translateX(75%)}}"
 
 pub fn track_class() -> Class {
   css.class([

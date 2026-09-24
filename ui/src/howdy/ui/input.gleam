@@ -78,7 +78,7 @@ pub fn select_wrapper_class() -> Class {
     css.after([
       css.content("\"\""),
       css.position("absolute"),
-      css.property("right", tokens.space_3),
+      css.property("inset-inline-end", tokens.space_3),
       css.property("top", "50%"),
       css.property("width", "0.45rem"),
       css.property("height", "0.45rem"),
@@ -93,7 +93,7 @@ pub fn select_wrapper_class() -> Class {
 pub fn select_class() -> Class {
   css.class([
     css.property("appearance", "none"),
-    css.property("padding-right", "2.25rem"),
+    css.property("padding-inline-end", "2.25rem"),
     css.cursor("pointer"),
     ..control()
   ])

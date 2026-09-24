@@ -1,4 +1,5 @@
-//// Calendars and date pickers.
+//// Calendars and date pickers: one date, a range, or several dates, over
+//// one month or a few side by side.
 ////
 //// ```gleam
 //// calendar.new("due", year: 2026, month: 9)
@@ -13,19 +14,27 @@
 //// |> calendar.view
 //// ```
 ////
-//// A calendar shows one month. Clicking a day selects it; the arrow keys
-//// move a day or a week, Home and End go to the ends of the week, and Page
-//// Up and Page Down press the previous and next month buttons. Selecting
-//// a day sets the hidden input called `name`, as `YYYY-MM-DD`, so it
-//// submits with a form and a live view hears it with `event.on_change`.
+//// Clicking a day selects it; the arrow keys move a day or a week, Home
+//// and End go to the ends of the week, and Page Up and Page Down press the
+//// previous and next month buttons. The choice is kept in the hidden input
+//// called `name`, so it submits with a form and a live view hears it with
+//// `live.on_value`:
 ////
-//// Changing month is the server's job: `navigation` takes the attributes
-//// of the previous and next buttons, such as click handlers in a live
-//// view. On a page without a live view, a native `<input type="date">`
-//// usually serves better.
+//// - one date, with `selected`, as `2026-09-24`;
+//// - a range, with `range`, as `2026-09-10/2026-09-14`: the first click
+////   picks the start and the second the end;
+//// - several dates, with `multiple`, as `2026-09-10,2026-09-14`: each
+////   click adds or removes a day.
+////
+//// `months` shows several months side by side, and `locale` names the
+//// months, weekdays and buttons in another language. Changing month is the
+//// server's job: `navigation` takes the attributes of the previous and
+//// next buttons, such as click handlers in a live view. On a page without
+//// a live view, a native `<input type="date">` usually serves better for a
+//// single date.
 ////
 //// `picker` puts the calendar in a popover behind a button that shows the
-//// chosen date.
+//// choice.
 
 import gleam/int
 import gleam/list
@@ -45,19 +54,59 @@ pub type Date {
   Date(year: Int, month: Int, day: Int)
 }
 
+/// What is chosen.
+pub type Selection {
+  Single(Option(Date))
+  /// A start and, once chosen, an end.
+  Range(from: Option(Date), to: Option(Date))
+  Multiple(List(Date))
+}
+
+/// The words a calendar uses. `month_names` run from January and
+/// `weekday_names` from Monday; `date_label` writes a date out in full.
+pub type Locale {
+  Locale(
+    month_names: List(String),
+    weekday_names: List(String),
+    date_label: fn(Date) -> String,
+    previous_month: String,
+    next_month: String,
+    choose_date: String,
+  )
+}
+
+pub fn english() -> Locale {
+  Locale(
+    month_names: [
+      "January", "February", "March", "April", "May", "June", "July", "August",
+      "September", "October", "November", "December",
+    ],
+    weekday_names: [
+      "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+      "Sunday",
+    ],
+    date_label: long_date,
+    previous_month: "Previous month",
+    next_month: "Next month",
+    choose_date: "Choose a date",
+  )
+}
+
 /// A calendar under construction.
 pub opaque type Calendar(msg) {
   Calendar(
     id: String,
     year: Int,
     month: Int,
-    selected: Option(Date),
+    months: Int,
+    selection: Selection,
     today: Option(Date),
     disabled: fn(Date) -> Bool,
     monday_first: Bool,
     previous: List(Attribute(msg)),
     next: List(Attribute(msg)),
     name: Option(String),
+    locale: Locale,
   )
 }
 
@@ -68,19 +117,40 @@ pub fn new(id: String, year year: Int, month month: Int) -> Calendar(msg) {
     id:,
     year:,
     month:,
-    selected: None,
+    months: 1,
+    selection: Single(None),
     today: None,
     disabled: fn(_) { False },
     monday_first: True,
     previous: [],
     next: [],
     name: None,
+    locale: english(),
   )
 }
 
-/// The selected day, if there is one.
+/// Choose one date; this one, if there is one.
 pub fn selected(calendar: Calendar(msg), date: Option(Date)) -> Calendar(msg) {
-  Calendar(..calendar, selected: date)
+  Calendar(..calendar, selection: Single(date))
+}
+
+/// Choose a range; this one, as far as it is chosen.
+pub fn range(
+  calendar: Calendar(msg),
+  from from: Option(Date),
+  to to: Option(Date),
+) -> Calendar(msg) {
+  Calendar(..calendar, selection: Range(from:, to:))
+}
+
+/// Choose any number of dates; these ones so far.
+pub fn multiple(calendar: Calendar(msg), dates: List(Date)) -> Calendar(msg) {
+  Calendar(..calendar, selection: Multiple(dates))
+}
+
+/// Show `count` months side by side, starting with the calendar's month.
+pub fn months(calendar: Calendar(msg), count: Int) -> Calendar(msg) {
+  Calendar(..calendar, months: int.max(count, 1))
 }
 
 /// Today, which is marked. The server's today may not be the user's, so
@@ -102,6 +172,11 @@ pub fn sunday_first(calendar: Calendar(msg)) -> Calendar(msg) {
   Calendar(..calendar, monday_first: False)
 }
 
+/// Name the months, weekdays and buttons in another language.
+pub fn locale(calendar: Calendar(msg), locale: Locale) -> Calendar(msg) {
+  Calendar(..calendar, locale:)
+}
+
 /// Show previous and next month buttons with these attributes.
 pub fn navigation(
   calendar: Calendar(msg),
@@ -111,7 +186,7 @@ pub fn navigation(
   Calendar(..calendar, previous:, next:)
 }
 
-/// Keep the selected day in a hidden input with this name.
+/// Keep the choice in a hidden input with this name.
 pub fn name(calendar: Calendar(msg), name: String) -> Calendar(msg) {
   Calendar(..calendar, name: Some(name))
 }
@@ -119,29 +194,33 @@ pub fn name(calendar: Calendar(msg), name: String) -> Calendar(msg) {
 /// The calendar on its own.
 pub fn view(calendar: Calendar(msg)) -> Element(msg) {
   let input = case calendar.name {
-    Some(name) -> [hidden_input(name, calendar.selected)]
+    Some(name) -> [hidden_input(name, calendar.selection)]
     None -> []
   }
   html.div(
-    [class(root_class()), attribute.data("howdy-calendar", "")],
-    list.append(input, [month(calendar)]),
+    [
+      class(root_class()),
+      attribute.data("howdy-calendar", ""),
+      attribute.data("mode", mode(calendar.selection)),
+    ],
+    list.append(input, [grids(calendar)]),
   )
 }
 
-/// A button showing the selected day, or `placeholder`, that opens the
-/// calendar in a popover. Choosing a day closes it. Give the calendar a
-/// `name` so the choice is kept.
+/// A button showing the choice, or `placeholder`, that opens the calendar
+/// in a popover. Choosing one date, or the end of a range, closes it. Give
+/// the calendar a `name` so the choice is kept.
 pub fn picker(
   calendar: Calendar(msg),
   placeholder placeholder: String,
 ) -> Element(msg) {
   let popover = calendar.id <> "-popover"
-  let #(label, mark) = case calendar.selected {
-    Some(date) -> #(long_date(date), [])
+  let #(label, mark) = case describe(calendar) {
+    Some(label) -> #(label, [])
     None -> #(placeholder, [attribute.data("placeholder", "")])
   }
   let input = case calendar.name {
-    Some(name) -> [hidden_input(name, calendar.selected)]
+    Some(name) -> [hidden_input(name, calendar.selection)]
     None -> []
   }
   html.div(
@@ -153,11 +232,20 @@ pub fn picker(
           attribute.type_("button"),
           attribute.id(calendar.id),
           attribute.attribute("popovertarget", popover),
+          attribute.data("howdy-select-trigger", ""),
           attribute.aria_haspopup("dialog"),
           attribute.style("anchor-name", anchor_name(popover)),
           ..mark
         ],
-        [html.span([attribute.data("howdy-select-value", "")], [text(label)])],
+        [
+          html.span(
+            [
+              attribute.data("howdy-select-value", ""),
+              attribute.data("howdy-placeholder", placeholder),
+            ],
+            [text(label)],
+          ),
+        ],
       ),
       html.div(
         [
@@ -165,39 +253,138 @@ pub fn picker(
           attribute.id(popover),
           attribute.popover("auto"),
           attribute.role("dialog"),
-          attribute.aria_label("Choose a date"),
+          attribute.aria_label(calendar.locale.choose_date),
           attribute.style("position-anchor", anchor_name(popover)),
         ],
         [
-          html.div([class(root_class()), attribute.data("howdy-calendar", "")], [
-            month(Calendar(..calendar, id: calendar.id <> "-calendar")),
-          ]),
+          html.div(
+            [
+              class(root_class()),
+              attribute.data("howdy-calendar", ""),
+              attribute.data("mode", mode(calendar.selection)),
+            ],
+            [grids(Calendar(..calendar, id: calendar.id <> "-calendar"))],
+          ),
         ],
       ),
     ]),
   )
 }
 
-fn hidden_input(name: String, selected: Option(Date)) -> Element(msg) {
+fn mode(selection: Selection) -> String {
+  case selection {
+    Single(_) -> "single"
+    Range(..) -> "range"
+    Multiple(_) -> "multiple"
+  }
+}
+
+/// What a picker's button says about the choice.
+fn describe(calendar: Calendar(msg)) -> Option(String) {
+  let label = calendar.locale.date_label
+  case calendar.selection {
+    Single(Some(date)) -> Some(label(date))
+    Range(from: Some(from), to: Some(to)) ->
+      Some(label(from) <> " – " <> label(to))
+    Range(from: Some(from), to: None) -> Some(label(from) <> " – …")
+    Multiple([_, ..] as dates) ->
+      Some(dates |> list.map(label) |> string.join(", "))
+    _ -> None
+  }
+}
+
+fn hidden_input(name: String, selection: Selection) -> Element(msg) {
   html.input([
     attribute.type_("hidden"),
     attribute.name(name),
-    attribute.value(case selected {
-      Some(date) -> to_iso(date)
-      None -> ""
-    }),
+    attribute.value(selection_to_value(selection)),
   ])
 }
 
-fn month(calendar: Calendar(msg)) -> Element(msg) {
-  let caption = calendar.id <> "-caption"
-  let title = month_name(calendar.month) <> " " <> int.to_string(calendar.year)
-  let nav = case calendar.previous, calendar.next {
-    [], [] -> []
-    previous, next -> [
-      nav_button(previous, "Previous month", "‹", "previous"),
-      nav_button(next, "Next month", "›", "next"),
+/// The hidden input's value for a selection.
+pub fn selection_to_value(selection: Selection) -> String {
+  case selection {
+    Single(Some(date)) -> to_iso(date)
+    Single(None) -> ""
+    Range(from: None, ..) -> ""
+    Range(from: Some(from), to: None) -> to_iso(from) <> "/"
+    Range(from: Some(from), to: Some(to)) -> to_iso(from) <> "/" <> to_iso(to)
+    Multiple(dates) -> dates |> list.map(to_iso) |> string.join(",")
+  }
+}
+
+/// Read a range as its hidden input sends it: `2026-09-10/2026-09-14`, or
+/// `2026-09-10/` while only the start is chosen.
+pub fn range_from_value(value: String) -> Result(#(Date, Option(Date)), Nil) {
+  case string.split(value, "/") {
+    [from, ""] -> from_iso(from) |> result_map(fn(from) { #(from, None) })
+    [from, to] ->
+      case from_iso(from), from_iso(to) {
+        Ok(from), Ok(to) -> Ok(#(from, Some(to)))
+        _, _ -> Error(Nil)
+      }
+    _ -> Error(Nil)
+  }
+}
+
+/// Read several dates as their hidden input sends them. Anything that is
+/// not a date is left out.
+pub fn dates_from_value(value: String) -> List(Date) {
+  value
+  |> string.split(",")
+  |> list.filter_map(from_iso)
+}
+
+fn result_map(result: Result(a, Nil), f: fn(a) -> b) -> Result(b, Nil) {
+  case result {
+    Ok(value) -> Ok(f(value))
+    Error(Nil) -> Error(Nil)
+  }
+}
+
+fn grids(calendar: Calendar(msg)) -> Element(msg) {
+  let count = calendar.months
+  html.div(
+    [class(months_class())],
+    list.repeat(Nil, count)
+      |> list.index_map(fn(_, index) {
+        let first = add_months(Date(calendar.year, calendar.month, 1), index)
+        month(calendar, first, index == 0, index == count - 1, count > 1)
+      }),
+  )
+}
+
+fn month(
+  calendar: Calendar(msg),
+  first: Date,
+  is_first: Bool,
+  is_last: Bool,
+  several: Bool,
+) -> Element(msg) {
+  let caption =
+    calendar.id <> "-caption-" <> int.to_string(first.year * 12 + first.month)
+  let title =
+    name_of_month(calendar.locale, first.month)
+    <> " "
+    <> int.to_string(first.year)
+  let shown = case calendar.previous, calendar.next {
+    [], [] -> False
+    _, _ -> True
+  }
+  let previous = case shown && is_first {
+    True -> [
+      nav_button(
+        calendar.previous,
+        calendar.locale.previous_month,
+        "‹",
+        "previous",
+      ),
     ]
+    False -> []
+  }
+  let next = case shown && is_last {
+    True -> [nav_button(calendar.next, calendar.locale.next_month, "›", "next")]
+    False -> []
   }
   let weekdays = case calendar.monday_first {
     True -> [1, 2, 3, 4, 5, 6, 7]
@@ -205,6 +392,7 @@ fn month(calendar: Calendar(msg)) -> Element(msg) {
   }
   html.div([], [
     html.div([class(heading_class())], [
+      html.div([class(nav_class())], previous),
       html.div(
         [
           class(caption_class()),
@@ -213,7 +401,7 @@ fn month(calendar: Calendar(msg)) -> Element(msg) {
         ],
         [text(title)],
       ),
-      html.div([class(nav_class())], nav),
+      html.div([class(nav_class())], next),
     ]),
     html.table(
       [
@@ -226,21 +414,39 @@ fn month(calendar: Calendar(msg)) -> Element(msg) {
           html.tr(
             [],
             list.map(weekdays, fn(day) {
+              let name = name_of_weekday(calendar.locale, day)
               html.th(
                 [
                   class(weekday_class()),
                   attribute.attribute("scope", "col"),
-                  attribute.attribute("abbr", weekday_name(day)),
+                  attribute.attribute("abbr", name),
                 ],
-                [text(string.slice(weekday_name(day), 0, 2))],
+                [text(string.slice(name, 0, 2))],
               )
             }),
           ),
         ]),
-        html.tbody([], list.map(weeks(calendar), week(calendar, _))),
+        html.tbody(
+          [],
+          list.map(weeks(calendar, first), week(calendar, first, several, _)),
+        ),
       ],
     ),
   ])
+}
+
+fn name_of_month(locale: Locale, month: Int) -> String {
+  case list.drop(locale.month_names, month - 1) {
+    [name, ..] -> name
+    [] -> int.to_string(month)
+  }
+}
+
+fn name_of_weekday(locale: Locale, day: Int) -> String {
+  case list.drop(locale.weekday_names, day - 1) {
+    [name, ..] -> name
+    [] -> int.to_string(day)
+  }
 }
 
 fn nav_button(
@@ -263,74 +469,126 @@ fn nav_button(
 
 /// The days shown: whole weeks from the one holding the 1st to the one
 /// holding the last day of the month.
-fn weeks(calendar: Calendar(msg)) -> List(List(Date)) {
-  let first = Date(calendar.year, calendar.month, 1)
+fn weeks(calendar: Calendar(msg), first: Date) -> List(List(Date)) {
   let offset = case calendar.monday_first {
     True -> weekday(first) - 1
     False -> weekday(first) % 7
   }
   let start = add_days(first, -offset)
-  let length = offset + days_in_month(calendar.year, calendar.month)
+  let length = offset + days_in_month(first.year, first.month)
   let count = { length + 6 } / 7
   list.repeat(Nil, count * 7)
   |> list.index_map(fn(_, index) { add_days(start, index) })
   |> list.sized_chunk(7)
 }
 
-fn week(calendar: Calendar(msg), days: List(Date)) -> Element(msg) {
-  // One day is in the tab order: the selected one, else today, else the
-  // first of the month.
-  let focus = case calendar.selected, calendar.today {
-    Some(date), _
-      if date.month == calendar.month && date.year == calendar.year
-    -> date
-    _, Some(date)
-      if date.month == calendar.month && date.year == calendar.year
-    -> date
-    _, _ -> Date(calendar.year, calendar.month, 1)
+fn is_chosen(selection: Selection, date: Date) -> Bool {
+  case selection {
+    Single(chosen) -> chosen == Some(date)
+    Range(from:, to:) -> from == Some(date) || to == Some(date)
+    Multiple(dates) -> list.contains(dates, date)
   }
+}
+
+fn in_range(selection: Selection, date: Date) -> Bool {
+  case selection {
+    Range(from: Some(from), to: Some(to)) ->
+      compare(date, from) == order.Gt && compare(date, to) == order.Lt
+    _ -> False
+  }
+}
+
+/// The day in the tab order: the first chosen day shown, else today, else
+/// the first of the first month.
+fn focus_day(calendar: Calendar(msg)) -> Date {
+  let shown = fn(date: Date) {
+    let first = Date(calendar.year, calendar.month, 1)
+    let last = add_months(first, calendar.months)
+    compare(date, first) != order.Lt && compare(date, last) == order.Lt
+  }
+  let chosen = case calendar.selection {
+    Single(Some(date)) -> [date]
+    Range(from: Some(from), ..) -> [from]
+    Multiple(dates) -> dates
+    _ -> []
+  }
+  case list.find(chosen, shown), calendar.today {
+    Ok(date), _ -> date
+    Error(Nil), Some(today) ->
+      case shown(today) {
+        True -> today
+        False -> Date(calendar.year, calendar.month, 1)
+      }
+    Error(Nil), None -> Date(calendar.year, calendar.month, 1)
+  }
+}
+
+fn week(
+  calendar: Calendar(msg),
+  first: Date,
+  several: Bool,
+  days: List(Date),
+) -> Element(msg) {
+  let focus = focus_day(calendar)
+  let label = calendar.locale.date_label
   html.tr(
     [],
     list.map(days, fn(date) {
-      let outside = date.month != calendar.month
-      let flags =
-        list.flatten([
-          case Some(date) == calendar.selected {
-            True -> [attribute.aria_pressed("true")]
-            False -> [attribute.aria_pressed("false")]
-          },
-          case Some(date) == calendar.today {
-            True -> [attribute.aria_current("date")]
-            False -> []
-          },
-          case outside {
-            True -> [attribute.data("outside", "")]
-            False -> []
-          },
-          case calendar.disabled(date) {
-            True -> [attribute.disabled(True)]
-            False -> []
-          },
-        ])
-      html.td([], [
-        html.button(
-          [
-            class(day_class()),
-            attribute.type_("button"),
-            attribute.data("date", to_iso(date)),
-            attribute.data("label", long_date(date)),
-            attribute.aria_label(
-              weekday_name(weekday(date)) <> ", " <> long_date(date),
+      let outside = date.month != first.month
+      case outside && several {
+        // With months side by side, a day belongs to its own month only.
+        True -> html.td([], [])
+        False -> {
+          let flags =
+            list.flatten([
+              [
+                attribute.aria_pressed(
+                  case is_chosen(calendar.selection, date) {
+                    True -> "true"
+                    False -> "false"
+                  },
+                ),
+              ],
+              case in_range(calendar.selection, date) {
+                True -> [attribute.data("in-range", "")]
+                False -> []
+              },
+              case Some(date) == calendar.today {
+                True -> [attribute.aria_current("date")]
+                False -> []
+              },
+              case outside {
+                True -> [attribute.data("outside", "")]
+                False -> []
+              },
+              case calendar.disabled(date) {
+                True -> [attribute.disabled(True)]
+                False -> []
+              },
+            ])
+          html.td([], [
+            html.button(
+              [
+                class(day_class()),
+                attribute.type_("button"),
+                attribute.data("date", to_iso(date)),
+                attribute.data("label", label(date)),
+                attribute.aria_label(
+                  name_of_weekday(calendar.locale, weekday(date))
+                  <> ", "
+                  <> label(date),
+                ),
+                attribute.tabindex(case date == focus {
+                  True -> 0
+                  False -> -1
+                }),
+                ..flags
+              ],
+              [text(int.to_string(date.day))],
             ),
-            attribute.tabindex(case date == focus {
-              True -> 0
-              False -> -1
-            }),
-            ..flags
-          ],
-          [text(int.to_string(date.day))],
-        ),
-      ])
+          ])
+        }
+      }
     }),
   )
 }
@@ -472,24 +730,13 @@ fn month_name(month: Int) -> String {
   }
 }
 
-fn weekday_name(day: Int) -> String {
-  case day {
-    1 -> "Monday"
-    2 -> "Tuesday"
-    3 -> "Wednesday"
-    4 -> "Thursday"
-    5 -> "Friday"
-    6 -> "Saturday"
-    _ -> "Sunday"
-  }
-}
-
 // -- Styles ------------------------------------------------------------------
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
   [
     root_class(),
+    months_class(),
     heading_class(),
     caption_class(),
     nav_class(),
@@ -505,6 +752,14 @@ pub fn classes() -> List(Class) {
 
 pub fn root_class() -> Class {
   css.class([css.display("inline-block"), css.color(tokens.text)])
+}
+
+pub fn months_class() -> Class {
+  css.class([
+    css.display("flex"),
+    css.flex_wrap("wrap"),
+    css.gap(rem(1.5)),
+  ])
 }
 
 pub fn heading_class() -> Class {
@@ -532,6 +787,11 @@ pub fn nav_class() -> Class {
 
 pub fn nav_button_class() -> Class {
   css.class([
+    // Arrows point the way the text runs.
+    css.selector(":dir(rtl) > span", [
+      css.display("inline-block"),
+      css.transform_("scaleX(-1)"),
+    ]),
     css.display("inline-flex"),
     css.align_items("center"),
     css.justify_content("center"),
@@ -595,6 +855,11 @@ pub fn day_class() -> Class {
       css.property("box-shadow", "inset 0 0 0 1px " <> tokens.border),
       css.font_weight("600"),
     ]),
+    // Days between a range's ends share a band of the muted colour.
+    css.selector("[data-in-range]", [
+      css.background(tokens.muted),
+      css.property("border-radius", "0"),
+    ]),
     css.selector("[aria-pressed=\"true\"]", [
       css.background(tokens.primary),
       css.color(tokens.on_primary),
@@ -625,7 +890,7 @@ pub fn trigger_class() -> Class {
     css.font_family(tokens.font_body),
     css.font_size(rem(1.0)),
     css.line_height("1.5"),
-    css.text_align("left"),
+    css.text_align("start"),
     css.cursor("pointer"),
     css.selector("[data-placeholder]", [css.color(tokens.text_muted)]),
     css.focus_visible([

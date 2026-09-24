@@ -18,6 +18,7 @@
 //// Radio buttons with the same `name` form one group: the arrow keys move
 //// between them.
 
+import gleam/json
 import howdy/ui/style.{class}
 import howdy/ui/theme/tokens
 import lustre/attribute.{type Attribute}
@@ -28,6 +29,20 @@ import sketch/css/length.{rem}
 
 pub fn checkbox(attributes: List(Attribute(msg))) -> Element(msg) {
   html.input([class(control_class()), attribute.type_("checkbox"), ..attributes])
+}
+
+/// Show a checkbox as partly checked, such as "select all" when some rows
+/// are selected. The browser draws it; checking it clears the state.
+pub fn indeterminate() -> Attribute(msg) {
+  // A property, which a live view sets directly; the attribute lets the
+  // behaviour script set it on a page rendered once.
+  attribute.property("indeterminate", json.bool(True))
+}
+
+/// The same, for a page rendered once: `howdy/ui/behaviour` sets the
+/// property when the page loads.
+pub fn indeterminate_on_load() -> Attribute(msg) {
+  attribute.data("howdy-indeterminate", "")
 }
 
 pub fn radio(attributes: List(Attribute(msg))) -> Element(msg) {

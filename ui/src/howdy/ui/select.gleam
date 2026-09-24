@@ -17,9 +17,12 @@
 ////
 //// Unlike the native select in `howdy/ui/input`, the list is styled to
 //// match the theme. The chosen value is kept in a hidden input called
-//// `name`, so it submits with a form. A live view hears the choice with
-//// `event.on_change` in `attributes`, which go on that input; include
-//// `target.value` with `server_component.include`.
+//// `name`, so it submits with a form; a live view hears it with
+//// `live.on_value(name, ...)` on an element around the select.
+////
+//// `attributes` go on the button that opens the list: `attribute.disabled`
+//// disables it, and `attribute.aria_invalid("true")` with
+//// `aria-describedby` marks it wrong and points at the message.
 ////
 //// The arrow keys, Home, End and the first letters of an option move
 //// through the list; Enter or Space chooses. Label it with
@@ -79,7 +82,6 @@ pub fn select(
       attribute.type_("hidden"),
       attribute.name(name),
       attribute.value(value),
-      ..attributes
     ]),
     html.button(
       [
@@ -88,10 +90,19 @@ pub fn select(
         attribute.id(id),
         attribute.attribute("popovertarget", listbox),
         attribute.aria_haspopup("listbox"),
+        attribute.data("howdy-select-trigger", ""),
         attribute.style("anchor-name", anchor_name(listbox)),
-        ..placeholder_mark
+        ..list.append(placeholder_mark, attributes)
       ],
-      [html.span([attribute.data("howdy-select-value", "")], [text(shown)])],
+      [
+        html.span(
+          [
+            attribute.data("howdy-select-value", ""),
+            attribute.data("howdy-placeholder", placeholder),
+          ],
+          [text(shown)],
+        ),
+      ],
     ),
     html.div(
       [
@@ -181,9 +192,12 @@ pub fn trigger_class() -> Class {
     css.font_family(tokens.font_body),
     css.font_size(rem(1.0)),
     css.line_height("1.5"),
-    css.text_align("left"),
+    css.text_align("start"),
     css.cursor("pointer"),
     css.selector("[data-placeholder]", [css.color(tokens.text_muted)]),
+    css.selector("[aria-invalid=\"true\"]", [
+      css.property("border-color", tokens.danger),
+    ]),
     css.focus_visible([
       css.outline("2px solid " <> tokens.focus),
       css.property("outline-offset", "2px"),
@@ -222,7 +236,8 @@ pub fn listbox_class() -> Class {
 pub fn option_class() -> Class {
   css.class([
     css.position("relative"),
-    css.padding_("0.375rem 2rem 0.375rem " <> tokens.space_2),
+    css.padding_("0.375rem " <> tokens.space_2),
+    css.property("padding-inline-end", "2rem"),
     css.property("border-radius", tokens.radius_small),
     css.font_size(rem(0.875)),
     css.cursor("pointer"),
@@ -238,7 +253,7 @@ pub fn option_class() -> Class {
     css.selector("[aria-selected=\"true\"]::after", [
       css.content("\"\""),
       css.position("absolute"),
-      css.property("right", "0.75rem"),
+      css.property("inset-inline-end", "0.75rem"),
       css.property("top", "45%"),
       css.property("width", "0.3rem"),
       css.property("height", "0.55rem"),

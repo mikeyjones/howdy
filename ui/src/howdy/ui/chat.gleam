@@ -19,13 +19,22 @@
 //// script: it is laid out from the bottom, and the browser anchors the
 //// scroll position. It is a `log` for screen readers, so they announce new
 //// messages. Give each message an `id` to link to it.
+////
+//// Older history can be added above the first message, such as when
+//// `on_older` asks for it, and the reader's place stays put. `remember`
+//// brings a reader back to where they were after a reload, and
+//// `start_at` opens the conversation at a message, such as the first
+//// unread one.
 
+import gleam/dynamic/decode
 import gleam/int
+import gleam/list
 import howdy/ui/style.{class}
 import howdy/ui/theme/tokens
 import lustre/attribute.{type Attribute}
 import lustre/element.{type Element, text}
 import lustre/element/html
+import lustre/event
 import sketch/css.{type Class}
 import sketch/css/length.{percent, rem}
 
@@ -35,39 +44,132 @@ pub type Side {
   Outgoing
 }
 
+/// A bubble's surface.
+pub type Variant {
+  /// The primary colour: the reader's own messages, by default.
+  Filled
+  /// The muted colour: everyone else's messages, by default.
+  Muted
+  Outline
+  /// No surface, for long replies that read better as plain text.
+  Ghost
+  /// The danger colour, such as for a message that failed to send.
+  Danger
+}
+
+/// How a note or status line stands out.
+pub type Tone {
+  Neutral
+  /// The primary colour, such as for "New messages".
+  Accent
+  /// The danger colour, such as for "Deploy failed".
+  Critical
+}
+
 /// The scrolling list of messages. Size it with a height or by placing it
-/// in a flex column; label it with `aria-label`.
+/// in a flex column; label it with `aria-label`. When it is scrolled back
+/// from the newest message, a "Jump to newest" button appears.
 pub fn conversation(
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {
-  html.div([class(scroller_class()), attribute.tabindex(0), ..attributes], [
-    html.div([class(log_class()), attribute.role("log")], children),
+  conversation_with("Jump to newest", attributes, children)
+}
+
+/// A conversation whose jump button says something else, such as in
+/// another language.
+pub fn conversation_with(
+  jump: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  html.div([class(frame_class()), attribute.data("howdy-conversation", "")], [
+    html.div([class(scroller_class()), attribute.tabindex(0), ..attributes], [
+      html.div([class(log_class()), attribute.role("log")], children),
+    ]),
+    html.button(
+      [
+        class(latest_class()),
+        attribute.type_("button"),
+        attribute.data("howdy-latest", ""),
+        attribute.hidden(True),
+      ],
+      [text(jump), html.span([attribute.aria_hidden(True)], [text(" ↓")])],
+    ),
   ])
 }
 
-/// One message: an avatar beside a header and the content. Pass
-/// `element.none()` for no avatar, and `[]` for no header.
+/// Keep the reader's place in this conversation, named `key`, for the rest
+/// of the browser session, and go back to it when the page is reloaded.
+/// Put it in the conversation's attributes.
+pub fn remember(key: String) -> Attribute(msg) {
+  attribute.data("howdy-remember", key)
+}
+
+/// Open the conversation with the message with this id at the top, such as
+/// the first unread one, instead of at the newest. A remembered place wins.
+pub fn start_at(id: String) -> Attribute(msg) {
+  attribute.data("howdy-start-at", id)
+}
+
+/// Hear when the reader has scrolled back near the oldest message shown,
+/// to load older ones and add them above it. It is sent once until more
+/// messages arrive. Put it in the conversation's attributes.
+pub fn on_older(message: msg) -> Attribute(msg) {
+  event.on("howdy-older", decode.success(message))
+}
+
+/// One message, or a run of messages from one person: an avatar beside a
+/// header, the content and a footer. Several bubbles in the content join
+/// into one group. Pass `element.none()` for no avatar, and `[]` for no
+/// header or footer. Give it an `id` in `attributes` to link to it with
+/// `jump`.
 pub fn message(
   side: Side,
+  attributes attributes: List(Attribute(msg)),
   avatar avatar: Element(msg),
   header header: List(Element(msg)),
   content content: List(Element(msg)),
+  footer footer: List(Element(msg)),
 ) -> Element(msg) {
   let header = case header {
     [] -> element.none()
     _ -> html.div([class(header_class())], header)
   }
-  html.article([class(message_class(side))], [
+  let footer = case footer {
+    [] -> element.none()
+    _ -> html.div([class(footer_class())], footer)
+  }
+  html.article([class(message_class(side)), ..attributes], [
     avatar,
-    html.div([class(body_class(side))], [header, ..content]),
+    html.div([class(body_class(side))], [
+      header,
+      ..list.append(content, [footer])
+    ]),
   ])
 }
 
 /// A speech bubble: filled with the primary colour for your own messages,
 /// the muted colour for everyone else's.
 pub fn bubble(side: Side, children: List(Element(msg))) -> Element(msg) {
-  html.div([class(bubble_class(side))], children)
+  let variant = case side {
+    Incoming -> Muted
+    Outgoing -> Filled
+  }
+  styled_bubble(side, variant, children)
+}
+
+/// A bubble with another surface. `side` still decides which corner points
+/// at its sender.
+pub fn styled_bubble(
+  side: Side,
+  variant: Variant,
+  children: List(Element(msg)),
+) -> Element(msg) {
+  html.div(
+    [class(bubble_class(side, variant)), attribute.data("bubble", "")],
+    children,
+  )
 }
 
 /// A row of reactions under a message.
@@ -88,27 +190,95 @@ pub fn reaction(
   )
 }
 
-/// A line of text between messages, such as a date or "Grace joined".
+/// A line between messages, such as a date or "Grace joined".
 pub fn note(children: List(Element(msg))) -> Element(msg) {
-  html.div([class(note_class())], children)
+  tinted_note(Neutral, children)
+}
+
+/// A line between messages in a tone, such as "New messages" in the
+/// accent colour.
+pub fn tinted_note(tone: Tone, children: List(Element(msg))) -> Element(msg) {
+  html.div([class(note_class(tone)), attribute.role("separator")], [
+    html.span([], children),
+  ])
+}
+
+/// A line of news from the system rather than a person, with an icon:
+/// "Deploy finished", "Grace changed the topic".
+pub fn status(
+  tone: Tone,
+  icon: Element(msg),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  html.div([class(status_class(tone))], [
+    html.span([class(status_icon_class()), attribute.aria_hidden(True)], [icon]),
+    html.span([], children),
+  ])
+}
+
+/// A button that scrolls the conversation to the message with this id and
+/// highlights it for a moment, such as a reply's quote of what it answers.
+pub fn jump(id: String, children: List(Element(msg))) -> Element(msg) {
+  html.button(
+    [
+      class(jump_class()),
+      attribute.type_("button"),
+      attribute.data("howdy-jump", id),
+    ],
+    children,
+  )
 }
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [
-    scroller_class(),
-    log_class(),
-    message_class(Incoming),
-    message_class(Outgoing),
-    body_class(Incoming),
-    body_class(Outgoing),
-    header_class(),
-    bubble_class(Incoming),
-    bubble_class(Outgoing),
-    reactions_class(),
-    reaction_class(),
-    note_class(),
-  ]
+  let sides = [Incoming, Outgoing]
+  let variants = [Filled, Muted, Outline, Ghost, Danger]
+  let tones = [Neutral, Accent, Critical]
+  list.flatten([
+    [frame_class(), scroller_class(), log_class(), latest_class()],
+    list.map(sides, message_class),
+    list.map(sides, body_class),
+    [header_class(), footer_class()],
+    list.flat_map(sides, fn(side) {
+      list.map(variants, fn(variant) { bubble_class(side, variant) })
+    }),
+    [reactions_class(), reaction_class(), jump_class(), status_icon_class()],
+    list.map(tones, note_class),
+    list.map(tones, status_class),
+  ])
+}
+
+pub fn frame_class() -> Class {
+  css.class([
+    css.position("relative"),
+    css.display("flex"),
+    css.flex_direction("column"),
+    css.property("min-height", "0"),
+  ])
+}
+
+pub fn latest_class() -> Class {
+  css.class([
+    css.position("absolute"),
+    css.property("bottom", tokens.space_3),
+    css.property("inset-inline-start", "50%"),
+    css.transform_("translateX(-50%)"),
+    css.padding_(tokens.space_1 <> " " <> tokens.space_3),
+    css.border("1px solid " <> tokens.border),
+    css.property("border-radius", "999px"),
+    css.background(tokens.surface),
+    css.color(tokens.text),
+    css.box_shadow("0 4px 12px -4px rgb(0 0 0 / 0.3)"),
+    css.font_family(tokens.font_body),
+    css.font_size(rem(0.8125)),
+    css.cursor("pointer"),
+    css.selector("[hidden]", [css.display("none")]),
+    css.selector(":dir(rtl)", [css.transform_("translateX(50%)")]),
+    css.focus_visible([
+      css.outline("2px solid " <> tokens.focus),
+      css.property("outline-offset", "2px"),
+    ]),
+  ])
 }
 
 pub fn scroller_class() -> Class {
@@ -148,20 +318,41 @@ pub fn message_class(side: Side) -> Class {
     css.align_items("flex-end"),
     css.gap(rem(0.5)),
     css.property("scroll-margin", "1rem"),
+    css.property("border-radius", tokens.radius_medium),
+    css.transition("background 300ms"),
+    // Picked out for a moment after a `jump` to it.
+    css.selector("[data-flash]", [css.background(tokens.muted)]),
   ])
 }
 
 pub fn body_class(side: Side) -> Class {
-  let align = case side {
-    Incoming -> "flex-start"
-    Outgoing -> "flex-end"
+  let #(align, joined) = case side {
+    Incoming -> #("flex-start", "border-start-start-radius")
+    Outgoing -> #("flex-end", "border-start-end-radius")
   }
   css.class([
     css.display("flex"),
     css.flex_direction("column"),
     css.align_items(align),
-    css.gap(rem(0.25)),
+    css.gap(rem(0.125)),
     css.property("max-width", "min(36rem, 80%)"),
+    // Bubbles in a run join: each after the first squares its corner on
+    // the sender's side, below the one before.
+    css.selector(" > [data-bubble] + [data-bubble]", [
+      css.property(joined, tokens.radius_small),
+    ]),
+  ])
+}
+
+pub fn footer_class() -> Class {
+  css.class([
+    css.display("flex"),
+    css.flex_wrap("wrap"),
+    css.align_items("center"),
+    css.gap(rem(0.5)),
+    css.padding_("0.125rem " <> tokens.space_1 <> " 0"),
+    css.font_size(rem(0.75)),
+    css.color(tokens.text_muted),
   ])
 }
 
@@ -173,26 +364,37 @@ pub fn header_class() -> Class {
   ])
 }
 
-pub fn bubble_class(side: Side) -> Class {
-  let #(background, colour, corner) = case side {
-    Incoming -> #(tokens.muted, tokens.text, "border-bottom-left-radius")
-    Outgoing -> #(
-      tokens.primary,
-      tokens.on_primary,
-      "border-bottom-right-radius",
-    )
+pub fn bubble_class(side: Side, variant: Variant) -> Class {
+  let corner = case side {
+    Incoming -> "border-end-start-radius"
+    Outgoing -> "border-end-end-radius"
+  }
+  let surface = case variant {
+    Filled -> [css.background(tokens.primary), css.color(tokens.on_primary)]
+    Muted -> [css.background(tokens.muted), css.color(tokens.text)]
+    Outline -> [
+      css.background(tokens.surface),
+      css.color(tokens.text),
+      css.border("1px solid " <> tokens.border),
+    ]
+    Ghost -> [
+      css.background("transparent"),
+      css.color(tokens.text),
+      css.property("padding-inline", "0"),
+    ]
+    Danger -> [css.background(tokens.danger), css.color(tokens.on_danger)]
   }
   css.class([
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
     css.property("border-radius", tokens.radius_large),
     css.property(corner, tokens.radius_small),
-    css.background(background),
-    css.color(colour),
-    css.font_size(rem(0.9375)),
-    css.line_height("1.45"),
-    css.property("overflow-wrap", "anywhere"),
-    css.white_space("pre-wrap"),
-    css.max_width(percent(100)),
+    ..list.append(surface, [
+      css.font_size(rem(0.9375)),
+      css.line_height("1.45"),
+      css.property("overflow-wrap", "anywhere"),
+      css.white_space("pre-wrap"),
+      css.max_width(percent(100)),
+    ])
   ])
 }
 
@@ -221,22 +423,86 @@ pub fn reaction_class() -> Class {
   ])
 }
 
-pub fn note_class() -> Class {
+fn tone_colour(tone: Tone) -> String {
+  case tone {
+    Neutral -> tokens.text_muted
+    Accent -> tokens.primary
+    Critical -> tokens.danger
+  }
+}
+
+pub fn note_class(tone: Tone) -> Class {
+  let line = case tone {
+    Neutral -> tokens.border
+    _ -> tone_colour(tone)
+  }
   css.class([
     css.display("flex"),
     css.align_items("center"),
     css.gap(rem(0.75)),
     css.font_size(rem(0.75)),
-    css.color(tokens.text_muted),
+    css.font_weight(case tone {
+      Neutral -> "400"
+      _ -> "500"
+    }),
+    css.color(tone_colour(tone)),
     css.before([
       css.content("\"\""),
       css.property("flex", "1"),
-      css.property("border-top", "1px solid " <> tokens.border),
+      css.property("border-top", "1px solid " <> line),
     ]),
     css.after([
       css.content("\"\""),
       css.property("flex", "1"),
-      css.property("border-top", "1px solid " <> tokens.border),
+      css.property("border-top", "1px solid " <> line),
+    ]),
+  ])
+}
+
+pub fn status_class(tone: Tone) -> Class {
+  css.class([
+    css.display("flex"),
+    css.align_items("center"),
+    css.justify_content("center"),
+    css.gap(rem(0.5)),
+    css.font_size(rem(0.8125)),
+    css.color(case tone {
+      Neutral -> tokens.text_muted
+      _ -> tone_colour(tone)
+    }),
+  ])
+}
+
+pub fn status_icon_class() -> Class {
+  css.class([
+    css.display("inline-flex"),
+    css.align_items("center"),
+    css.justify_content("center"),
+    css.property("width", "1.25rem"),
+    css.property("height", "1.25rem"),
+    css.property("border-radius", "999px"),
+    css.background(tokens.muted),
+    css.font_size(rem(0.75)),
+  ])
+}
+
+pub fn jump_class() -> Class {
+  css.class([
+    css.display("block"),
+    css.padding_(tokens.space_1 <> " " <> tokens.space_2),
+    css.border("0"),
+    css.property("border-inline-start", "3px solid " <> tokens.border),
+    css.property("border-radius", tokens.radius_small),
+    css.background(tokens.muted),
+    css.color(tokens.text_muted),
+    css.font_family(tokens.font_body),
+    css.font_size(rem(0.8125)),
+    css.text_align("start"),
+    css.cursor("pointer"),
+    css.hover([css.color(tokens.text)]),
+    css.focus_visible([
+      css.outline("2px solid " <> tokens.focus),
+      css.property("outline-offset", "2px"),
     ]),
   ])
 }

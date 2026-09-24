@@ -31,8 +31,9 @@ fn class_of(class: css.Class) -> String {
 
 pub fn every_variant_and_size_has_its_own_class_test() {
   let classes = button.classes()
-  assert list.length(classes) == 24
-  assert list.length(list.unique(list.map(classes, class_of))) == 24
+  // Six variants in seven sizes.
+  assert list.length(classes) == 48
+  assert list.length(list.unique(list.map(classes, class_of))) == 48
   assert button.button_class(button.Ghost)
     == button.sized_class(button.Ghost, button.Medium)
 }
