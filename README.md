@@ -271,6 +271,9 @@ checks and permissions scoped to an application or organization.
 
 The package accepts a configured Gloo Repo (PostgreSQL or SQLite), owns its
 schema, and ships explicit, checksummed migrations.
+[`howdy_database`](database/README.md) provides those migrations and the
+portable transactions beneath them, and applications can use it for their own
+tables, with or without auth.
 See [the runnable example](examples/auth/README.md) and the package documentation
 for setup and current scope; enterprise federation is not yet
 implemented.
@@ -640,9 +643,10 @@ benchmarks. Generated `build/` directories are ignored throughout the repository
 
 ### Reserved optional-package modules
 
-The core package reserves `howdy/auth`, every `howdy/auth/*` module,
-`howdy/authorization` and `howdy/migration` for the optional `howdy_auth`
-package. Core must not define these modules: Gleam/BEAM module names are
+The core package reserves `howdy/auth`, every `howdy/auth/*` module and
+`howdy/authorization` for the optional `howdy_auth` package, and
+`howdy/database` and `howdy/migration` for `howdy_database`. Core must not
+define these modules: Gleam/BEAM module names are
 global across dependencies. CI runs `scripts/check-auth-namespace.sh` to
 reject collisions. Applications should put their own modules in their own
 namespace.

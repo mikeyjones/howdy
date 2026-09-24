@@ -1,12 +1,12 @@
 import gleeunit/should
 
-@external(erlang, "howdy_auth_test_ffi", "lock_serializes")
+@external(erlang, "howdy_database_test_ffi", "lock_serializes")
 fn lock_serializes() -> Bool
 
-@external(erlang, "howdy_auth_test_ffi", "lock_reentrant")
+@external(erlang, "howdy_database_test_ffi", "lock_reentrant")
 fn lock_reentrant() -> Bool
 
-@external(erlang, "howdy_auth_test_ffi", "lock_holder_exit")
+@external(erlang, "howdy_database_test_ffi", "lock_holder_exit")
 fn lock_holder_exit() -> Bool
 
 pub fn concurrent_lock_holders_never_overlap_test() {

@@ -1,126 +1,8 @@
 -module(howdy_auth_ffi).
--export([now/0, with_repo_lock/2, normalize_password/1, canonical_host/1, cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1,
+-export([now/0, normalize_password/1, canonical_host/1, cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1,
          sessions_new/0, sessions_put/5, sessions_get/2, sessions_list/2, sessions_delete/3, sessions_delete_user/3, sessions_prune/2]).
 
 now() -> erlang:system_time(second).
-
-%% A fair mutex per Repo. One small server hands each Repo's lock to waiters
-%% in arrival order, so contention costs a message round trip rather than the
-%% randomised sleeps of global:trans. Run executes in the calling process,
-%% which keeps Gloo's transaction and the caller's mailbox where they belong.
-%% The lock is reentrant within a process and is released if its holder dies.
-with_repo_lock(Repo, Run) ->
-    Key = {howdy_auth_repo_lock, Repo},
-    case get(Key) of
-        true ->
-            Run();
-        _ ->
-            {Server, Ref} = acquire(Repo),
-            put(Key, true),
-            try
-                Run()
-            after
-                erase(Key),
-                Server ! {release, self(), Repo},
-                erlang:demonitor(Ref, [flush])
-            end
-    end.
-
-acquire(Repo) ->
-    Server = server(),
-    Ref = erlang:monitor(process, Server),
-    Server ! {acquire, self(), Ref, Repo},
-    receive
-        {granted, Ref} -> {Server, Ref};
-        %% The server died before granting; a fresh one holds no locks.
-        {'DOWN', Ref, process, _, _} -> acquire(Repo)
-    end.
-
-server() ->
-    case whereis(howdy_auth_repo_locks) of
-        undefined ->
-            %% Unlinked: the server must outlive whichever request started it.
-            %% Losing the registration race just exits the spare process.
-            Pid = spawn(fun() ->
-                try register(howdy_auth_repo_locks, self()) of
-                    true ->
-                        ets:new(howdy_auth_cache_versions, [named_table, public, set]),
-                        ets:insert(howdy_auth_cache_versions, {generation, erlang:unique_integer([positive, monotonic])}),
-                        serve(#{})
-                catch
-                    error:badarg -> ok
-                end
-            end),
-            Ref = erlang:monitor(process, Pid),
-            wait_registered(Pid, Ref);
-        Pid ->
-            Pid
-    end.
-
-wait_registered(Pid, Ref) ->
-    case whereis(howdy_auth_repo_locks) of
-        undefined ->
-            receive
-                {'DOWN', Ref, process, _, _} -> server()
-            after 1 ->
-                wait_registered(Pid, Ref)
-            end;
-        Registered ->
-            erlang:demonitor(Ref, [flush]),
-            Registered
-    end.
-
-%% Locks maps Repo => {Holder, HolderMonitor, Waiters}, where Waiters is a
-%% queue of {Pid, GrantRef, Monitor}.
-serve(Locks) ->
-    receive
-        {acquire, Pid, Ref, Repo} ->
-            Monitor = erlang:monitor(process, Pid),
-            case Locks of
-                #{Repo := {Holder, HolderMonitor, Waiters}} ->
-                    Waiting = queue:in({Pid, Ref, Monitor}, Waiters),
-                    serve(Locks#{Repo := {Holder, HolderMonitor, Waiting}});
-                _ ->
-                    Pid ! {granted, Ref},
-                    serve(Locks#{Repo => {Pid, Monitor, queue:new()}})
-            end;
-        {release, Pid, Repo} ->
-            case Locks of
-                #{Repo := {Pid, Monitor, Waiters}} ->
-                    erlang:demonitor(Monitor, [flush]),
-                    serve(grant_next(Repo, Waiters, Locks));
-                _ ->
-                    serve(Locks)
-            end;
-        {'DOWN', Monitor, process, Pid, _} ->
-            serve(maps:fold(
-                fun(Repo, {Holder, HolderMonitor, Waiters}, Acc) ->
-                    case HolderMonitor of
-                        Monitor ->
-                            grant_next(Repo, Waiters, Acc);
-                        _ ->
-                            Alive = queue:filter(
-                                fun({P, _, M}) -> not (P =:= Pid andalso M =:= Monitor) end,
-                                Waiters
-                            ),
-                            Acc#{Repo := {Holder, HolderMonitor, Alive}}
-                    end
-                end,
-                Locks,
-                Locks
-            ));
-        _ ->
-            serve(Locks)
-    end.
-
-grant_next(Repo, Waiters, Locks) ->
-    case queue:out(Waiters) of
-        {{value, {Pid, Ref, Monitor}}, Rest} ->
-            Pid ! {granted, Ref},
-            Locks#{Repo := {Pid, Monitor, Rest}};
-        {empty, _} ->
-            maps:remove(Repo, Locks)
-    end.
 
 normalize_password(Value) -> unicode:characters_to_nfc_binary(Value).
 
@@ -130,15 +12,30 @@ normalize_password(Value) -> unicode:characters_to_nfc_binary(Value).
 %% slow read cannot install a stale grant after a mutation has committed.
 cache_new() -> ets:new(howdy_auth_cache, [public, set, {read_concurrency, true}]).
 
-cache_generation() ->
-    Server = server(),
-    try {Server, ets:lookup_element(howdy_auth_cache_versions, generation, 2)}
-    catch error:badarg -> cache_generation() end.
+%% One counter for the life of the VM, so a generation is never reused. The
+%% shared lock decides the race to create it.
+cache_versions() ->
+    case persistent_term:get(howdy_auth_cache_versions, undefined) of
+        undefined ->
+            howdy_database_ffi:with_lock(howdy_auth_cache_versions, fun() ->
+                case persistent_term:get(howdy_auth_cache_versions, undefined) of
+                    undefined ->
+                        Versions = atomics:new(1, []),
+                        persistent_term:put(howdy_auth_cache_versions, Versions),
+                        Versions;
+                    Versions ->
+                        Versions
+                end
+            end);
+        Versions ->
+            Versions
+    end.
+
+cache_generation() -> atomics:get(cache_versions(), 1).
 
 cache_invalidate() ->
-    _ = cache_generation(),
-    try ets:update_counter(howdy_auth_cache_versions, generation, 1), nil
-    catch error:badarg -> cache_invalidate() end.
+    atomics:add(cache_versions(), 1, 1),
+    nil.
 
 cache_run(Table, Key, Seconds, Run) ->
     case get(howdy_auth_cache_dirty) of
@@ -160,7 +57,7 @@ cache_read(Table, Key, Seconds, Run) ->
                     %% Bound memory independently of the number of distinct
                     %% sessions/permissions an application asks about.
                     try
-                        with_repo_lock({auth_cache, Table}, fun() ->
+                        howdy_database_ffi:with_lock({auth_cache, Table}, fun() ->
                             case ets:info(Table, size) >= 10000 of
                                 true -> ets:delete_all_objects(Table);
                                 false -> ok

@@ -16,6 +16,7 @@ import howdy/auth/internal/token
 import howdy/auth/secret
 import howdy/auth/user
 import howdy/auth/users
+import howdy/database.{Postgres}
 import howdy/migration
 import howdy/service
 import support.{count, exec, fixture, signup, with_repo}
@@ -129,7 +130,7 @@ pub fn postgres_keeps_instants_as_timestamps_test() {
   let timestamps =
     "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = current_schema() AND table_name IN ('howdy_auth_users', 'howdy_auth_groups') AND column_name IN ('created_at', 'updated_at') AND data_type = 'timestamp with time zone'"
   case db.backend(database) {
-    Ok(db.Postgres) -> {
+    Ok(Postgres) -> {
       assert count(database, timestamps) == 4
     }
     _ -> Nil
@@ -198,7 +199,7 @@ fn take(items: List(a), n: Int) -> List(a) {
 pub fn per_database_sql_runs_only_its_own_variant_test() {
   use database <- with_repo
   let #(mine, theirs) = case db.backend(database) {
-    Ok(db.Postgres) -> #("app_postgres", "app_sqlite")
+    Ok(Postgres) -> #("app_postgres", "app_sqlite")
     _ -> #("app_sqlite", "app_postgres")
   }
   let package =

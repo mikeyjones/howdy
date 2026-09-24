@@ -212,7 +212,11 @@ In this repository, add the optional package using a path dependency:
 ```toml
 [dependencies]
 howdy_auth = { path = "../howdy-v2/auth" }
+howdy_database = { path = "../howdy-v2/database" }
 ```
+
+[`howdy_database`](../database/README.md) provides `howdy/migration` and the
+transactions auth runs on. Applications can use it for their own tables too.
 
 Build the native password dependency once before building or running the app:
 
@@ -407,16 +411,20 @@ let assert Ok(identity) = auth.new(
 let assert Ok(permissions) = authorization.new(db)
 ```
 
-PostgreSQL can use the application's existing pooled Repo. SQLite can use either
-an in-memory Repo or a file-backed one. Configure foreign keys and a suitable
-busy timeout in the application, just as the Howdy template does.
+PostgreSQL can use the application's existing pooled Repo;
+`howdy/database/postgres` from `howdy_database` opens one from `DATABASE_URL`
+with TLS, UTC and session timeouts. SQLite can use either an in-memory Repo or
+a file-backed one. Configure foreign keys and a suitable busy timeout in the
+application, just as the Howdy template does; `database.sqlite_defaults(db)`
+sets both.
 
 **SQLite connection sharing:** Gloo 1.x exposes one connection per SQLite Repo.
 Howdy serializes its own operations on that Repo, first come first served, but cannot serialize unrelated
-application calls made directly through Gloo. If the application also performs
-concurrent database operations, supply a dedicated configured SQLite Repo for
-auth, pointing at the same database file. Pass that same auth Repo to both auth
-and authorization. PostgreSQL's pool reserves transaction connections, so this
+application calls made directly through Gloo. Application code that goes
+through `howdy/database` shares auth's lock and can safely share its Repo. If
+the application also performs concurrent database operations directly through
+Gloo, supply a dedicated configured SQLite Repo for auth, pointing at the same
+database file. Pass that same auth Repo to both auth and authorization. PostgreSQL's pool reserves transaction connections, so this
 restriction does not apply there. Do not invoke auth operations inside a
 caller-managed transaction; auth owns its operation transactions.
 

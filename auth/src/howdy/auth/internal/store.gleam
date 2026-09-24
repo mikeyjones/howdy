@@ -21,6 +21,7 @@ import howdy/auth/internal/security_store
 import howdy/auth/internal/token
 import howdy/auth/policy.{type Policy}
 import howdy/auth/user.{type User}
+import howdy/database.{Postgres}
 import howdy/service
 
 /// The columns `user.row` decodes, from the users table under alias `u`.
@@ -1306,7 +1307,7 @@ pub fn rekey_users(conn: Repo, per_group: Bool) -> service.Result(Nil) {
 /// values must therefore be written for PostgreSQL only, or chunked like this.
 fn insert_batch(conn: Repo) -> Int {
   case db.backend(conn) {
-    Ok(db.Postgres) -> 100
+    Ok(Postgres) -> 100
     _ -> 3
   }
 }

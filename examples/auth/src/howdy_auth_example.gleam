@@ -1,7 +1,10 @@
 import database
+import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/io
+import gleam/json
 import gleam/option.{None, Some}
+import gloo/repo.{type Repo}
 import howdy
 import howdy/auth
 import howdy/auth/mfa
@@ -11,10 +14,14 @@ import howdy/auth/routes
 import howdy/auth/secret
 import howdy/auth/user
 import howdy/authorization as access
+import howdy/body
 import howdy/controller
 import howdy/guard
+import howdy/migration
+import howdy/service
+import notes
 
-pub fn app(identity: auth.Auth, permissions: access.Authorization) {
+pub fn app(db: Repo, identity: auth.Auth, permissions: access.Authorization) {
   let account =
     controller.guarded("/account", auth.required(identity))
     |> controller.get("/me", fn(ctx) {
@@ -26,6 +33,20 @@ pub fn app(identity: auth.Auth, permissions: access.Authorization) {
         access.require_permission(permissions, "reports.read", access.Global),
       )
       controller.text(ctx, "You can read reports.")
+    })
+    // Application-owned rows, kept beside auth's through howdy/database.
+    |> controller.get("/notes", fn(ctx) {
+      notes.list(db, ctx.guard.user)
+      |> service.respond(ctx, json.array(_, notes.to_json))
+    })
+    |> controller.post("/notes", fn(ctx) {
+      use title <- body.json(ctx, decode.at(["title"], decode.string))
+      notes.create(db, ctx.guard.user, title)
+      |> service.created(ctx, notes.to_json)
+    })
+    |> controller.delete("/notes/:id", fn(ctx) {
+      let assert Ok(id) = controller.param(ctx, "id")
+      notes.delete(db, ctx.guard.user, id) |> service.no_content(ctx)
     })
     |> controller.build()
 
@@ -43,6 +64,8 @@ pub fn app(identity: auth.Auth, permissions: access.Authorization) {
 
 pub fn main() {
   let db = database.connect()
+  // Refuse to start against a schema `gleam run -m migrate` has not caught up.
+  let assert Ok(_) = migration.check(db, notes.schema())
   // Local demonstration only. Real applications deliver tokens privately by
   // email and must never send them to logs or the browser that requested them.
   let assert Ok(identity) =
@@ -54,8 +77,7 @@ pub fn main() {
         auth.EmailChange -> "Confirm your new email address"
         auth.EmailChangeApproval ->
           "Approve moving your account to a new email address"
-        auth.EmailChanged ->
-          "Your account now uses a different email address"
+        auth.EmailChanged -> "Your account now uses a different email address"
         auth.PasswordChanged ->
           "Your password was changed; reset it by email if this was not you"
         auth.SignIn -> "Your sign-in token"
@@ -81,9 +103,8 @@ pub fn main() {
       identity
     }
   }
-  // This example has no application-owned user data to clean up.
-  let identity =
-    auth.with_account_deletion(identity, fn(_repo, _user) { Ok(Nil) })
+  // Application-owned rows go in the same transaction as the account.
+  let identity = auth.with_account_deletion(identity, notes.delete_all)
   let identity = auth.allow_registration(identity)
   let assert Ok(identity) = auth.with_passwords(identity)
   let assert Ok(identity) = auth.with_passkeys(identity, "Howdy demo")
@@ -104,7 +125,7 @@ pub fn main() {
       by: user.System,
     )
   let assert Ok(_) =
-    app(identity, permissions)
+    app(db, identity, permissions)
     |> howdy.bind(to: "127.0.0.1")
     |> howdy.start()
   process.sleep_forever()

@@ -20,7 +20,7 @@ fn read(cache: Cache) -> Option(#(String, Int))
 @external(erlang, "howdy_auth_oidc_ffi", "keys_write")
 fn write(cache: Cache, body: String, until: Int) -> Nil
 
-@external(erlang, "howdy_auth_ffi", "with_repo_lock")
+@external(erlang, "howdy_database_ffi", "with_lock")
 fn locked(
   cache: Cache,
   run: fn() -> service.Result(String),
@@ -54,7 +54,7 @@ fn read_keyed(cache: Cache, key: String) -> Option(#(String, Int))
 @external(erlang, "howdy_auth_oidc_ffi", "keys_write")
 fn write_keyed(cache: Cache, key: String, body: String, until: Int) -> Nil
 
-@external(erlang, "howdy_auth_ffi", "with_repo_lock")
+@external(erlang, "howdy_database_ffi", "with_lock")
 fn locked_on(
   key: #(Cache, String),
   run: fn() -> service.Result(String),

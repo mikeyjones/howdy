@@ -2,6 +2,8 @@
 //// The list order is the dependency order. SQL must not contain transaction
 //// control statements. Published migrations are immutable; append new ones.
 
+import gleam/bit_array
+import gleam/crypto
 import gleam/dynamic/decode
 import gleam/int
 import gleam/json
@@ -11,13 +13,32 @@ import gleam/string
 import gloo/migration as gloo_migration
 import gloo/repo.{type Repo}
 import gloo/sql
-import howdy/auth/internal/cache
-import howdy/auth/internal/database as db
-import howdy/auth/internal/token
+import howdy/database as db
 import howdy/service
 
+/// A set of migrations owning the schema namespace `<name>_`.
 pub type Package {
   Package(name: String, migrations: List(gloo_migration.Migration))
+}
+
+type Hook =
+  fn(fn() -> service.Result(Nil)) -> service.Result(Nil)
+
+@external(erlang, "howdy_database_ffi", "around_runs")
+fn register(name: String, hook: Hook) -> Nil
+
+@external(erlang, "howdy_database_ffi", "run_hooks")
+fn hooks() -> List(Hook)
+
+/// Bracket every later `run` on this node, whichever packages it applies, for
+/// a module that keeps state derived from the database in memory, such as a
+/// cache to invalidate. Any package's migration may rewrite another's rows.
+/// `hook` must call the function it is given exactly once and return its
+/// result; it runs outside the migration transaction. Registering `name`
+/// again replaces its hook. A separate deployment command has no such state
+/// and registers nothing.
+pub fn around_runs(name: String, hook: Hook) -> Nil {
+  register(name, hook)
 }
 
 const postgres_marker = "\n-- howdy:postgres\n"
@@ -73,7 +94,7 @@ pub fn run(database: Repo, packages: List(Package)) -> service.Result(Nil) {
         "migration package names must be unique, nonempty lowercase identifiers",
       ))
     True -> {
-      use <- cache.changing
+      use <- bracket(hooks())
       use conn <- db.transaction(database)
       use _ <- result.try(db.lock_migrations(conn))
       use _ <- result.try(db.exec(conn, ledger))
@@ -94,6 +115,16 @@ pub fn run(database: Repo, packages: List(Package)) -> service.Result(Nil) {
   }
 }
 
+fn bracket(
+  hooks: List(Hook),
+  run: fn() -> service.Result(Nil),
+) -> service.Result(Nil) {
+  case hooks {
+    [] -> run()
+    [hook, ..rest] -> hook(fn() { bracket(rest, run) })
+  }
+}
+
 /// Check compatibility without applying migrations. An older runtime refuses
 /// a newer schema, and edited migration SQL is rejected.
 pub fn check(database: Repo, package: Package) -> service.Result(Nil) {
@@ -103,7 +134,7 @@ pub fn check(database: Repo, package: Package) -> service.Result(Nil) {
     True -> verify_fingerprint(conn, package.name)
     False ->
       Error(service.Internal(
-        "auth schema is incompatible; run the matching package migrations",
+        "database schema is incompatible; run the matching package migrations",
       ))
   }
 }
@@ -143,8 +174,14 @@ fn history(conn: Repo, name: String) {
   )
 }
 
+// Ledgers written before this module left howdy_auth hold these digests.
+fn digest(value: String) -> String {
+  crypto.hash(crypto.Sha256, <<value:utf8>>)
+  |> bit_array.base64_url_encode(False)
+}
+
 fn checksum(m: gloo_migration.Migration) -> String {
-  token.digest(m.name <> ":" <> m.up)
+  digest(m.name <> ":" <> m.up)
 }
 
 fn expected(migrations: List(gloo_migration.Migration)) {
@@ -244,7 +281,7 @@ fn fingerprint(conn: Repo, name: String) -> service.Result(String) {
     row,
   ))
 
-  Ok(token.digest(json.to_string(json.array(objects, fn(value) { value }))))
+  Ok(digest(json.to_string(json.array(objects, fn(value) { value }))))
 }
 
 fn verify_fingerprint(conn: Repo, name: String) -> service.Result(Nil) {

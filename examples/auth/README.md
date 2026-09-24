@@ -32,6 +32,14 @@ the JSON endpoints and account guards still work.
 only the resulting Repo. This example chooses SQLite, but replacing that setup
 with a configured Gloo PostgreSQL Repo leaves the auth/routes/RBAC code unchanged.
 
+`src/notes.gleam` is application-owned data beside auth's, built on
+[`howdy_database`](../../database/README.md): its own `notes` migration package,
+run by the same `migrate` command and checked at startup, and services that
+work on either database. Signed in, `GET`, `POST {"title"}` and
+`DELETE /:id` under `/account/notes` list, add and remove your notes; a
+duplicate title is a 409. Deleting the account removes its notes in auth's own
+transaction, through `auth.with_account_deletion`.
+
 `data.sqlite` persists between runs. Schema migrations are a separate command
 and are never automatically applied during application startup.
 

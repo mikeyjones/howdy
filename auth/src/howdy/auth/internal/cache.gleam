@@ -1,11 +1,19 @@
 //// Optional bounded authorization cache. Never caches database errors.
 
+import howdy/migration
 import howdy/service
 
 pub type Cache
 
 @external(erlang, "howdy_auth_ffi", "cache_new")
-pub fn new() -> Cache
+fn table() -> Cache
+
+/// Migrations can rewrite grants and suspensions under a live cache, whichever
+/// package they belong to, so every run on this node invalidates it.
+pub fn new() -> Cache {
+  migration.around_runs("howdy_auth_cache", changing)
+  table()
+}
 
 @external(erlang, "howdy_auth_ffi", "cache_run")
 pub fn run(
