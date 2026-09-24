@@ -41,7 +41,8 @@ pub fn signing_in_with_forms_sets_the_session_cookie_test() {
 
   // The cookie is the same one `auth.required` reads, so the bundled guards
   // and this module's pages agree about who is signed in.
-  let home = testing.get("/") |> testing.cookie(name, session) |> testing.send(app)
+  let home =
+    testing.get("/") |> testing.cookie(name, session) |> testing.send(app)
   assert string.contains(testing.text(home), "Signed in as ada@example.com")
   let sessions =
     testing.get("/account/sessions")
@@ -99,6 +100,7 @@ pub fn signing_out_ends_the_session_test() {
     |> testing.send(app)
   assert signed_out.status == 303
   assert result.is_error(auth.authenticate(identity, session))
-  let after = testing.get("/") |> testing.cookie(name, session) |> testing.send(app)
+  let after =
+    testing.get("/") |> testing.cookie(name, session) |> testing.send(app)
   assert string.contains(testing.text(after), "<h1>Sign in</h1>")
 }

@@ -24,7 +24,8 @@ pub fn configured_providers_appear_on_the_sign_in_page_test() {
     |> list.sort(string.compare)
     == ["github", "google"]
 
-  let page = testing.get("/auth/login") |> testing.send(social_login.app(identity))
+  let page =
+    testing.get("/auth/login") |> testing.send(social_login.app(identity))
   assert string.contains(testing.text(page), "/auth/providers/github/login")
   assert string.contains(testing.text(page), "/auth/providers/google/login")
 }
@@ -40,7 +41,10 @@ pub fn signing_in_redirects_to_the_provider_test() {
     |> testing.send(app)
   assert started.status == 303
   let assert Ok(location) = response.get_header(started, "location")
-  assert string.starts_with(location, "https://github.com/login/oauth/authorize?")
+  assert string.starts_with(
+    location,
+    "https://github.com/login/oauth/authorize?",
+  )
   // The callback URL comes from the configured origin, never the Host header.
   assert string.contains(
     location,

@@ -57,7 +57,8 @@ pub fn a_native_client_gets_a_bearer_token_test() {
   let assert Ok(access_token) =
     testing.json(exchanged, support.string_at(["access_token"]))
 
-  let me = testing.get("/account/me") |> bearer(access_token) |> testing.send(app)
+  let me =
+    testing.get("/account/me") |> bearer(access_token) |> testing.send(app)
   assert testing.json(me, email_field()) == Ok("ada@example.com")
 }
 
@@ -82,7 +83,8 @@ pub fn registering_an_existing_address_tells_its_owner_test() {
   let identity = email_tokens.configure(db, deliver)
   let assert Ok(Nil) =
     auth.request_token(identity, "ada@example.com", auth.Register)
-  let assert Ok(_) = auth.exchange(identity, support.token(support.next_email(inbox)))
+  let assert Ok(_) =
+    auth.exchange(identity, support.token(support.next_email(inbox)))
 
   // The reply is the same 202 either way; only the inbox owner learns more.
   let app = email_tokens.app(identity)

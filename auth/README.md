@@ -1595,7 +1595,7 @@ pruned as a side effect of email requests and logins. For quiet installations
 call `auth.prune_expired(identity)` from a scheduled job; nothing is scheduled
 automatically.
 
-See [the runnable example](../examples/auth/README.md). Run verification with:
+See [the runnable examples](../examples/auth/README.md), one per sign-in flow. Run verification with:
 
 ```sh
 cd auth

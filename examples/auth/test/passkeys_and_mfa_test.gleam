@@ -88,7 +88,9 @@ pub fn a_second_factor_is_needed_after_enrolling_test() {
   assert pending.status == 202
   let assert Ok(mfa_token) =
     testing.json(pending, support.string_at(["mfa_token"]))
-  assert { testing.get("/account/me") |> bearer(mfa_token) |> testing.send(app) }.status
+  assert {
+      testing.get("/account/me") |> bearer(mfa_token) |> testing.send(app)
+    }.status
     == 401
 
   let sent =
@@ -111,7 +113,8 @@ pub fn a_second_factor_is_needed_after_enrolling_test() {
   assert verified.status == 200
   let assert Ok(access_token) =
     testing.json(verified, support.string_at(["session", "access_token"]))
-  let me = testing.get("/account/me") |> bearer(access_token) |> testing.send(app)
+  let me =
+    testing.get("/account/me") |> bearer(access_token) |> testing.send(app)
   assert testing.json(me, email_field()) == Ok("ada@example.com")
 }
 
@@ -181,6 +184,9 @@ pub fn passkeys_are_offered_for_this_origin_test() {
   assert started.status == 200
   assert testing.json(started, support.string_at(["options", "rpId"]))
     == Ok("localhost")
-  assert testing.json(started, support.string_at(["options", "userVerification"]))
+  assert testing.json(
+      started,
+      support.string_at(["options", "userVerification"]),
+    )
     == Ok("required")
 }

@@ -22,15 +22,17 @@ pub const strong_password = "an uncommon orchard phrase 947!"
 pub fn with_database(run: fn(Repo) -> a) -> a {
   let assert Ok(db) = sqlite.start(sqlite.memory())
   let assert Ok(_) = database.sqlite_defaults(db)
-  let assert Ok(_) =
-    migration.run(db, [auth.schema(), authorization.schema()])
+  let assert Ok(_) = migration.run(db, [auth.schema(), authorization.schema()])
   let value = run(db)
   let assert Ok(_) = repo.close(db)
   value
 }
 
 /// A `deliver` callback that posts each email to the returned subject.
-pub fn mailbox() -> #(Subject(auth.Delivery), fn(auth.Delivery) -> Result(Nil, Nil)) {
+pub fn mailbox() -> #(
+  Subject(auth.Delivery),
+  fn(auth.Delivery) -> Result(Nil, Nil),
+) {
   let inbox = process.new_subject()
   #(inbox, fn(delivery) {
     process.send(inbox, delivery)

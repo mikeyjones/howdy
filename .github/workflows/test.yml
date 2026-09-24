@@ -168,7 +168,7 @@ jobs:
       - run: gleam deps download
       - run: gleam test
       - run: gleam format --check src test
-      - run: gleam check
+      - run: gleam test
         working-directory: examples/auth
-      - run: gleam format --check src
+      - run: gleam format --check src test
         working-directory: examples/auth

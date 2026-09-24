@@ -1,12 +1,43 @@
-# Authentication example
+# Authentication examples
 
-A loopback-only demo of optional auth pages, JSON endpoints and separate RBAC.
+Runnable, tested examples of each way `howdy_auth` signs people in, plus a
+full tour that combines most of them. Everything listens on loopback only.
 Email delivery prints tokens in the terminal **for this local demonstration
-only**. Configure a private email delivery callback for real applications.
+only**; configure a private email delivery callback for real applications.
 
 ```sh
-make -C ../../auth/vendor/jargon/c_src
-gleam run -m migrate
+make -C ../../auth/vendor/jargon/c_src   # once: the native password hasher
+gleam run -m migrate                     # every example's database
+gleam test                               # every flow below, without a server
+```
+
+## One flow per module
+
+Each module in `src/flows/` is small, commented, and exposes `configure`
+(the auth setup), `app` (the routes) and `main`. Its test in `test/` walks the
+flow request by request, so it doubles as a transcript of the HTTP contract.
+Each keeps its own SQLite file, since they configure auth differently.
+
+| Run with `gleam run -m …` | Shows | Needs |
+| --- | --- | --- |
+| `flows/email_tokens` | Passwordless sign-in and registration by emailed token; a browser cookie and a native bearer token from the same exchange | — |
+| `flows/passwords` | Email/password alongside tokens; verification before the account exists, a breach blocklist, changing a password, sliding session renewal | — |
+| `flows/social_login` | Google, GitHub, Apple, Facebook and Microsoft Entra; which may create accounts and which must be linked | Provider credentials; see the module |
+| `flows/passkeys_and_mfa` | Passkeys (including signup and autofill); TOTP and delivered-code MFA, recovery codes, remembered devices | `HOWDY_AUTH_MFA_KEY` |
+| `flows/server_rendered` | Your own HTML forms and cookie on the headless API: no JSON routes, starter pages or JavaScript | — |
+| `flows/multi_tenant` | Invitation-only workspaces as groups; roles scoped per workspace; user and workspace fields | — |
+| `flows/enterprise_sso` | Customer SAML/OIDC connections, email-first routing, SP metadata, enforcement | `HOWDY_AUTH_SSO_KEY` and a connection; see the module |
+| `flows/sessions` | Renewal and idle limits, several accounts in one browser, an external session store adapter | — |
+
+Every example serves <http://localhost:8787>, so run one at a time. Start from
+the table's first row: the others each add one idea to it.
+
+## The full tour
+
+`src/howdy_auth_example.gleam` combines email tokens, passwords, Google,
+passkeys, MFA, RBAC and application-owned data in one app:
+
+```sh
 gleam run
 ```
 
@@ -40,8 +71,9 @@ work on either database. Signed in, `GET`, `POST {"title"}` and
 duplicate title is a 409. Deleting the account removes its notes in auth's own
 transaction, through `auth.with_account_deletion`.
 
-`data.sqlite` persists between runs. Schema migrations are a separate command
-and are never automatically applied during application startup.
+`data.sqlite` (and each flow's own file) persists between runs. Schema
+migrations are a separate command and are never automatically applied during
+application startup.
 
 See [the package documentation](../../auth/README.md) for browser/native API
 flows, headless operations, scoped RBAC and current limitations.

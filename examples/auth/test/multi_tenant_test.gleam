@@ -79,7 +79,8 @@ pub fn owners_invite_and_members_cannot_test() {
   assert support.no_email(inbox)
 
   let bob = sign_in(identity, inbox, "bob@acme.test")
-  let members = testing.get("/workspace/members") |> bearer(bob) |> testing.send(app)
+  let members =
+    testing.get("/workspace/members") |> bearer(bob) |> testing.send(app)
   assert members.status == 200
   assert member_emails(members) == ["bob@acme.test", "owner@acme.test"]
 

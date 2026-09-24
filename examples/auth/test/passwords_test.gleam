@@ -101,7 +101,10 @@ pub fn changing_the_password_needs_the_current_one_test() {
   let wrong =
     testing.post(
       "/api/auth/password/change",
-      object([#("current", "not the password at all!"), #("password", replacement)]),
+      object([
+        #("current", "not the password at all!"),
+        #("password", replacement),
+      ]),
     )
     |> bearer(token)
     |> testing.send(app)
