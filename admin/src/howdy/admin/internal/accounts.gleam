@@ -59,6 +59,9 @@ pub fn controller(config: Config, identity: Auth) -> Controller {
   |> controller.post("/users/:id/impersonate", fn(ctx) {
     impersonate(config, identity, ctx)
   })
+  |> controller.post("/users/:id/delete", fn(ctx) {
+    user_delete(config, identity, ctx)
+  })
   |> controller.post("/users/:id/sessions/revoke", fn(ctx) {
     session_revoke(config, identity, ctx)
   })
@@ -291,6 +294,15 @@ fn user_show(
             Some(#(assignments, roles)) ->
               roles_card(config, id, assignments, roles)
           },
+          case auth.account_deletion_enabled(identity) {
+            True -> delete_card(config, user)
+            False ->
+              ui.p([
+                ui.muted(
+                  "Account deletion is off: enable it with auth.with_account_deletion, whose callback cleans up your own tables.",
+                ),
+              ])
+          },
           case auth.group_mode(identity) {
             Single -> element.none()
             _ ->
@@ -358,6 +370,65 @@ fn impersonate(
   case auth.impersonate(identity, id, by: actor) {
     Ok(session) ->
       routes.signed_in(identity, ctx, layout.redirect("/"), session)
+    Error(error) -> failure(config, ctx, "/users", "User", error)
+  }
+}
+
+/// Deletion behind a confirmation: the email address must be typed back.
+fn delete_card(config: Config, user: User) -> Element(msg) {
+  ui.card([], [
+    ui.card_header([], [
+      ui.card_title([text("Delete account")]),
+      ui.card_description([
+        text(
+          "Removes the account, its credentials and sessions, and whatever your deletion callback cleans up. There is no undo.",
+        ),
+      ]),
+    ]),
+    ui.card_content([], [
+      html.form(
+        [
+          attribute.method("post"),
+          attribute.action(user_path(config, user.id) <> "/delete"),
+        ],
+        [
+          ui.row([], [
+            ui.input([
+              attribute.name("confirm"),
+              attribute.type_("email"),
+              attribute.placeholder("type " <> user.email <> " to confirm"),
+              attribute.required(True),
+            ]),
+            ui.submit_button(button.Danger, [], [text("Delete account")]),
+          ]),
+        ],
+      ),
+    ]),
+  ])
+}
+
+fn user_delete(
+  config: Config,
+  identity: Auth,
+  ctx: Context,
+) -> Response(ewe.Body) {
+  let id = result.unwrap(controller.param(ctx, "id"), "")
+  use form <- form.read(ctx)
+  let deleted = {
+    use user <- result.try(users.get(identity, id))
+    use _ <- result.try(
+      case
+        string.lowercase(string.trim(form.value(form, "confirm"))) == user.email
+      {
+        True -> Ok(Nil)
+        False ->
+          Error(service.Invalid("type the account's email address to confirm"))
+      },
+    )
+    auth.delete_user(identity, id, by: actor)
+  }
+  case deleted {
+    Ok(Nil) -> layout.redirect(config.path(config, "/users"))
     Error(error) -> failure(config, ctx, "/users", "User", error)
   }
 }

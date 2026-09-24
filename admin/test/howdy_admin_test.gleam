@@ -20,6 +20,7 @@ import howdy/auth/user
 import howdy/authorization
 import howdy/database
 import howdy/migration
+import howdy/service
 import howdy/testing
 
 pub fn main() {
@@ -546,4 +547,61 @@ pub fn lists_and_revokes_a_users_sessions_test() {
     })
   assert list.length(alive) == 1
   assert string.contains(get(app, "/_howdy/users/" <> id), "1 live session")
+}
+
+// -- Deletion ----------------------------------------------------------------
+
+pub fn deletes_an_account_after_confirmation_test() {
+  use db, identity <- with_auth
+  // Without a cleanup callback the page says so and the route refuses.
+  let before = app(admin.auth(_, identity))
+  let assert "/_howdy/users/" <> id =
+    post(before, "/_howdy/users", [#("email", "ada@example.com")])
+  assert string.contains(
+    get(before, "/_howdy/users/" <> id),
+    "Account deletion is off",
+  )
+  let res =
+    testing.post_form("/_howdy/users/" <> id <> "/delete", [
+      #("confirm", "ada@example.com"),
+    ])
+    |> request.set_host("localhost")
+    |> testing.send(before)
+  assert string.contains(testing.text(res), "Forbidden")
+
+  let identity =
+    auth.with_account_deletion(identity, fn(conn, user) {
+      repo.execute(conn, "DELETE FROM notes_notes WHERE title = $1", [
+        sql.string(user.email),
+      ])
+      |> result.replace(Nil)
+      |> result.replace_error(service.Internal("cleanup"))
+    })
+  let assert Ok(_) =
+    repo.execute(
+      db,
+      "INSERT INTO notes_notes (title) VALUES ('ada@example.com')",
+      [],
+    )
+  let after = app(admin.auth(_, identity))
+  assert string.contains(get(after, "/_howdy/users/" <> id), "Delete account")
+
+  // The wrong confirmation keeps the account.
+  let res =
+    testing.post_form("/_howdy/users/" <> id <> "/delete", [
+      #("confirm", "grace@example.com"),
+    ])
+    |> request.set_host("localhost")
+    |> testing.send(after)
+  assert string.contains(testing.text(res), "to confirm")
+  assert count(db, "SELECT COUNT(*) FROM howdy_auth_users") == 1
+
+  let location =
+    post(after, "/_howdy/users/" <> id <> "/delete", [
+      #("confirm", " Ada@Example.com "),
+    ])
+  assert location == "/_howdy/users"
+  assert count(db, "SELECT COUNT(*) FROM howdy_auth_users") == 0
+  assert count(db, "SELECT COUNT(*) FROM notes_notes") == 0
+  assert string.contains(get(after, "/_howdy/users"), "No users yet")
 }

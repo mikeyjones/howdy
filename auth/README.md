@@ -1208,7 +1208,15 @@ let identity = auth.with_account_deletion(identity, fn(transaction, user) {
 
 // Recent sign-in plus explicit confirmation of the current email address.
 auth.delete_account(identity, principal, confirm_email: "ada@example.com")
+
+// As an operator, for an erasure request or a test account. Privileged.
+auth.delete_user(identity, user_id, by: user.SystemFrom("console"))
 ```
+
+`delete_user` runs the same callback and removes the same rows, records
+`user.deleted` with the actor, and works on suspended accounts. It is
+`Forbidden` until `with_account_deletion` is configured, so application data
+is never orphaned.
 
 The callback runs inside the same transaction as deletion. Use the supplied Repo;
 do not call other auth operations or perform network/filesystem side effects

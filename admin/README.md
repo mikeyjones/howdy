@@ -52,8 +52,11 @@ registry of the Repo or `auth.Auth` the app built, so the app hands them over:
 - `admin.auth(identity)`: users and groups. Create a user (provisioned without
   a credential), suspend and resume them, see their live sessions (method,
   when they signed in, last seen, expiry and client) and revoke any one of
-  them or all at once, move them between groups, and create, rename and
-  delete groups. Registering auth also
+  them or all at once, move them between groups, delete the account, and
+  create, rename and delete groups. Deletion asks for the email address to be
+  typed back, and is offered only when the app configured
+  `auth.with_account_deletion`, whose callback removes the app's own rows in
+  the same transaction. Registering auth also
   registers its Repo, unless `admin.database` was given another.
 - `admin.authorization(permissions)`: roles in every scope, each with its
   permissions and who holds it. Define a role (global, or in an organization)

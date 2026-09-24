@@ -1,6 +1,7 @@
 //// Operator tooling: listing users, reading suspension, and issuing a
 //// session for a user without a credential.
 
+import gleam/erlang/process
 import gleam/list
 import gleam/string
 import howdy/auth
@@ -99,4 +100,42 @@ pub fn operators_list_and_revoke_a_users_sessions_test() {
       "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'session.revoked' AND client = 'admin'",
     )
     == 2
+}
+
+pub fn operators_delete_accounts_only_with_a_cleanup_callback_test() {
+  use database, identity, _, mailbox <- fixture
+  let ada = signup(identity, mailbox, "ada@example.com")
+  assert auth.delete_user(identity, ada.user.id, by: user.System)
+    == Error(service.Forbidden)
+
+  let cleaned = process.new_subject()
+  let identity =
+    auth.with_account_deletion(identity, fn(_, deleted) {
+      process.send(cleaned, deleted.email)
+      Ok(Nil)
+    })
+  let assert Ok(Nil) = auth.suspend(identity, ada.user.id, by: user.System)
+  let assert Ok(Nil) =
+    auth.delete_user(identity, ada.user.id, by: user.SystemFrom("admin"))
+  assert process.receive(cleaned, 100) == Ok("ada@example.com")
+  assert auth.authenticate(identity, secret.reveal(ada.token))
+    == Error(service.Unauthorized)
+  assert users.get(identity, ada.user.id) == Error(service.NotFound("user"))
+  assert auth.delete_user(identity, ada.user.id, by: user.System)
+    == Error(service.NotFound("user"))
+  assert count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'user.deleted' AND client = 'admin'",
+    )
+    == 1
+
+  // A vetoing callback keeps the account.
+  let grace = signup(identity, mailbox, "grace@example.com")
+  let identity =
+    auth.with_account_deletion(identity, fn(_, _) {
+      Error(service.Conflict("has open invoices"))
+    })
+  assert auth.delete_user(identity, grace.user.id, by: user.System)
+    == Error(service.Conflict("has open invoices"))
+  let assert Ok(_) = users.get(identity, grace.user.id)
 }

@@ -16,6 +16,9 @@ within a second.
 Give a user the global `reader` role from their page or from **Roles**, sign
 in as them, and `GET /notes/all` answers; without it the route is `403`.
 
+Deleting a user from their page removes their notes too: the example's
+deletion callback does that in the same transaction.
+
 `gleam run` serves the app without hot reload or the admin: both are dev
 dependencies and their entry point lives in `dev/`, which
 `gleam export erlang-shipment` leaves out.

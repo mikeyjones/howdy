@@ -79,7 +79,14 @@ pub fn identity(db: Repo) -> auth.Auth {
       )
       Ok(Nil)
     })
-  auth.allow_registration(identity)
+  identity
+  |> auth.allow_registration
+  // Deleting an account removes its notes in the same transaction.
+  |> auth.with_account_deletion(fn(conn, user) {
+    database.execute(conn, "DELETE FROM notes_notes WHERE user_id = $1", [
+      sql.string(user.id),
+    ])
+  })
 }
 
 pub fn app(

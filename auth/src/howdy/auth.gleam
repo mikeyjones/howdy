@@ -3147,6 +3147,39 @@ pub fn delete_account(
   event(conn, user.id, "user.deleted", Acting(principal), "")
 }
 
+/// Delete a user's account as an operator: an erasure request, or a test
+/// account in development. Privileged: authorize the caller first. Needs
+/// `with_account_deletion`, whose callback cleans up application-owned rows
+/// in the same transaction; without it, `Forbidden`. Suspended accounts can
+/// be deleted. Every session and pending challenge ends with the account,
+/// and the audit trail keeps `user.deleted` with the actor.
+pub fn delete_user(
+  auth: Auth,
+  user_id: String,
+  by actor: Actor,
+) -> service.Result(Nil) {
+  use cleanup <- result.try(case auth.before_delete {
+    Some(cleanup) -> Ok(cleanup)
+    None -> Error(service.Forbidden)
+  })
+  use <- after_commit(auth, fn(external) {
+    external.delete_for_user(user_id, None)
+  })
+  use <- cache.changing
+  use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+  use users <- result.try(store.find_user(conn, user_id))
+  use user <- result.try(case users {
+    [user] -> Ok(user)
+    _ -> Error(service.NotFound("user"))
+  })
+  use _ <- result.try(in_bound_group(auth, user.group_id))
+  use _ <- result.try(cleanup(conn, user))
+  use _ <- result.try(store.delete_challenges_for_user(conn, user.id))
+  use _ <- result.try(account_store.clear_pending(conn, user.id))
+  use _ <- result.try(account_store.delete(conn, user.id))
+  event(conn, user.id, "user.deleted", actor, "")
+}
+
 /// Re-read the account under its row lock, then check the exact session against
 /// current state. A Principal is a snapshot, not authority to mutate forever.
 fn current_account(
