@@ -42,6 +42,19 @@ pub const on_danger = "var(--howdy-on-danger)"
 
 pub const focus = "var(--howdy-focus)"
 
+pub const chart_1 = "var(--howdy-chart-1)"
+
+pub const chart_2 = "var(--howdy-chart-2)"
+
+pub const chart_3 = "var(--howdy-chart-3)"
+
+pub const chart_4 = "var(--howdy-chart-4)"
+
+pub const chart_5 = "var(--howdy-chart-5)"
+
+/// The chart series colours in order.
+pub const chart = [chart_1, chart_2, chart_3, chart_4, chart_5]
+
 pub const font_body = "var(--howdy-font-body)"
 
 pub const font_heading = "var(--howdy-font-heading)"
@@ -70,6 +83,11 @@ pub fn all() -> List(#(String, String)) {
     #("--howdy-danger", danger),
     #("--howdy-on-danger", on_danger),
     #("--howdy-focus", focus),
+    #("--howdy-chart-1", chart_1),
+    #("--howdy-chart-2", chart_2),
+    #("--howdy-chart-3", chart_3),
+    #("--howdy-chart-4", chart_4),
+    #("--howdy-chart-5", chart_5),
     #("--howdy-font-body", font_body),
     #("--howdy-font-heading", font_heading),
     #("--howdy-font-mono", font_mono),

@@ -35,6 +35,11 @@
 ////
 //// Behind a proxy every request shares the proxy's IP, so use `by_header`
 //// with the header your proxy sets rather than `by_ip`.
+////
+//// Those counters belong to one node: behind a load balancer each node allows
+//// the full limit, and a restart forgets it. `shared` keeps a fixed window's
+//// counts in a `Store` every node can reach, such as a database table, at
+//// the cost of one round trip per request.
 
 import ewe
 import gleam/http/request
@@ -44,6 +49,7 @@ import gleam/option.{type Option, None, Some}
 import howdy/context
 import howdy/controller.{type Context, type Middleware}
 import howdy/service
+import logging
 
 type Table
 
@@ -72,6 +78,9 @@ fn token_bucket_check(
 
 @external(erlang, "howdy_ffi", "now_ms")
 fn now_ms() -> Int
+
+@external(erlang, "howdy_ffi", "system_ms")
+fn system_ms() -> Int
 
 @external(erlang, "howdy_ffi", "fixed_window_hit")
 fn fixed_window_hit(
@@ -111,6 +120,17 @@ pub opaque type Limiter {
     sweep_ms: Int,
     max_identities: Int,
   )
+  Shared(store: Store, name: String, limit: Int, window_ms: Int)
+}
+
+/// Counts kept outside this node. `increment(key, window, expires_at_ms)`
+/// adds a hit to `key` in fixed window number `window` and returns how many
+/// that window has counted, this one included. It must be atomic per key.
+/// A hit for a window older than the one a key holds (a node with a slow
+/// clock) should count against the newer window rather than reset it. The
+/// count is not needed after `expires_at_ms`, Unix time in milliseconds.
+pub type Store {
+  Store(increment: fn(String, Int, Int) -> Result(Int, Nil))
 }
 
 /// The outcome of checking a key against a limiter.
@@ -161,6 +181,28 @@ pub fn token_bucket(
   )
 }
 
+/// Allow `limit` requests per key in each window of `per_seconds`, counted in
+/// `store` so every node shares them. `name` separates this limiter's keys
+/// from any other limiter using the same store; give each a different one.
+/// Windows follow the system clock, so keep nodes' clocks synchronised.
+///
+/// If the store fails, the request is allowed and a warning logged: a limiter
+/// is abuse protection, and one that failed closed would turn an outage of
+/// its store into an outage of every route behind it.
+pub fn shared(
+  limit limit: Int,
+  per_seconds per_seconds: Int,
+  name name: String,
+  store store: Store,
+) -> Limiter {
+  Shared(
+    store:,
+    name:,
+    limit: int.max(limit, 1),
+    window_ms: int.max(per_seconds, 1) * 1000,
+  )
+}
+
 /// Track at most `count` distinct keys instead of `default_max_identities`.
 /// Counts rows in the table: for a fixed window a key's previous window also
 /// occupies a row until the sweep after the boundary, so allow for that.
@@ -174,6 +216,8 @@ pub fn max_identities(limiter: Limiter, count: Int) -> Limiter {
   case limiter {
     FixedWindow(..) -> FixedWindow(..limiter, max_identities: count)
     TokenBucket(..) -> TokenBucket(..limiter, max_identities: count)
+    // The store bounds its own size.
+    Shared(..) -> limiter
   }
 }
 
@@ -181,6 +225,7 @@ pub fn max_identities(limiter: Limiter, count: Int) -> Limiter {
 pub fn check(limiter: Limiter, key: String) -> Decision {
   case limiter {
     FixedWindow(..) -> check_at(limiter, key, now_ms())
+    Shared(..) -> check_at(limiter, key, system_ms())
     TokenBucket(table:, capacity:, refill_per_second:, max_identities:, ..) ->
       case
         token_bucket_check(
@@ -221,6 +266,23 @@ pub fn check_at(limiter: Limiter, key: String, now_ms: Int) -> Decision {
         Refused -> saturated(limiter)
       }
     }
+    Shared(store:, name:, limit:, window_ms:) -> {
+      let window = floor_div(now_ms, window_ms)
+      let expires_at = { window + 1 } * window_ms
+      let reset_seconds = ceil_seconds(expires_at - now_ms)
+      case store.increment(name <> "\u{0}" <> key, window, expires_at) {
+        Ok(count) if count <= limit ->
+          Allowed(limit:, remaining: limit - count, reset_seconds:)
+        Ok(_) -> Denied(limit:, retry_after_seconds: reset_seconds)
+        Error(Nil) -> {
+          logging.log(
+            logging.Warning,
+            "rate limit store failed for " <> name <> "; allowing the request",
+          )
+          Allowed(limit:, remaining: limit, reset_seconds:)
+        }
+      }
+    }
     TokenBucket(table:, capacity:, refill_per_second:, max_identities:, ..) ->
       case
         token_bucket_hit(
@@ -240,7 +302,12 @@ pub fn check_at(limiter: Limiter, key: String, now_ms: Int) -> Decision {
 }
 
 fn saturated(limiter: Limiter) -> Decision {
-  Saturated(retry_after_seconds: ceil_seconds(limiter.sweep_ms))
+  let sweep_ms = case limiter {
+    FixedWindow(sweep_ms:, ..) | TokenBucket(sweep_ms:, ..) -> sweep_ms
+    // Never saturates: the store bounds its own size.
+    Shared(window_ms:, ..) -> window_ms
+  }
+  Saturated(retry_after_seconds: ceil_seconds(sweep_ms))
 }
 
 fn bucket_decision(

@@ -100,7 +100,7 @@ pub fn theme_must_be_one_the_page_offers_test() {
 
   let branded = testing.get("/branded") |> testing.send(app()) |> testing.text
   assert string.contains(branded, "data-theme=\"brand\"")
-  assert !string.contains(branded, "@media")
+  assert !string.contains(branded, "prefers-color-scheme")
 }
 
 pub fn theme_toggle_flips_the_attribute_and_cookie_test() {
@@ -135,7 +135,10 @@ pub fn untrusted_theme_names_never_change_the_event_handler_test() {
 
 pub fn live_pages_include_the_client_runtime_test() {
   let plain = testing.get("/") |> testing.send(app()) |> testing.text
-  assert !string.contains(plain, "lustre-server-component")
+  assert !string.contains(
+    plain,
+    "customElements.define(\"lustre-server-component\"",
+  )
 
   let html = testing.get("/live") |> testing.send(app()) |> testing.text
   assert string.contains(html, "<script type=\"module\">")

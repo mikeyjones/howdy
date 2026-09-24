@@ -25,7 +25,8 @@ pub const version = "0.1.0"
 pub const components = [
   "button", "heading", "typography", "input", "field", "checkbox", "layout",
   "card", "badge", "alert", "table", "loading", "dialog", "popover", "tooltip",
-  "menu", "tabs", "accordion", "select",
+  "menu", "tabs", "accordion", "select", "toast", "sidebar", "pagination",
+  "calendar", "command", "data_table", "chart",
 ]
 
 /// Run a command and print what happened.

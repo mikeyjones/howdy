@@ -72,14 +72,11 @@ pub fn api_limited_by(
 ) -> controller.Controller {
   let strict =
     rate_limit.by(
-      rate_limit.fixed_window(limit: credential_limit, per_seconds: 60),
+      auth.limiter(identity, "credentials", credential_limit, 60),
       key,
     )
   let signed_in =
-    rate_limit.by(
-      rate_limit.fixed_window(limit: session_limit, per_seconds: 60),
-      key,
-    )
+    rate_limit.by(auth.limiter(identity, "session", session_limit, 60), key)
   let strict = middleware.wrap(_, strict)
   let signed_in = middleware.wrap(_, signed_in)
   // The same identity used for rate limiting is what audit events record.

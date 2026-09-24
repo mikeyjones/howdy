@@ -94,7 +94,7 @@ pub fn github_verified_primary_email_and_pkce_test() {
       "{\"id\":42,\"email\":null}",
       "[{\"email\":\"other@example.test\",\"primary\":false,\"verified\":true},{\"email\":\"ada@example.test\",\"primary\":true,\"verified\":true}]",
     )
-  let url =
+  let assert Ok(url) =
     provider.authorization_url(
       p,
       provider.Authorization(

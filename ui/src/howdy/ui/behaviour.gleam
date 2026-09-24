@@ -9,10 +9,13 @@
 ////
 //// This script adds what the browser does not:
 ////
-//// - arrow keys, Home, End and typeahead in menus and selects, and arrow
-////   keys between tabs;
-//// - choosing a select option, and switching tab panels;
-//// - showing a tooltip on hover and focus;
+//// - arrow keys, Home, End and typeahead in menus and selects, arrow keys
+////   between tabs and between the days of a calendar;
+//// - choosing a select, combobox or calendar option, and switching tab
+////   panels;
+//// - filtering a command menu as you type, and its keyboard shortcut;
+//// - showing a tooltip on hover and focus, and closing a toast;
+//// - collapsing the sidebar on wide screens and remembering it;
 //// - fallbacks for browsers without invoker commands, `closedby` on
 ////   dialogs, or CSS anchor positioning.
 ////
@@ -27,8 +30,8 @@
 ////
 //// The browser owns open and selected state. A live view that wants to know
 //// listens for the native events: `close` on a dialog, `toggle` on a
-//// popover or `<details>`, `change` on a select's hidden input, or `click`
-//// on a tab or menu item.
+//// popover or `<details>`, `change` on the hidden input of a select,
+//// combobox or calendar, or `click` on a tab, menu item or command item.
 
 import lustre/attribute
 import lustre/element.{type Element}
@@ -57,6 +60,12 @@ const inPath = (event, selector) =>
 const enabled = (container, selector) =>
   [...container.querySelectorAll(selector)].filter((el) => !el.matches(':disabled, [aria-disabled=true]'));
 const isOpen = (popover) => popover.matches(':popover-open');
+const wide = matchMedia('(min-width: 768px)');
+// The document and the shadow roots of the live views on it.
+const roots = () => [
+  document,
+  ...[...document.querySelectorAll('lustre-server-component')].map((host) => host.shadowRoot).filter(Boolean),
+];
 const deepFocus = () => {
   let focused = document.activeElement;
   while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
@@ -101,7 +110,11 @@ const watch = (popover) => {
     if (popover.matches('[role=menu], [role=listbox]')) {
       const items = enabled(popover, '[role^=menuitem], [role=option]');
       (items.find((el) => el.getAttribute('aria-selected') === 'true') || items[0])?.focus();
+      return;
     }
+    popover.querySelector(`[data-howdy-command] > input, [data-howdy-calendar] [data-date][tabindex='0']`)?.focus();
+    const command = popover.querySelector('[data-howdy-command]');
+    if (command) activate(command, commandItems(command).find((el) => el.matches('[aria-selected=true]')) || commandItems(command)[0]);
   });
 };
 
@@ -126,25 +139,87 @@ const selectTab = (tab) => {
   }
 };
 
+// Change a text node in place: live views patch the node they rendered.
+const setText = (node, text) => {
+  if (node.firstChild?.nodeType === Node.TEXT_NODE) node.firstChild.data = text;
+  else node.textContent = text;
+};
+
+const setValue = (input, value) => {
+  if (!input || input.value === value) return;
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+};
+
+// A select, combobox or date picker: show the choice, close, keep the value.
+const settle = (root, value, label, from) => {
+  setText(root.querySelector('[data-howdy-select-value]'), label);
+  root.querySelector(':scope > button').removeAttribute('data-placeholder');
+  close(from.closest('[popover]'));
+  setValue(root.querySelector(':scope > input'), value);
+};
+
 const choose = (option) => {
   if (option.matches('[aria-disabled=true]')) return;
   const root = option.closest('[data-howdy-select]');
-  const input = root.querySelector('input');
-  const value = root.querySelector('[data-howdy-select-value]');
   for (const other of root.querySelectorAll('[role=option]')) {
     other.setAttribute('aria-selected', String(other === option));
   }
-  // Change the text node in place: live views patch the node they rendered.
-  const label = option.textContent.trim();
-  if (value.firstChild?.nodeType === Node.TEXT_NODE) value.firstChild.data = label;
-  else value.textContent = label;
-  root.querySelector('button').removeAttribute('data-placeholder');
-  close(option.closest('[popover]'));
-  if (input.value !== option.dataset.value) {
-    input.value = option.dataset.value;
-    input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+  settle(root, option.dataset.value, option.textContent.trim(), option);
+};
+
+const pickDay = (day) => {
+  const calendar = day.closest('[data-howdy-calendar]');
+  for (const other of calendar.querySelectorAll('[data-date]')) {
+    other.setAttribute('aria-pressed', String(other === day));
+    other.tabIndex = other === day ? 0 : -1;
   }
+  const picker = day.closest('[data-howdy-select]');
+  if (picker) settle(picker, day.dataset.date, day.dataset.label, day);
+  else setValue(calendar.querySelector(':scope > input'), day.dataset.date);
+};
+
+const moveDay = (day, days) => {
+  const calendar = day.closest('[data-howdy-calendar]');
+  let next = day;
+  do {
+    const date = new Date(next.dataset.date + 'T00:00:00Z');
+    date.setUTCDate(date.getUTCDate() + days);
+    next = calendar.querySelector(`[data-date='${date.toISOString().slice(0, 10)}']`);
+  } while (next?.disabled);
+  return next;
+};
+
+const commandItems = (command) =>
+  [...command.querySelectorAll('[role=option]')].filter((el) => !el.hidden && !el.matches('[aria-disabled=true]'));
+
+// The option Enter would choose. Focus stays in the search box.
+const activate = (command, item) => {
+  const input = command.querySelector(':scope > input');
+  for (const el of command.querySelectorAll('[data-active]')) el.removeAttribute('data-active');
+  if (!item) return input.removeAttribute('aria-activedescendant');
+  if (!item.id) item.id = input.id + '-option-' + [...command.querySelectorAll('[role=option]')].indexOf(item);
+  item.setAttribute('data-active', '');
+  input.setAttribute('aria-activedescendant', item.id);
+  item.scrollIntoView({ block: 'nearest' });
+};
+
+const filter = (command) => {
+  const input = command.querySelector(':scope > input');
+  if (!input.hasAttribute('data-howdy-server-filtered')) {
+    const words = input.value.toLowerCase().split(' ').filter(Boolean);
+    for (const item of command.querySelectorAll('[role=option]')) {
+      const text = ((item.dataset.keywords || '') + ' ' + item.textContent).toLowerCase();
+      item.hidden = !words.every((word) => text.includes(word));
+    }
+    for (const group of command.querySelectorAll('[role=group]')) {
+      group.hidden = !group.querySelector('[role=option]:not([hidden])');
+    }
+    const empty = command.querySelector('[data-howdy-command-empty]');
+    if (empty) empty.hidden = !!command.querySelector('[role=option]:not([hidden])');
+  }
+  activate(command, commandItems(command)[0]);
 };
 
 const step = (items, current, key) => {
@@ -205,6 +280,45 @@ const startTooltip = (event) => {
 document.addEventListener('pointerover', startTooltip);
 document.addEventListener('focusin', startTooltip);
 
+document.addEventListener('pointerover', (event) => {
+  const item = inPath(event, '[data-howdy-command] [role=option]');
+  if (item && !item.matches('[aria-disabled=true]')) activate(item.closest('[data-howdy-command]'), item);
+});
+
+document.addEventListener('focusin', (event) => {
+  const input = event.composedPath()[0];
+  if (!(input instanceof HTMLInputElement) || !input.parentElement?.matches('[data-howdy-command]')) return;
+  const command = input.parentElement;
+  if (!command.querySelector('[data-active]:not([hidden])')) activate(command, commandItems(command)[0]);
+});
+
+document.addEventListener('input', (event) => {
+  const input = event.composedPath()[0];
+  if (input instanceof HTMLInputElement && input.parentElement?.matches('[data-howdy-command]')) filter(input.parentElement);
+});
+
+// A letter with Cmd or Ctrl opens the command dialog that claims it.
+document.addEventListener('keydown', (event) => {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.key.length !== 1) return;
+  const selector = `dialog[data-howdy-shortcut='${CSS.escape(event.key.toLowerCase())}']`;
+  for (const root of roots()) {
+    const dialog = root.querySelector(selector);
+    if (!dialog) continue;
+    event.preventDefault();
+    if (dialog.open) dialog.close();
+    else dialog.showModal();
+    return;
+  }
+});
+
+// A sidebar opened over a narrow screen closes when the screen widens.
+wide.addEventListener('change', () => {
+  if (!wide.matches) return;
+  for (const root of roots()) {
+    for (const sidebar of root.querySelectorAll('[data-howdy-sidebar-layout] > aside:popover-open')) sidebar.hidePopover();
+  }
+});
+
 // Capture, so popovers are watched before the browser opens them.
 document.addEventListener('click', (event) => {
   const invoker = inPath(event, '[popovertarget], [commandfor]');
@@ -235,6 +349,23 @@ document.addEventListener('click', (event) => {
   if (option) choose(option);
   const item = inPath(event, '[role=menu] [role^=menuitem]');
   if (item && !item.matches('[aria-disabled=true]')) close(item.closest('[popover]'));
+  const day = inPath(event, '[data-howdy-calendar] [data-date]');
+  if (day) pickDay(day);
+  const command = inPath(event, 'dialog [data-howdy-command] [role=option]');
+  if (command && !command.matches('[aria-disabled=true]')) command.closest('dialog').close();
+  const toast = inPath(event, '[data-howdy-toast-close]');
+  if (toast) toast.closest('[data-howdy-toast]').hidden = true;
+  // On a wide screen the sidebar trigger collapses the sidebar instead of
+  // opening it over the page, and the choice is kept for the next page.
+  const sidebarTrigger = inPath(event, '[data-howdy-sidebar-trigger]');
+  if (sidebarTrigger && wide.matches) {
+    event.preventDefault();
+    const layout = byId(sidebarTrigger, sidebarTrigger.getAttribute('popovertarget'))?.closest('[data-howdy-sidebar-layout]');
+    if (layout) {
+      layout.dataset.state = layout.dataset.state === 'collapsed' ? 'expanded' : 'collapsed';
+      document.cookie = 'sidebar=' + layout.dataset.state + ';path=/;max-age=31536000;samesite=lax';
+    }
+  }
 });
 
 document.addEventListener('keydown', (event) => {
@@ -256,6 +387,45 @@ document.addEventListener('keydown', (event) => {
       choose(target);
     } else if (key.length === 1 && key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       typeahead(items, target, key)?.focus();
+    }
+    return;
+  }
+
+  const command = target.matches('[data-howdy-command] > input') ? target.parentElement : null;
+  if (command) {
+    const items = commandItems(command);
+    const current = command.querySelector('[data-active]');
+    if (key === 'ArrowDown' || key === 'ArrowUp') {
+      event.preventDefault();
+      activate(command, current && items.includes(current) ? step(items, current, key) : items[0]);
+    } else if (key === 'Enter' && current) {
+      event.preventDefault();
+      current.click();
+    }
+    return;
+  }
+
+  const day = target.closest('[data-howdy-calendar] [data-date]');
+  if (day) {
+    const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 };
+    let next = null;
+    if (Object.hasOwn(moves, key)) {
+      next = moveDay(day, moves[key]);
+    } else if (key === 'Home' || key === 'End') {
+      const week = enabled(day.closest('tr'), '[data-date]');
+      next = key === 'Home' ? week[0] : week[week.length - 1];
+    } else if (key === 'PageUp' || key === 'PageDown') {
+      event.preventDefault();
+      const which = key === 'PageUp' ? 'previous' : 'next';
+      day.closest('[data-howdy-calendar]').querySelector(`[data-howdy-calendar-${which}]`)?.click();
+      return;
+    }
+    if (next) {
+      event.preventDefault();
+      for (const other of day.closest('[data-howdy-calendar]').querySelectorAll('[data-date]')) {
+        other.tabIndex = other === next ? 0 : -1;
+      }
+      next.focus();
     }
     return;
   }

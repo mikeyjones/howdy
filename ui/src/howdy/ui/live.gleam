@@ -54,6 +54,7 @@
 //// loads.
 
 import ewe
+import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/http/response.{type Response}
 import howdy/controller.{type GuardedContext}
@@ -65,6 +66,7 @@ import lustre.{type App, type Runtime}
 import lustre/attribute.{type Attribute}
 import lustre/element.{type Element}
 import lustre/element/html
+import lustre/event
 import lustre/runtime/app as lustre_app
 import lustre/server_component.{type ClientMessage}
 
@@ -112,6 +114,29 @@ pub fn link(
 /// other way. See `link`.
 pub fn navigate(to href: String, mount mount: String) -> List(Attribute(msg)) {
   [attribute.href(href), attribute.data("howdy-live-mount", mount)]
+}
+
+/// Hear the value of a form control in a live view: a `howdy/ui/select`,
+/// combobox or calendar, which keep their value in a hidden input called
+/// `name`, or any native input, select or textarea with that `name`. Put it
+/// on an element that contains the control; the `change` event bubbles to
+/// it and the browser sends the value along.
+///
+/// ```gleam
+/// html.div([live.on_value("plan", PlanChosen)], [
+///   ui.select(id: "plan", name: "plan", ...),
+/// ])
+/// ```
+pub fn on_value(name: String, message: fn(String) -> msg) -> Attribute(msg) {
+  event.on("change", {
+    use field <- decode.subfield(["target", "name"], decode.string)
+    use value <- decode.subfield(["target", "value"], decode.string)
+    case field == name {
+      True -> decode.success(message(value))
+      False -> decode.failure(message(value), "a change to " <> name)
+    }
+  })
+  |> server_component.include(["target.name", "target.value"])
 }
 
 /// Name the document from a live view. When the outlet mounts a view that

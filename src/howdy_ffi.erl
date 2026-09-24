@@ -1,6 +1,6 @@
 -module(howdy_ffi).
 -export([fixed_window_new/1, token_bucket_new/2, fixed_window_hit/4,
-         token_bucket_hit/6, token_bucket_check/5, now_ms/0]).
+         token_bucket_hit/6, token_bucket_check/5, now_ms/0, system_ms/0]).
 -export([fixed_window_cleanup/2, token_bucket_cleanup/4]).
 -export([channel_join/2, channel_leave/2, channel_members/1, channel_broadcast/3, tuple_second/1]).
 -export([parse_query/1]).
@@ -129,6 +129,10 @@ floor_div(A, B) ->
 
 now_ms() ->
     erlang:monotonic_time(millisecond).
+
+%% Shared limiters need a clock every node agrees on, not the VM's own.
+system_ms() ->
+    erlang:system_time(millisecond).
 
 %% Atomic per-row deletion cannot discard a concurrently refreshed bucket.
 %% Sweeps return how many rows they removed and give those slots back.

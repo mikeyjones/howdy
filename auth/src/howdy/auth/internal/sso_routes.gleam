@@ -33,8 +33,7 @@ pub fn routes(
     && auth.provider_path(failure)
     as "SSO routes require local paths without queries or fragments"
   let callback = fn(id) { prefix <> "/sso/" <> id <> "/callback" }
-  let limited =
-    rate_limit.by(rate_limit.fixed_window(limit: 30, per_seconds: 60), key)
+  let limited = rate_limit.by(auth.limiter(identity, "sso", 30, 60), key)
   let wrap = middleware.wrap(_, limited)
   let client = fn(ctx) { option.unwrap(key(ctx), "") }
   let finish = fn(ctx, id, state, browser, code) {

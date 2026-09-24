@@ -27,6 +27,7 @@ import howdy/auth/internal/database as db
 import howdy/auth/internal/keyring
 import howdy/auth/internal/password as password_hash
 import howdy/auth/internal/provider_store
+import howdy/auth/internal/rate_limit_store
 import howdy/auth/internal/schema
 import howdy/auth/internal/security_store
 import howdy/auth/internal/sso_oidc
@@ -43,6 +44,7 @@ import howdy/auth/user.{
 }
 import howdy/context.{type Context}
 import howdy/migration
+import howdy/rate_limit
 import howdy/service
 
 pub type Intent {
@@ -121,6 +123,7 @@ pub opaque type Auth {
     multi_session: Option(Int),
     email_links: Option(String),
     email_codes: Bool,
+    rate_limits: Option(rate_limit.Store),
   )
 }
 
@@ -206,6 +209,7 @@ pub fn new(
     None,
     None,
     False,
+    None,
   ))
 }
 
@@ -1935,6 +1939,49 @@ pub fn resume(
   event(conn, user_id, "user.resumed", actor, "")
 }
 
+/// Count the per-client limits of every auth route (`routes.api`,
+/// `routes.providers`, `routes.sso`) in the auth database, so that nodes
+/// behind a load balancer share them and a restart does not reset them. Each
+/// limited request then costs one write. Without this, each node counts on
+/// its own. Needs migration **17**. Password, code and second-factor guessing
+/// limits are always shared; this is the coarser per-client ceiling in front.
+pub fn with_shared_rate_limits(auth: Auth) -> Auth {
+  Auth(..auth, rate_limits: Some(rate_limit_store(auth)))
+}
+
+/// As `with_shared_rate_limits`, counting in a store of your own, such as
+/// Redis, instead of the auth database.
+pub fn with_rate_limit_store(auth: Auth, store: rate_limit.Store) -> Auth {
+  Auth(..auth, rate_limits: Some(store))
+}
+
+/// The auth database as a `rate_limit.Store`, for sharing the application's
+/// own limiters between nodes too. Give each `rate_limit.shared` limiter a
+/// name not starting `howdy_auth.`.
+pub fn rate_limit_store(auth: Auth) -> rate_limit.Store {
+  rate_limit_store.new(auth.repo)
+}
+
+/// A limiter for the auth routes: shared when configured, else this node's.
+@internal
+pub fn limiter(
+  auth: Auth,
+  name: String,
+  limit: Int,
+  per_seconds: Int,
+) -> rate_limit.Limiter {
+  case auth.rate_limits {
+    Some(store) ->
+      rate_limit.shared(
+        limit:,
+        per_seconds:,
+        name: "howdy_auth." <> name,
+        store:,
+      )
+    None -> rate_limit.fixed_window(limit:, per_seconds:)
+  }
+}
+
 /// Housekeeping for a scheduled job. Expired rows are already removed as a
 /// side effect of normal traffic; this covers quiet installations.
 pub fn prune_expired(auth: Auth) -> service.Result(Nil) {
@@ -1942,6 +1989,7 @@ pub fn prune_expired(auth: Auth) -> service.Result(Nil) {
     externally(auth, fn(external) { external.prune(token.now()) }),
   )
   use conn <- db.transaction(auth.repo)
+  use _ <- result.try(rate_limit_store.delete_expired(conn, token.now() * 1000))
   store.delete_expired(conn, token.now(), auth.policy)
 }
 
@@ -2098,11 +2146,16 @@ pub fn with_provider(
   provider: provider.Provider,
 ) -> service.Result(Auth) {
   use _ <- result.try(provider.validate(provider))
+  let issuer = provider.issuer(provider)
   case
-    list.any(auth.providers, fn(p) { provider.id(p) == provider.id(provider) })
+    list.any(auth.providers, fn(p) { provider.id(p) == provider.id(provider) }),
+    option.is_some(issuer)
+    && list.any(auth.providers, fn(p) { provider.issuer(p) == issuer })
   {
-    True -> Error(service.Invalid("provider is already configured"))
-    False ->
+    True, _ -> Error(service.Invalid("provider is already configured"))
+    _, True ->
+      Error(service.Invalid("another provider already uses this issuer"))
+    False, False ->
       Ok(Auth(..auth, providers: list.append(auth.providers, [provider])))
   }
 }
@@ -2220,6 +2273,12 @@ fn begin_provider_attempt(
       link_session,
       client,
     )
+  // Built first: a provider configured by discovery can fail here, and then
+  // no attempt should be left behind.
+  use url <- result.try(provider.authorization_url(
+    provider,
+    provider.Authorization(redirect_uri, state, nonce, token.digest(verifier)),
+  ))
   use _ <- result.try({
     use conn <- db.write_transaction(
       auth.repo,
@@ -2227,13 +2286,7 @@ fn begin_provider_attempt(
     )
     provider_store.insert(conn, state, browser, attempt)
   })
-  Ok(ProviderStart(
-    provider.authorization_url(
-      provider,
-      provider.Authorization(redirect_uri, state, nonce, token.digest(verifier)),
-    ),
-    secret.wrap(browser),
-  ))
+  Ok(ProviderStart(url, secret.wrap(browser)))
 }
 
 /// Consume a browser-bound attempt, verify the external identity, and apply

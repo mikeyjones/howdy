@@ -866,9 +866,9 @@ use `http://localhost:8787/auth/providers/google/callback`. Callback URLs are de
 from the configured origin, never Host or forwarded headers. Mount the provider
 controller at the same prefix as the starter pages; their Google buttons and account
 link forms appear automatically. `auth.providers(identity)` lists IDs/display names
-for custom pages. The provider constructor returns an opaque `provider.Provider`;
-`auth.with_provider` validates it and rejects duplicate IDs. Custom provider
-construction is an internal implementation seam, not a supported extension contract.
+for custom pages. `auth.with_provider` validates each provider and rejects a
+duplicate ID or issuer. For providers beyond the built-in ones, see
+[Other OpenID Connect and OAuth providers](#other-openid-connect-and-oauth-providers).
 
 For a Google-only installation, replace `auth.new` with:
 
@@ -956,6 +956,77 @@ column follow that name and should be replaced if they need to index new methods
 
 References: [Google's server flow](https://developers.google.com/identity/openid-connect/openid-connect),
 [Google identity/email verification](https://developers.google.com/identity/sign-in/web/backend-auth).
+
+## Other OpenID Connect and OAuth providers
+
+Any OpenID Connect provider (Okta, Auth0, Keycloak, GitLab, Zitadel…) needs only
+configuration:
+
+```gleam
+import howdy/auth/providers/oidc
+
+let assert Ok(identity) =
+  auth.with_provider(identity, oidc.new(
+    id: "gitlab",
+    name: "GitLab",
+    issuer: "https://gitlab.com",
+    client_id: gitlab_client_id,
+    client_secret: gitlab_client_secret,
+    authoritative_for: [],
+  ))
+```
+
+Endpoints and keys are discovered at `issuer` when the first sign-in begins and
+cached for five minutes, so an unreachable provider fails that sign-in, not
+startup. ID tokens get the same checks as enterprise SSO connections: signature
+against the issuer's own keys, then issuer, audience, lifetime and nonce.
+Register `https://app.example.com/auth/providers/<id>/callback`.
+
+`authoritative_for` is the security decision. A provider sign-in creates a new
+account only when the provider is the authority for the address: for a
+company's own domain on its own Keycloak, list that domain. For a public
+provider where anyone can make an account, pass `[]`; new users then register
+by email and link the provider from the account page. A provider that has
+verified an address is not its owner. Howdy never attaches a provider sign-in to
+an existing account because the addresses match, whatever this says.
+
+For an OAuth 2.0 provider without OpenID Connect, `provider.custom` takes the
+two provider-specific steps and leaves state, PKCE, nonce, cookies, linking,
+MFA and sessions to Howdy:
+
+```gleam
+import howdy/auth/provider
+
+let assert Ok(identity) =
+  auth.with_provider(identity, provider.custom(
+    id: "gitea",
+    name: "Gitea",
+    issuer: "https://git.example.com",
+    authorize: fn(request) {
+      "https://git.example.com/login/oauth/authorize?" <> uri.query_to_string([
+        #("client_id", client_id),
+        #("redirect_uri", request.redirect_uri),
+        #("response_type", "code"),
+        #("state", request.state),
+        #("code_challenge", request.challenge),
+        #("code_challenge_method", "S256"),
+      ])
+    },
+    // Redeem exchange.code (with exchange.redirect_uri and exchange.verifier),
+    // fetch the user, and return
+    // Ok(provider.Verified(subject: id, email:, email_authoritative: False)).
+    verify: gitea_account,
+  ))
+```
+
+`subject` must be the provider's stable account ID, never an address.
+`email_authoritative` follows the same rule as `authoritative_for` above; leave
+it False when unsure. A custom provider's accounts are recorded under
+`custom:<issuer>`, so even a provider claiming Google's issuer cannot reach an
+account linked through Google or an SSO connection. Changing `issuer` later
+forgets its linked accounts. `verify` should bound the responses it reads,
+never log them, and return `Error(service.Unauthorized)` for anything it
+refuses; any provider access token is yours to discard.
 
 ## Optional passwords
 
@@ -1620,8 +1691,26 @@ routes.api_limited_by(identity, at: "/api/auth", key: fn(ctx) {
 })
 ```
 
-Only trust a header your ingress overwrites. Across multiple instances these
-limits are per process.
+Only trust a header your ingress overwrites.
+
+By default each node counts on its own, so behind a load balancer a client gets
+the full limit from every node, and a restart forgets its count. To share the
+limits of `routes.api`, `routes.providers` and `routes.sso` between nodes, count
+them in the auth database (migration **17**):
+
+```gleam
+let identity = auth.with_shared_rate_limits(identity)
+```
+
+Each limited request then costs one database write, keyed by a digest of the
+client rather than its address. If that write fails the request is allowed and
+a warning logged, so a database hiccup never locks everyone out; the password,
+code and second-factor guessing limits behind it are always in the database and
+never fail open. Windows follow the system clock, so keep nodes' clocks in sync.
+`auth.with_rate_limit_store` counts in a store of your own instead, such as
+Redis, and `auth.rate_limit_store(identity)` lends the auth database to the
+application's own `rate_limit.shared` limiters. `auth.prune_expired` clears old
+windows; they are also cleared now and then as traffic passes.
 
 Token requests are bounded per address by coalescing rather than by refusing:
 while a usable token is waiting, further requests send nothing and still report

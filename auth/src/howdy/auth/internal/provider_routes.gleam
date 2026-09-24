@@ -31,8 +31,7 @@ pub fn routes(
     && auth.provider_path(success)
     && auth.provider_path(failure)
     as "provider routes require local paths without queries or fragments"
-  let limited =
-    rate_limit.by(rate_limit.fixed_window(limit: 30, per_seconds: 60), key)
+  let limited = rate_limit.by(auth.limiter(identity, "providers", 30, 60), key)
   let wrap = middleware.wrap(_, limited)
   let routes =
     controller.new(prefix)

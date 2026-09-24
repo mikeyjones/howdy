@@ -131,6 +131,16 @@ re-exports them. Every one is a Sketch class built from tokens.
 | `tabs` | `tabs`, `tab` |
 | `accordion` | `accordion`, `accordion_item`, `collapsible` |
 | `select` | `select`, `select_item`, `select_group` (a styled list; `native_select` is the browser's own) |
+| `toast` | `toast_region`, `toast` in `Info` and `Danger`, `toast_title`, `toast_description`, `toast_close`; `toast.duration`, `toast.persistent` |
+| `sidebar` | `sidebar_layout`, `sidebar`, `sidebar_trigger`, `sidebar_header`, `sidebar_content`, `sidebar_footer`, `sidebar_group`, `sidebar_link`, `sidebar_button` |
+| `pagination` | `pagination`; `pagination.live_pagination` for live views |
+| `command` | `command`, `command_group`, `command_item`, `command_link`, `command_empty`, `command_dialog` (with a ⌘K shortcut), `combobox`, `combobox_option` |
+| `calendar` | `calendar.new(...)` built up with `selected`, `today`, `disabled`, `navigation` and `name`, shown with `view` or as a date `picker` |
+| `data_table` | `data_table.new(columns, rows)` with `sort`, `selectable`, `empty` and `caption` |
+| `chart` | `chart.bar`, `chart.line` and `chart.area`, shown with `view` |
+
+`calendar`, `data_table` and `chart` are builders with several options, so
+use them from their own modules rather than through `howdy/ui`.
 
 Controls follow their native state. `attribute.disabled(True)` dims them
 and `attribute.aria_invalid("true")` gives them the danger colour, so a form
@@ -180,6 +190,32 @@ selected. A live view that wants to know listens for the native events:
 `close` on a dialog, `toggle` on a popover or accordion item, `change` on a
 select's hidden input, or `click` on a tab or menu item. Keep a trigger and
 its target in the same tree: both in the page, or both in one live view.
+
+A live view hears the value of a select, combobox or calendar with
+`live.on_value`, on any element around the control:
+
+```gleam
+html.div([live.on_value("status", FilterStatus)], [
+  ui.combobox(id: "status", name: "status", ...),
+])
+```
+
+### Charts
+
+Charts are drawn on the server: lines, areas and gridlines as SVG, and text,
+dots, columns and readouts as HTML over it, so type stays the same size at
+any width. Series take the theme's chart colours, `chart_1` to `chart_5`, in
+order; the built-in themes' five pass colour-vision-deficiency separation
+checks against their own surfaces. Hovering over or focusing a label shows
+every series' value there, and "Show data" opens the numbers as a table, so
+no value depends on colour or a mouse. None of it needs a script.
+
+### Blocks
+
+`examples/gallery` builds whole screens from these components: a dashboard
+with a collapsible sidebar, stat cards, charts and a live orders table, a
+page of components, and sign-in and sign-up screens with validation. Its
+`blocks` module is meant to be copied.
 
 ### Making a component your own
 

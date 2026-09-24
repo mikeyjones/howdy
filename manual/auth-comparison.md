@@ -38,6 +38,8 @@ assurance cannot be inferred from matching feature names or counting tests.
 | Encryption-key rotation | `mfa.with_decryption_keys` / `connection.with_decryption_keys` open with earlier keys; `auth.reseal_mfa` and `connections.reseal` re-encrypt online. Ciphertexts stay unversioned: authenticated trial decryption keeps existing values readable without a migration | Closed, including rolling deployments; Better Auth versions its ciphertexts instead ([secret rotation](https://better-auth.com/docs/reference/security#secret-rotation)) |
 | Magic links and email codes | `auth.with_email_links` adds a fragment-carried link that the starter pages fill in and confirm with a click; `auth.with_email_codes` adds a six-digit code limited to three guesses and the password guessing budgets | Closed; one email carries link, code and token together, where Better Auth splits [magic-link](https://better-auth.com/docs/plugins/magic-link) and [email-OTP](https://better-auth.com/docs/plugins/email-otp) into plugins |
 | Authenticator QR code | Server-rendered SVG in `MfaSetup.qr_code` and the enrollment JSON, shown on the starter account page | Closed; Better Auth leaves QR rendering to the application |
+| Shared HTTP rate limits | `auth.with_shared_rate_limits` counts every auth route group's per-client limits in the auth database; `auth.with_rate_limit_store` takes any `rate_limit.Store`, such as Redis | Closed, comparable to Better Auth's database/secondary storage ([rate limiting](https://better-auth.com/docs/concepts/rate-limit)). A failing store allows the request; the credential guessing limits never fail open |
+| Other OAuth/OIDC providers | `providers/oidc.new` configures any OpenID Connect issuer by discovery, verified like SSO connections; `provider.custom` is a supported contract for other OAuth 2.0 providers, namespaced so it cannot reach other issuers' accounts | Closed for sign-in; Better Auth's [generic OAuth plugin](https://better-auth.com/docs/plugins/generic-oauth) also keeps provider tokens, which Howdy deliberately does not |
 | Apple login | Apple adapter, signed client-secret JWT, identity verification and POST callback handling | Present alongside Google, GitHub, Facebook and Entra |
 
 Local evidence: [auth API](../auth/src/howdy/auth.gleam),
@@ -82,11 +84,6 @@ unweighted plugin count. [Plugin catalog](https://better-auth.com/docs/plugins)
 
 ### 3. Operational controls — high impact before broader deployment
 
-- **General HTTP rate limits remain per process.** Password/MFA guessing and
-  email cooldowns are already persistent and shared. Better Auth can place its
-  HTTP limit state in database, secondary or custom storage; its server API
-  calls bypass that HTTP limiter. A shared Howdy limiter is useful before scaling
-  to multiple instances. [Rate limiting](https://better-auth.com/docs/concepts/rate-limit)
 - **Release/dependency readiness is still limited.** Howdy depends on a patched,
   vendored Jargon and `glasslock 1.0.0-rc1`, including internal parsing APIs.
   The README still requires stopping old instances before migrations and says
@@ -101,17 +98,17 @@ unweighted plugin count. [Plugin catalog](https://better-auth.com/docs/plugins)
 
 ### 4. Supported extension points and administration — medium impact
 
-Howdy's functions are composable and include useful targeted callbacks. The
-provider constructor is nevertheless marked internal; there is no general
-supported endpoint/database hook or plugin contract. Its trusted administrative
+Howdy's functions are composable and include useful targeted callbacks, and
+providers now have a supported contract (see the closed gaps above). There is
+still no general endpoint/database hook or plugin contract. Its trusted administrative
 functions also leave authorization, search/pagination and support interfaces to
 applications. Better Auth supplies [hooks](https://better-auth.com/docs/concepts/hooks)
 and a permission-controlled [admin plugin](https://better-auth.com/docs/plugins/admin),
 including impersonation. That plugin is not a bundled hosted dashboard.
 
 This is a developer-experience gap, not absence of role-based authorization or
-user suspension in Howdy. A documented provider contract and small administrative
-API could close useful parts without building a large plugin framework.
+user suspension in Howdy. A small administrative API could close the useful
+remainder without building a large plugin framework.
 
 ### 5. Product-dependent capabilities — significant when needed
 
@@ -153,10 +150,9 @@ or cached sessions solely to match a checklist. [Session tradeoffs](https://bett
 ## Suggested next priorities
 
 1. Dependency/release readiness and real-browser/device validation.
-2. Shared HTTP rate limiting before multi-instance deployment.
+2. Focused administrative tools.
 3. A reusable auth client.
-4. Public provider/extension contracts and focused administrative tools.
-5. API keys, memberships and more login methods only as required by the product.
+4. API keys, memberships and more login methods only as required by the product.
 
 Core workflow coverage is close; platform breadth remains substantially different;
 production assurance requires evidence beyond this comparison. A single parity

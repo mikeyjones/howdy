@@ -77,9 +77,13 @@ import howdy/ui/accordion
 import howdy/ui/alert
 import howdy/ui/badge
 import howdy/ui/button
+import howdy/ui/calendar
 import howdy/ui/card
+import howdy/ui/chart
 import howdy/ui/checkbox
 import howdy/ui/cli
+import howdy/ui/command
+import howdy/ui/data_table
 import howdy/ui/dialog
 import howdy/ui/field
 import howdy/ui/heading
@@ -88,12 +92,15 @@ import howdy/ui/internal/stylesheet
 import howdy/ui/layout
 import howdy/ui/loading
 import howdy/ui/menu
+import howdy/ui/pagination
 import howdy/ui/popover
 import howdy/ui/select
+import howdy/ui/sidebar
 import howdy/ui/style
 import howdy/ui/table
 import howdy/ui/tabs
 import howdy/ui/theme.{type Themes}
+import howdy/ui/toast
 import howdy/ui/tooltip
 import howdy/ui/typography
 import lustre/attribute.{type Attribute}
@@ -141,6 +148,13 @@ pub fn classes() -> List(Class) {
     tabs.classes(),
     accordion.classes(),
     select.classes(),
+    toast.classes(),
+    sidebar.classes(),
+    pagination.classes(),
+    calendar.classes(),
+    command.classes(),
+    data_table.classes(),
+    chart.classes(),
   ])
 }
 
@@ -660,4 +674,160 @@ pub fn select_item(value: String, label: String) -> select.Item {
 
 pub fn select_group(label: String, items: List(select.Item)) -> select.Item {
   select.group(label, items)
+}
+
+/// See `howdy/ui/toast`.
+pub fn toast_region(
+  attributes: List(Attribute(msg)),
+  toasts: List(Element(msg)),
+) -> Element(msg) {
+  toast.region(attributes, toasts)
+}
+
+pub fn toast(
+  variant: toast.Variant,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  toast.toast(variant, attributes, children)
+}
+
+pub fn toast_title(children: List(Element(msg))) -> Element(msg) {
+  toast.title(children)
+}
+
+pub fn toast_description(children: List(Element(msg))) -> Element(msg) {
+  toast.description(children)
+}
+
+pub fn toast_close(attributes: List(Attribute(msg))) -> Element(msg) {
+  toast.close(attributes)
+}
+
+/// See `howdy/ui/sidebar`.
+pub fn sidebar_layout(
+  collapsed collapsed: Bool,
+  attributes attributes: List(Attribute(msg)),
+  sidebar sidebar_element: Element(msg),
+  main main: List(Element(msg)),
+) -> Element(msg) {
+  sidebar.layout(collapsed:, attributes:, sidebar: sidebar_element, main:)
+}
+
+pub fn sidebar(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  sidebar.sidebar(id, attributes, children)
+}
+
+pub fn sidebar_trigger(id: String) -> List(Attribute(msg)) {
+  sidebar.trigger(id)
+}
+
+pub fn sidebar_header(children: List(Element(msg))) -> Element(msg) {
+  sidebar.header(children)
+}
+
+pub fn sidebar_content(children: List(Element(msg))) -> Element(msg) {
+  sidebar.content(children)
+}
+
+pub fn sidebar_footer(children: List(Element(msg))) -> Element(msg) {
+  sidebar.footer(children)
+}
+
+pub fn sidebar_group(label: String, items: List(Element(msg))) -> Element(msg) {
+  sidebar.group(label, items)
+}
+
+pub fn sidebar_link(
+  href: String,
+  active active: Bool,
+  attributes attributes: List(Attribute(msg)),
+  children children: List(Element(msg)),
+) -> Element(msg) {
+  sidebar.link(href, active:, attributes:, children:)
+}
+
+pub fn sidebar_button(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  sidebar.button(attributes, children)
+}
+
+/// See `howdy/ui/pagination`.
+pub fn pagination(
+  current current: Int,
+  total total: Int,
+  href href: fn(Int) -> String,
+) -> Element(msg) {
+  pagination.pagination(current:, total:, href:)
+}
+
+/// See `howdy/ui/command`.
+pub fn command(
+  id: String,
+  placeholder placeholder: String,
+  attributes attributes: List(Attribute(msg)),
+  children children: List(Element(msg)),
+) -> Element(msg) {
+  command.command(id, placeholder:, attributes:, children:)
+}
+
+pub fn command_group(
+  heading: String,
+  items: List(Element(msg)),
+) -> Element(msg) {
+  command.group(heading, items)
+}
+
+pub fn command_item(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  command.item(attributes, children)
+}
+
+pub fn command_link(
+  href: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  command.link(href, attributes, children)
+}
+
+pub fn command_empty(children: List(Element(msg))) -> Element(msg) {
+  command.empty(children)
+}
+
+pub fn command_dialog(
+  id: String,
+  shortcut shortcut: String,
+  attributes attributes: List(Attribute(msg)),
+  command command_element: Element(msg),
+) -> Element(msg) {
+  command.dialog(id, shortcut:, attributes:, command: command_element)
+}
+
+pub fn combobox(
+  id id: String,
+  name name: String,
+  value value: String,
+  label label: String,
+  placeholder placeholder: String,
+  search search: String,
+  options options: List(Element(msg)),
+) -> Element(msg) {
+  command.combobox(id:, name:, value:, label:, placeholder:, search:, options:)
+}
+
+pub fn combobox_option(
+  value: String,
+  selected selected: Bool,
+  children children: List(Element(msg)),
+) -> Element(msg) {
+  command.option(value, selected:, children:)
 }

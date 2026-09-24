@@ -74,6 +74,15 @@ pub type Colors {
     on_danger: String,
     /// Focus rings.
     focus: String,
+    /// Chart series, in the order they are used. The built-in themes' five
+    /// pass colour-vision-deficiency separation checks as an ordered set
+    /// against their own surface; keep that order, and check any
+    /// replacement, rather than shuffling them.
+    chart_1: String,
+    chart_2: String,
+    chart_3: String,
+    chart_4: String,
+    chart_5: String,
   )
 }
 
@@ -125,6 +134,11 @@ pub fn light() -> Theme {
       danger: "#dc2626",
       on_danger: "#ffffff",
       focus: "#93c5fd",
+      chart_1: "#2a78d6",
+      chart_2: "#eb6834",
+      chart_3: "#1baf7a",
+      chart_4: "#eda100",
+      chart_5: "#e87ba4",
     ),
     font: default_font(),
     radius: default_radius(),
@@ -149,6 +163,11 @@ pub fn dark() -> Theme {
       danger: "#f87171",
       on_danger: "#0f172a",
       focus: "#3b82f6",
+      chart_1: "#3987e5",
+      chart_2: "#d95926",
+      chart_3: "#199e70",
+      chart_4: "#c98500",
+      chart_5: "#d55181",
     ),
     font: default_font(),
     radius: default_radius(),
@@ -218,6 +237,11 @@ pub fn variables(theme: Theme) -> List(#(String, String)) {
     #("danger", c.danger),
     #("on-danger", c.on_danger),
     #("focus", c.focus),
+    #("chart-1", c.chart_1),
+    #("chart-2", c.chart_2),
+    #("chart-3", c.chart_3),
+    #("chart-4", c.chart_4),
+    #("chart-5", c.chart_5),
     #("font-body", f.body),
     #("font-heading", f.heading),
     #("font-mono", f.mono),

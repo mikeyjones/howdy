@@ -1,0 +1,14 @@
+name = "howdy_gallery"
+version = "0.1.0"
+description = "howdy_ui components and blocks: a dashboard, sign-in and sign-up screens, and a live orders table"
+
+[dependencies]
+gleam_stdlib = ">= 1.0.0 and < 2.0.0"
+gleam_erlang = ">= 1.3.0 and < 2.0.0"
+gleam_http = ">= 4.4.0 and < 5.0.0"
+lustre = ">= 5.7.0 and < 6.0.0"
+howdy = { path = "../.." }
+howdy_ui = { path = "../../ui" }
+
+[dev_dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"

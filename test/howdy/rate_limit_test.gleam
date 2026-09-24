@@ -1,8 +1,10 @@
 import gleam/dict
+import gleam/erlang/process
 import gleam/http/response
 import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/actor
 import gleam/string
 import howdy
 import howdy/context.{Context}
@@ -405,4 +407,60 @@ pub fn service_can_return_too_many_requests_test() {
     })
   assert res.status == 429
   assert response.get_header(res, "retry-after") == Ok("30")
+}
+
+// -- shared ------------------------------------------------------------------
+
+type Count {
+  Increment(key: String, window: Int, reply: process.Subject(Int))
+}
+
+/// One store two "nodes" share, holding the store contract: a newer window
+/// resets a key, an older one counts against the newer.
+fn memory_store() -> rate_limit.Store {
+  let assert Ok(started) =
+    actor.new(dict.new())
+    |> actor.on_message(fn(counts, message: Count) {
+      let #(window, hits) = case dict.get(counts, message.key) {
+        Ok(#(held, hits)) if held >= message.window -> #(held, hits + 1)
+        _ -> #(message.window, 1)
+      }
+      process.send(message.reply, hits)
+      actor.continue(dict.insert(counts, message.key, #(window, hits)))
+    })
+    |> actor.start
+  rate_limit.Store(fn(key, window, _expires_at) {
+    Ok(process.call(started.data, 1000, Increment(key, window, _)))
+  })
+}
+
+pub fn shared_limiters_on_two_nodes_count_together_test() {
+  let store = memory_store()
+  let first = rate_limit.shared(limit: 3, per_seconds: 60, name: "api", store:)
+  let second = rate_limit.shared(limit: 3, per_seconds: 60, name: "api", store:)
+  let t = 1_800_000_000_000
+  assert rate_limit.check_at(first, "ip", t)
+    == Allowed(limit: 3, remaining: 2, reset_seconds: 60)
+  assert rate_limit.check_at(second, "ip", t + 1000)
+    == Allowed(limit: 3, remaining: 1, reset_seconds: 59)
+  let assert Allowed(remaining: 0, ..) =
+    rate_limit.check_at(first, "ip", t + 2000)
+  assert rate_limit.check_at(second, "ip", t + 3000)
+    == Denied(limit: 3, retry_after_seconds: 57)
+  // Other keys, and other limiters on the same store, count apart.
+  let assert Allowed(remaining: 2, ..) = rate_limit.check_at(second, "other", t)
+  let other = rate_limit.shared(limit: 3, per_seconds: 60, name: "web", store:)
+  let assert Allowed(remaining: 2, ..) = rate_limit.check_at(other, "ip", t)
+  // The next window starts over.
+  let assert Allowed(remaining: 2, ..) =
+    rate_limit.check_at(first, "ip", t + 60_000)
+}
+
+pub fn a_failing_shared_store_allows_requests_test() {
+  let broken = rate_limit.Store(fn(_, _, _) { Error(Nil) })
+  let limiter =
+    rate_limit.shared(limit: 1, per_seconds: 60, name: "api", store: broken)
+  let assert Allowed(limit: 1, remaining: 1, ..) =
+    rate_limit.check(limiter, "ip")
+  let assert Allowed(..) = rate_limit.check(limiter, "ip")
 }

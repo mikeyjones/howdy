@@ -380,6 +380,22 @@ ALTER TABLE howdy_auth_challenges ADD COLUMN code_digest TEXT;
 ALTER TABLE howdy_auth_challenges ADD COLUMN code_attempts INTEGER NOT NULL DEFAULT 0;
 ",
     ),
+    // Per-client request counts every node shares, with
+    // `auth.with_shared_rate_limits`. One row per limiter and client: `key` is
+    // a digest, so client addresses are not stored.
+    gloo_migration.new(
+      17,
+      "add_shared_rate_limits",
+      "
+CREATE TABLE howdy_auth_rate_limits (
+  key TEXT PRIMARY KEY NOT NULL,
+  window_start BIGINT NOT NULL,
+  hits INTEGER NOT NULL,
+  expires_at BIGINT NOT NULL
+);
+CREATE INDEX howdy_auth_rate_limits_expiry ON howdy_auth_rate_limits(expires_at);
+",
+    ),
   ])
 }
 
