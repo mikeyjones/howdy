@@ -1,5 +1,5 @@
 -module(howdy_admin_ffi).
--export([cells/1]).
+-export([cells/1, postgres_pool/1, listen/4]).
 
 %% A database row as it came from the driver, as a list of optional strings.
 %% pog rows are tuples and sqlight rows are lists; every value becomes text
@@ -52,3 +52,89 @@ pad(N) -> io_lib:format("~2..0b", [N]).
 seconds(S) when is_integer(S) -> pad(S);
 seconds(S) when is_float(S) -> io_lib:format("~6.3.0f", [S]);
 seconds(S) -> io_lib:format("~p", [S]).
+
+%% The pgo pool behind a Gloo Repo on PostgreSQL, or nothing for SQLite or
+%% an unrecognised Repo. Reads Gloo's public adapter record.
+postgres_pool({repo, Adapter}) when element(1, Adapter) =:= adapter ->
+    case element(3, Adapter) of
+        {pg_connection, {pool, Name}, _} when is_atom(Name) -> {ok, Name};
+        _ -> {error, nil}
+    end;
+postgres_pool(_) ->
+    {error, nil}.
+
+%% pgo keeps the pool's configuration in the child specification of the
+%% pool supervisor, which the pool process is linked to.
+pool_config(Name) ->
+    case whereis(Name) of
+        undefined -> {error, nil};
+        Pool ->
+            {links, Links} = process_info(Pool, links),
+            find_config([Pid || Pid <- Links, is_pid(Pid), is_pool_sup(Pid)])
+    end.
+
+is_pool_sup(Pid) ->
+    case proc_lib:initial_call(Pid) of
+        {pgo_pool_sup, _, _} -> true;
+        {supervisor, pgo_pool_sup, _} -> true;
+        _ -> false
+    end.
+
+find_config([]) ->
+    {error, nil};
+find_config([Sup | Rest]) ->
+    try supervisor:get_childspec(Sup, connection_sup) of
+        {ok, #{start := {pgo_connection_sup, start_link, [_, _, _, Config]}}} -> {ok, Config};
+        _ -> find_config(Rest)
+    catch
+        _:_ -> find_config(Rest)
+    end.
+
+%% Open one more connection to the pool's server and LISTEN on Channel,
+%% calling Notify with each payload, until Owner exits. The connection is
+%% pgo's own notification client, which reconnects on its own.
+listen(Pool, Channel, Owner, Notify) ->
+    case pool_config(Pool) of
+        {error, nil} ->
+            {error, nil};
+        {ok, Config} ->
+            Parent = self(),
+            Pid = spawn(fun() -> start_listener(Parent, Config, Channel, Owner, Notify) end),
+            receive
+                {howdy_admin_listening, Pid, ok} -> {ok, nil};
+                {howdy_admin_listening, Pid, error} -> {error, nil}
+            after 5000 ->
+                exit(Pid, kill),
+                {error, nil}
+            end
+    end.
+
+start_listener(Parent, Config, Channel, Owner, Notify) ->
+    process_flag(trap_exit, true),
+    Monitor = monitor(process, Owner),
+    case pgo_notifications:start_link(Config) of
+        {ok, Listener} ->
+            case pgo_notifications:listen(Listener, Channel) of
+                {Tag, _} when Tag =:= ok; Tag =:= eventually ->
+                    Parent ! {howdy_admin_listening, self(), ok},
+                    listener_loop(Listener, Monitor, Notify);
+                _ ->
+                    Parent ! {howdy_admin_listening, self(), error}
+            end;
+        _ ->
+            Parent ! {howdy_admin_listening, self(), error}
+    end.
+
+listener_loop(Listener, Monitor, Notify) ->
+    receive
+        {notification, _, _, _, Payload} ->
+            Notify(Payload),
+            listener_loop(Listener, Monitor, Notify);
+        {'DOWN', Monitor, process, _, _} ->
+            try gen_statem:stop(Listener) catch _:_ -> ok end,
+            ok;
+        {'EXIT', Listener, _} ->
+            ok;
+        _ ->
+            listener_loop(Listener, Monitor, Notify)
+    end.

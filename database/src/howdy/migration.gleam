@@ -252,9 +252,12 @@ fn record_fingerprint(conn: Repo, name: String) -> service.Result(Nil) {
 // `<package>_`. Application extensions must live in their own namespace.
 // Include indexes and triggers so out-of-band changes cannot silently alter
 // constraints or execution. SQL NULL auto-index entries are represented too.
-// One exception: a non-unique index named outside the package namespace is
+// Two exceptions: a non-unique index named outside the package namespace is
 // ignored. It cannot change what the tables accept or return, and operators
-// need to be able to add one to a hot table without a package release.
+// need to be able to add one to a hot table without a package release. And a
+// trigger whose name begins with `howdy_admin_` is ignored: the development
+// admin (`howdy_admin`) adds one per table on PostgreSQL to hear about
+// changes, and it only notifies, never alters a row.
 fn fingerprint(conn: Repo, name: String) -> service.Result(String) {
   let prefix = name <> "_"
   let row = {
@@ -306,6 +309,7 @@ SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_master
 WHERE (name IN (SELECT name FROM owned) OR tbl_name IN (SELECT name FROM owned))
 AND NOT (type = 'index' AND sql IS NOT NULL AND upper(sql) NOT LIKE 'CREATE UNIQUE%'
  AND substr(name, 1, length($3)) <> $4)
+AND NOT (type = 'trigger' AND substr(name, 1, 12) = 'howdy_admin_')
 ORDER BY type, name"
 
 const postgres_fingerprint = "WITH owned AS (
@@ -331,7 +335,8 @@ const postgres_fingerprint = "WITH owned AS (
  WHERE i.indisunique OR left(c.relname, length($3)) = $4
  UNION ALL
  SELECT 'trigger', o.relname || '.' || t.tgname, o.relname, pg_get_triggerdef(t.oid, true) || ':' || t.tgenabled::text
- FROM owned o JOIN pg_catalog.pg_trigger t ON t.tgrelid = o.oid WHERE NOT t.tgisinternal
+ FROM owned o JOIN pg_catalog.pg_trigger t ON t.tgrelid = o.oid
+ WHERE NOT t.tgisinternal AND left(t.tgname, 12) <> 'howdy_admin_'
  UNION ALL
  SELECT 'policy', o.relname || '.' || p.polname, o.relname,
  concat(p.polcmd, ':', p.polpermissive, ':',

@@ -11,10 +11,12 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import gleam/time/timestamp
 import gleam/uri
 import gloo/repo.{type Repo}
 import howdy/admin/internal/config.{type Config}
 import howdy/admin/internal/layout
+import howdy/admin/internal/notify
 import howdy/admin/internal/schema.{type Row, type Table, Row}
 import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
@@ -36,8 +38,12 @@ const per_page = 50
 /// How often the grid checks the table for changes, in milliseconds.
 const refresh_ms = 1000
 
-/// How many refreshes a changed row stays marked for.
-const highlight_ticks = 4
+/// With notifications, how often the grid still checks, in case one was
+/// missed while the listener reconnected.
+const fallback_ms = 15_000
+
+/// How long a changed row stays marked, in milliseconds.
+const highlight_ms = 4000
 
 pub fn controller(config: Config, repo: Repo) -> Controller {
   controller.new(config.prefix)
@@ -514,15 +520,23 @@ pub type Model {
     page: Int,
     total: Int,
     rows: List(Row),
-    /// Keys of rows that changed recently, with the tick they changed on.
+    /// Keys of rows that changed recently, with when, in milliseconds.
     changed: Dict(List(String), Int),
-    tick: Int,
+    /// Whether anything has been loaded yet; the first load is not a change.
+    loaded: Bool,
+    /// Whether the database announces changes, so polling is only a backstop.
+    notified: Bool,
     error: Option(service.Error),
   )
 }
 
 pub type Msg {
+  /// Time to look again.
   Tick
+  /// The database said the table changed.
+  Changed
+  /// Time to drop old change marks.
+  Expire
   Go(Int)
   Delete(List(String))
 }
@@ -541,15 +555,25 @@ fn init(args: Args) -> #(Model, Effect(Msg)) {
       total: 0,
       rows: [],
       changed: dict.new(),
-      tick: 0,
+      loaded: False,
+      notified: False,
       error: None,
     )
-  #(load(model), schedule())
+  let notified =
+    notify.available(args.repo)
+    && notify.install(args.repo, args.table) == Ok(Nil)
+  let model = load(Model(..model, notified:))
+  #(model, case notified {
+    True -> effect.batch([subscribe(args.repo, args.table), schedule(model)])
+    False -> schedule(model)
+  })
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
-    Tick -> #(load(Model(..model, tick: model.tick + 1)), schedule())
+    Tick -> #(load(model), schedule(model))
+    Changed -> #(load(model), after(highlight_ms + 500, Expire))
+    Expire -> #(prune(model), effect.none())
     Go(page) -> #(load(Model(..model, page: page)), effect.none())
     Delete(key) -> {
       let model = case schema.delete(model.repo, model.table, key) {
@@ -561,13 +585,55 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   }
 }
 
-fn schedule() -> Effect(Msg) {
+fn schedule(model: Model) -> Effect(Msg) {
+  after(
+    case model.notified {
+      True -> fallback_ms
+      False -> refresh_ms
+    },
+    Tick,
+  )
+}
+
+fn after(milliseconds: Int, msg: Msg) -> Effect(Msg) {
   use dispatch <- effect.from
   process.spawn(fn() {
-    process.sleep(refresh_ms)
-    dispatch(Tick)
+    process.sleep(milliseconds)
+    dispatch(msg)
   })
   Nil
+}
+
+/// Hear the database name this table. The effect runs in the runtime's
+/// process, so the listener follows the runtime's life.
+fn subscribe(repo: Repo, table: Table) -> Effect(Msg) {
+  use dispatch <- effect.from
+  let name = table.name
+  let _ =
+    notify.subscribe(repo, process.self(), fn(changed) {
+      case changed == name {
+        True -> dispatch(Changed)
+        False -> Nil
+      }
+    })
+  Nil
+}
+
+fn now() -> Int {
+  timestamp.system_time()
+  |> timestamp.to_unix_seconds_and_nanoseconds
+  |> fn(parts) { parts.0 * 1000 + parts.1 / 1_000_000 }
+}
+
+/// Forget marks older than `highlight_ms`.
+fn prune(model: Model) -> Model {
+  let now = now()
+  Model(
+    ..model,
+    changed: dict.filter(model.changed, fn(_, since) {
+      now - since < highlight_ms
+    }),
+  )
 }
 
 /// Read the current page again and note which rows differ from last time.
@@ -587,21 +653,19 @@ fn load(model: Model) -> Model {
   case loaded {
     Error(error) -> Model(..model, error: Some(error))
     Ok(#(total, rows)) -> {
-      let changed =
-        model.changed
-        |> dict.filter(fn(_, since) { model.tick - since < highlight_ticks })
-      let changed = case model.tick {
-        // The first load is not a change.
-        0 -> changed
-        _ ->
+      let now = now()
+      let changed = prune(model).changed
+      let changed = case model.loaded {
+        False -> changed
+        True ->
           list.fold(rows, changed, fn(changed, row) {
             case list.contains(model.rows, row) {
               True -> changed
-              False -> dict.insert(changed, row.key, model.tick)
+              False -> dict.insert(changed, row.key, now)
             }
           })
       }
-      Model(..model, page:, total:, rows:, changed:, error: None)
+      Model(..model, page:, total:, rows:, changed:, loaded: True, error: None)
     }
   }
 }
@@ -625,7 +689,10 @@ fn view(model: Model) -> Element(Msg) {
         <> int.to_string(model.page)
         <> " of "
         <> int.to_string(pages)
-        <> " · refreshes every second",
+        <> case model.notified {
+          True -> " · follows PostgreSQL NOTIFY"
+          False -> " · refreshes every second"
+        },
       ),
       ui.sized_button(
         button.Outline,

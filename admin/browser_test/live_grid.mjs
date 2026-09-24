@@ -4,8 +4,9 @@
 //   cd examples/admin && gleam dev
 //   node admin/browser_test/live_grid.mjs
 //
-// It updates and inserts rows in the example's SQLite file with sqlite3 and
-// expects the grid to show them, marked "changed", within a few seconds.
+// It updates and inserts rows in the example's SQLite file with sqlite3, or
+// with psql when PSQL_URL names the PostgreSQL server the example runs on,
+// and expects the grid to show them, marked "changed", within a few seconds.
 
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs';
@@ -15,6 +16,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8787';
 const DATABASE = process.env.DATABASE || 'examples/admin/admin_example.sqlite';
+const PSQL_URL = process.env.PSQL_URL || '';
 const CHROMIUM = process.env.CHROMIUM || 'chromium';
 const SHOT = process.env.SCREENSHOT || '';
 
@@ -77,12 +79,13 @@ try {
     failed = true;
     console.log('  FAIL  ' + name + '\n        grid text: ' + JSON.stringify(await evaluate('gridText()')).slice(0, 400));
   };
-  const sql = (s) => execFileSync('sqlite3', [DATABASE, s]);
+  const sql = (s) => PSQL_URL ? execFileSync('psql', [PSQL_URL, '-q', '-c', s]) : execFileSync('sqlite3', [DATABASE, s]);
 
   const stamp = Date.now().toString();
   sql(`INSERT INTO notes_notes (user_id, title, stars) SELECT id, 'seed ${stamp}', 1 FROM howdy_auth_users LIMIT 1`);
   await send('Page.navigate', { url: `${BASE}/_howdy/data/notes_notes` });
   await until('grid connects and shows the seeded row', `gridText().includes('seed ${stamp}')`);
+  await until(PSQL_URL ? 'the grid says it follows NOTIFY' : 'the grid says it polls', PSQL_URL ? `gridText().includes('NOTIFY')` : `gridText().includes('every second')`);
   await until('the first load marks nothing as changed', `!gridText().includes('changed')`);
 
   sql(`UPDATE notes_notes SET title = 'renamed ${stamp}', stars = 9 WHERE title = 'seed ${stamp}'`);

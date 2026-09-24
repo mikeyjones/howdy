@@ -94,7 +94,9 @@ let assert Ok(_) = migration.check(db, notes.schema())
   never edit a published one. There are no down migrations.
 - `check` applies nothing. It refuses a schema that is older or newer than the
   installed package, and one whose owned objects were changed outside its
-  migrations. A plain, non-unique index named outside the namespace is allowed.
+  migrations. A plain, non-unique index named outside the namespace is
+  allowed, as is a trigger named `howdy_admin_…`, which the development admin
+  adds to hear about changes.
 - `rebaseline` accepts the current shape of the owned schema after you have
   confirmed by hand that it has not drifted, for example after a PostgreSQL
   major upgrade. Never call it at startup.

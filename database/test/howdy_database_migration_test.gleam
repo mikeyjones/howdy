@@ -91,6 +91,29 @@ pub fn edited_history_and_out_of_band_changes_are_rejected_test() {
   assert migration.check(db, notes()) == Ok(Nil)
 }
 
+pub fn the_development_admins_notify_triggers_are_not_drift_test() {
+  use db <- with_repo
+  assert migration.run(db, [notes()]) == Ok(Nil)
+  // Not `database.exec`: it splits statements on semicolons.
+  let assert Ok(_) =
+    repo.execute(
+      db,
+      "CREATE TRIGGER howdy_admin_notify AFTER INSERT ON notes_notes BEGIN SELECT 1; END",
+      [],
+    )
+  assert migration.check(db, notes()) == Ok(Nil)
+  let assert Ok(_) =
+    repo.execute(
+      db,
+      "CREATE TRIGGER audit_notes AFTER INSERT ON notes_notes BEGIN SELECT 1; END",
+      [],
+    )
+  assert migration.check(db, notes())
+    == Error(service.Internal(
+      "module-owned database schema was changed outside its migrations",
+    ))
+}
+
 pub fn failed_migration_rolls_back_schema_and_ledger_test() {
   use db <- with_repo
   let broken =

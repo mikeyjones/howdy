@@ -19,6 +19,10 @@ in as them, and `GET /notes/all` answers; without it the route is `403`.
 Deleting a user from their page removes their notes too: the example's
 deletion callback does that in the same transaction.
 
+With `DATABASE_URL` set to a PostgreSQL server, the app and the admin use it
+instead of the SQLite file, and the grid follows changes through `NOTIFY`
+rather than polling.
+
 `gleam run` serves the app without hot reload or the admin: both are dev
 dependencies and their entry point lives in `dev/`, which
 `gleam export erlang-shipment` leaves out.

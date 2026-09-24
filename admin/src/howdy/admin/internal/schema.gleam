@@ -294,13 +294,15 @@ fn row_decoder(table: Table) -> decode.Decoder(Row) {
   ))
 }
 
-/// A placeholder that the database casts to the column's type. PostgreSQL
-/// needs the cast, since every parameter arrives as text; SQLite converts
-/// by column affinity on its own.
+/// A placeholder that the database casts to the column's type. Every value
+/// is sent as text. On PostgreSQL the parameter is declared text first, so
+/// the driver does not infer the column's type and refuse the string, and
+/// is then cast; SQLite converts by column affinity on its own.
 fn bind(table: Table, column: Column, index: Int) -> String {
   let placeholder = "$" <> int.to_string(index)
   case table.backend {
-    Postgres -> "CAST(" <> placeholder <> " AS " <> column.kind <> ")"
+    Postgres ->
+      "CAST(CAST(" <> placeholder <> " AS text) AS " <> column.kind <> ")"
     Sqlite -> placeholder
   }
 }
@@ -324,7 +326,7 @@ fn condition(
       }
     Ctid, [address] ->
       Ok(
-        #("ctid = CAST($" <> int.to_string(from) <> " AS tid)", [
+        #("ctid = CAST(CAST($" <> int.to_string(from) <> " AS text) AS tid)", [
           sql.string(address),
         ]),
       )

@@ -105,16 +105,32 @@ row and sign in as anyone. The defences are:
 
 ## How the grid stays current
 
-Neither driver reports changes: `sqlight` does not expose SQLite's update
-hook and `pog` has no `LISTEN`. So each open grid is a Lustre server component
-that re-runs its query once a second, compares the page with the previous one,
-and marks what differs. A delete from the grid refreshes at once. This is
-polling, which is fine for a development tool with a few tabs open; PostgreSQL
-`NOTIFY` triggers could replace it later.
+Each open grid is a Lustre server component that re-runs its query, compares
+the page with the previous one, and marks what differs for a few seconds.
+What prompts the query depends on the database.
+
+On **PostgreSQL** the grid installs a statement-level trigger named
+`howdy_admin_notify` on the table it shows, which calls `pg_notify` with the
+table's name on the `howdy_admin` channel after any insert, update, delete or
+truncate. The grid listens on one extra connection, opened with the same
+settings as the app's pool through pgo's own notification client, and
+reloads the moment its table is named. It still checks every 15 seconds in
+case a notification was missed while that connection reconnected. The
+trigger only notifies and never touches a row, and `howdy/migration` ignores
+triggers with this prefix when it checks a package's schema, so the app
+starts as before. To put the database back exactly as it was, call
+`admin.remove_notify_triggers(repo)` or run
+`DROP FUNCTION howdy_admin_notify() CASCADE`.
+
+On **SQLite** there is no such mechanism, and `sqlight` does not expose the
+update hook, so the grid asks once a second. That is fine for a development
+tool with a few tabs open.
 
 ## Testing
 
 `gleam test` drives every page through `howdy/testing` against an in-memory
-SQLite database. `node browser_test/live_grid.mjs` opens the grid in headless
+SQLite database, or against PostgreSQL when `HOWDY_ADMIN_TEST_POSTGRES_URL`
+names a server whose database the tests may empty, which also covers the
+notifications. `node browser_test/live_grid.mjs` opens the grid in headless
 Chromium against a running `examples/admin`, changes the table with `sqlite3`,
 and checks the grid follows.

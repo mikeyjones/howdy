@@ -107,6 +107,20 @@ jobs:
 
   admin:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: howdy_admin_test
+          POSTGRES_DB: howdy_admin_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U howdy_admin_test -d howdy_admin_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: admin
@@ -120,6 +134,9 @@ jobs:
       - run: make -C ../auth/vendor/jargon/c_src
       - run: gleam deps download
       - run: gleam test
+      - run: gleam test
+        env:
+          HOWDY_ADMIN_TEST_POSTGRES_URL: postgres://howdy_admin_test@localhost/howdy_admin_test
       - run: gleam format --check src test
 
   example:

@@ -50,6 +50,7 @@ import howdy.{type App}
 import howdy/admin/internal/accounts
 import howdy/admin/internal/config.{type Config, Config}
 import howdy/admin/internal/data
+import howdy/admin/internal/notify
 import howdy/admin/internal/overview
 import howdy/admin/internal/roles
 import howdy/auth.{type Auth}
@@ -168,6 +169,14 @@ fn only_hosts(config: Config) -> controller.Middleware {
       False -> service.error_response(ctx, service.Forbidden)
     }
   }
+}
+
+/// Drop the `howdy_admin_notify` function and triggers the grid installs on
+/// PostgreSQL to hear about changes. They are harmless to leave, and
+/// `howdy/migration` ignores them, but this puts a database back exactly as
+/// it was. Does nothing on SQLite.
+pub fn remove_notify_triggers(repo: Repo) -> service.Result(Nil) {
+  notify.uninstall(repo)
 }
 
 /// Where the pages are, for linking to them.
