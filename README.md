@@ -598,6 +598,23 @@ pub fn main() {
 It polls files rather than using a native watcher, so it works the same on
 macOS. Nothing from it reaches a `gleam export erlang-shipment`.
 
+## Development admin
+
+[`howdy_admin`](admin/README.md) is a dev dependency that mounts an admin
+area at `/_howdy` from the same `dev/` entry point: the tables of the app's
+database in a grid that follows changes, and its users and groups, with a
+button to sign in to the app as any of them. The app registers what it has,
+since Gleam cannot discover packages at runtime:
+
+```gleam
+dev.start(fn() {
+  my_app.app(db, identity)
+  |> admin.mount(admin.new() |> admin.auth(identity))
+})
+```
+
+See `examples/admin` for a working app.
+
 ## Testing
 
 `howdy/testing` runs requests through an app without starting a server. The
@@ -663,15 +680,16 @@ Run `gleam run -m routing_benchmark` for dispatch throughput and heap allocation
 and `gleam run -m rate_limit_benchmark` for identity-cardinality scaling.
 [Routing measurements](docs/benchmarks/routing.md) and
 [rate-limit measurements](docs/benchmarks/rate-limit-cardinality.md) describe the
-fixtures, results and limitations. CI tests all five examples and retains both
+fixtures, results and limitations. CI tests all six examples and retains both
 benchmarks. Generated `build/` directories are ignored throughout the repository.
 
 ### Reserved optional-package modules
 
 The core package reserves `howdy/auth`, every `howdy/auth/*` module and
 `howdy/authorization` for the optional `howdy_auth` package, and
-`howdy/database` and `howdy/migration` for `howdy_database`, and
-`howdy/remote` and every `howdy/remote/*` module for `howdy_remote`. Core must not
+`howdy/database` and `howdy/migration` for `howdy_database`,
+`howdy/remote` and every `howdy/remote/*` module for `howdy_remote`, and
+`howdy/admin` and every `howdy/admin/*` module for `howdy_admin`. Core must not
 define these modules: Gleam/BEAM module names are
 global across dependencies. CI runs `scripts/check-auth-namespace.sh` to
 reject collisions. Applications should put their own modules in their own

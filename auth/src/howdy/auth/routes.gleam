@@ -22,6 +22,21 @@ import howdy/middleware
 import howdy/rate_limit
 import howdy/service
 
+/// Make `session` the browser's active session on a response of your own,
+/// setting the cookies the bundled routes set. For transports that obtain a
+/// session some other way, such as `auth.impersonate` from an operator
+/// tool. With multi-session enabled the session joins the browser's
+/// accounts; otherwise the cookie is replaced and the previous session is
+/// left as it was.
+pub fn signed_in(
+  identity: Auth,
+  ctx: controller.Context,
+  res: response.Response(a),
+  session: auth.Session,
+) -> response.Response(a) {
+  login_transport.signed_in(identity, ctx, res, session, option.None, "")
+}
+
 /// POST /login and /register deliver email tokens; POST /session exchanges
 /// for a browser cookie; POST /token exchanges for a bearer token. Both take
 /// `{"token"}`, or with `auth.with_email_codes`, `{"email", "code"}`.
@@ -496,6 +511,7 @@ fn session_json(session: auth.SessionInfo) -> json.Json {
         auth.Password -> "password"
         auth.Passkey -> "passkey"
         auth.Provider(id) -> "provider:" <> id
+        auth.Impersonation -> "impersonation"
       }),
     ),
     #("created_at", json.int(session.created_at)),

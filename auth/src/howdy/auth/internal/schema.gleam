@@ -396,6 +396,23 @@ CREATE TABLE howdy_auth_rate_limits (
 CREATE INDEX howdy_auth_rate_limits_expiry ON howdy_auth_rate_limits(expires_at);
 ",
     ),
+    // `auth.impersonate` records sessions an operator issued without a
+    // credential, so they are distinguishable from the user's own.
+    gloo_migration.new(
+      18,
+      "allow_impersonation_sessions",
+      migration.per_database(
+        postgres: "
+ALTER TABLE howdy_auth_sessions DROP CONSTRAINT howdy_auth_sessions_method_check;
+ALTER TABLE howdy_auth_sessions ADD CONSTRAINT howdy_auth_sessions_method_check CHECK (method IN ('email', 'password', 'passkey', 'impersonation') OR method LIKE 'provider:%' OR method LIKE 'mfa:%');
+",
+        sqlite: "
+ALTER TABLE howdy_auth_sessions RENAME COLUMN method TO pre_impersonation_method;
+ALTER TABLE howdy_auth_sessions ADD COLUMN method TEXT NOT NULL DEFAULT 'email' CHECK (method IN ('email', 'password', 'passkey', 'impersonation') OR method LIKE 'provider:%' OR method LIKE 'mfa:%');
+UPDATE howdy_auth_sessions SET method = pre_impersonation_method;
+",
+      ),
+    ),
   ])
 }
 

@@ -1,0 +1,121 @@
+//// The admin's page shell and small response helpers.
+
+import ewe
+import gleam/http/response.{type Response}
+import gleam/list
+import gleam/option.{None, Some}
+import gleam/string
+import howdy/admin/internal/config.{type Config}
+import howdy/controller.{type Context}
+import howdy/cookie
+import howdy/service
+import howdy/ui
+import howdy/ui/alert
+import howdy/ui/blocks/app_shell.{Group, Link}
+import howdy/ui/page
+import lustre/element.{type Element, text}
+
+/// Render `content` in the shell, with `current` marking the sidebar link.
+pub fn page(
+  config: Config,
+  ctx: Context,
+  current current: String,
+  heading heading: String,
+  live live: Bool,
+  content content: List(Element(msg)),
+) -> Response(ewe.Body) {
+  use theme <- cookie.string_or(ctx, "theme", default: "system")
+  use sidebar <- cookie.string_or(ctx, "sidebar", default: "expanded")
+  let document =
+    page.new(heading <> " · " <> config.name)
+    |> page.theme(theme)
+    |> page.body([
+      app_shell.app_shell(
+        app: config.name,
+        collapsed: sidebar == "collapsed",
+        current: config.prefix <> current,
+        navigation: navigation(config),
+        footer: [ui.muted("Development only")],
+        heading:,
+        actions: [ui.theme_toggle([text("Theme")], from: "light", to: "dark")],
+        content:,
+      ),
+    ])
+  case live {
+    True -> page.live(document)
+    False -> document
+  }
+  |> page.respond(ctx)
+}
+
+fn navigation(config: Config) -> List(app_shell.Group) {
+  let at = config.path(config, _)
+  list.flatten([
+    [Group("Howdy", [Link(at(""), "Overview")])],
+    case config.database {
+      Some(_) -> [Group("Database", [Link(at("/data"), "Tables")])]
+      None -> []
+    },
+    case config.identity {
+      Some(_) -> [
+        Group("Auth", [
+          Link(at("/users"), "Users"),
+          Link(at("/groups"), "Groups"),
+        ]),
+      ]
+      None -> []
+    },
+  ])
+}
+
+/// A `303 See Other` to `location`, after a form has been handled.
+pub fn redirect(location: String) -> Response(ewe.Body) {
+  response.new(303)
+  |> response.set_header("location", location)
+  |> response.set_body(ewe.Text(""))
+}
+
+/// A page explaining a failed operation, in place of the page it failed on.
+pub fn failure(
+  config: Config,
+  ctx: Context,
+  current current: String,
+  heading heading: String,
+  error error: service.Error,
+  back back: String,
+) -> Response(ewe.Body) {
+  page(config, ctx, current:, heading:, live: False, content: [
+    problem(error),
+    ui.p([ui.link(back, [text("Back")])]),
+  ])
+}
+
+/// An alert describing a service error.
+pub fn problem(error: service.Error) -> Element(msg) {
+  ui.alert(alert.Danger, [], [
+    ui.alert_title([text(title(error))]),
+    ui.alert_description([text(service.message(error))]),
+  ])
+}
+
+fn title(error: service.Error) -> String {
+  case error {
+    service.NotFound(_) -> "Not found"
+    service.Invalid(_) -> "The database refused it"
+    service.Conflict(_) -> "Conflict"
+    service.Unauthorized -> "Unauthorized"
+    service.Forbidden -> "Forbidden"
+    service.UnsupportedMediaType(_) -> "Unsupported media type"
+    service.Internal(_) -> "Something went wrong"
+    service.Validation(_) -> "Invalid input"
+    service.TooManyRequests(_) -> "Too many requests"
+  }
+}
+
+/// A short form of a value for a cell.
+pub fn clip(value: String) -> String {
+  case string.length(value) > 80 {
+    True -> string.slice(value, 0, 77) <> "…"
+    False -> value
+  }
+}

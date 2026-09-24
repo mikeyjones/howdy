@@ -14,6 +14,23 @@ import howdy/auth/internal/store
 import howdy/auth/user.{type Actor, type User}
 import howdy/service
 
+/// Every user, by email then id. Through `auth.in_group` only that group's.
+pub fn list(identity: Auth) -> service.Result(List(User)) {
+  use conn <- db.connect(auth.repo(identity))
+  store.users(conn, auth.bound_group(identity))
+}
+
+/// Whether the user is suspended; see `auth.suspend`.
+pub fn suspended(identity: Auth, id: String) -> service.Result(Bool) {
+  use conn <- db.connect(auth.repo(identity))
+  use _ <- result.try(require(conn, identity, id))
+  use flags <- result.try(store.suspended(conn, id))
+  case flags {
+    [flag] -> Ok(flag)
+    _ -> Error(service.NotFound("user"))
+  }
+}
+
 pub fn get(identity: Auth, id: String) -> service.Result(User) {
   use conn <- db.connect(auth.repo(identity))
   require(conn, identity, id)

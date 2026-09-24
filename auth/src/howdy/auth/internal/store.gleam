@@ -1088,6 +1088,28 @@ pub fn group_members(conn: Repo, id: String) -> service.Result(List(User)) {
   )
 }
 
+/// Every user, or every user in `group`, by email then id.
+pub fn users(conn: Repo, group: Option(String)) -> service.Result(List(User)) {
+  db.query(
+    conn,
+    "SELECT "
+      <> user_columns(conn)
+      <> " FROM howdy_auth_users u WHERE ($1 = '' OR u.group_id = $2) ORDER BY u.email, u.id",
+    in_group(group),
+    user.row(),
+  )
+}
+
+/// Whether the user is suspended. Empty when there is no such user.
+pub fn suspended(conn: Repo, user_id: String) -> service.Result(List(Bool)) {
+  db.query(
+    conn,
+    "SELECT suspended FROM howdy_auth_users WHERE id = $1",
+    [sql.string(user_id)],
+    decode.field(0, decode.int, fn(flag) { decode.success(flag == 1) }),
+  )
+}
+
 /// Users outside `id`, at most one: enough to know whether there are any.
 pub fn users_outside_group(conn: Repo, id: String) -> service.Result(Bool) {
   db.query(

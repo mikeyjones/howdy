@@ -141,6 +141,8 @@ pub type Method {
   Password
   Provider(id: String)
   Passkey
+  /// Issued by `impersonate` for an operator, never by a credential.
+  Impersonation
 }
 
 /// Returned by a successful sign-in. Keep the token secret. Browser
@@ -813,6 +815,7 @@ fn method_name(method: Method) -> String {
     Password -> "password"
     Provider(id) -> "provider:" <> id
     Passkey -> "passkey"
+    Impersonation -> "impersonation"
   }
 }
 
@@ -820,6 +823,7 @@ fn method_from(name: String) -> Method {
   case name {
     "mfa:" <> base -> method_from(base)
     "passkey" -> Passkey
+    "impersonation" -> Impersonation
     "password" -> Password
     "provider:" <> id -> Provider(id)
     _ -> EmailToken
@@ -1086,6 +1090,17 @@ fn issue_verified_session(
 ) -> service.Result(Issued) {
   // Again here: a second factor may finish after enforcement began.
   use _ <- result.try(sso_permits(conn, user, method))
+  create_session(conn, auth, user, method, client)
+}
+
+/// Record a session for a user whose right to one has been established.
+fn create_session(
+  conn: Repo,
+  auth: Auth,
+  user: User,
+  method: String,
+  client: String,
+) -> service.Result(Issued) {
   let now = token.now()
   let session =
     Session(user, secret.wrap(token.new()), now + auth.policy.session_seconds)
@@ -1937,6 +1952,38 @@ pub fn resume(
   use _ <- result.try(store.require_user(conn, user_id))
   use _ <- result.try(store.set_suspended(conn, user_id, False))
   event(conn, user_id, "user.resumed", actor, "")
+}
+
+/// A session for `user_id` without a credential, for operators and
+/// development tooling that act as a user. Privileged: authorize the caller
+/// before invoking it, and never expose it over an unauthenticated route.
+/// The session's method is `Impersonation`, and the audit trail records
+/// `session.impersonated` with the actor. It skips second factors and SSO
+/// enforcement, which is why it must not be reachable by the user. Suspended
+/// users cannot be impersonated.
+pub fn impersonate(
+  auth: Auth,
+  user_id: String,
+  by actor: Actor,
+) -> service.Result(Session) {
+  use issued <- result.try({
+    use conn <- db.write_transaction(auth.repo, touching: "howdy_auth_users")
+    use users <- result.try(store.active_user(conn, user_id, locking: True))
+    use user <- result.try(case users {
+      [value] -> Ok(value)
+      _ -> Error(service.NotFound("user"))
+    })
+    use _ <- result.try(in_bound_group(auth, user.group_id))
+    use _ <- result.try(event(conn, user.id, "session.impersonated", actor, ""))
+    create_session(
+      conn,
+      auth,
+      user,
+      method_name(Impersonation),
+      user.actor_client(actor),
+    )
+  })
+  publish(auth, issued)
 }
 
 /// Count the per-client limits of every auth route (`routes.api`,
@@ -3138,6 +3185,7 @@ fn current_account(
           |> result.map(fn(keys) { keys != [] })
       }
     EmailToken -> Ok(auth.email_tokens)
+    Impersonation -> Ok(False)
     Password ->
       case auth.passwords {
         None -> Ok(False)
@@ -3997,6 +4045,8 @@ fn pending_user(
   // Configuration changes cannot promote proof from a disabled login method.
   use _ <- result.try(case method_from(pending.method) {
     EmailToken -> require_email_tokens(auth)
+    // An impersonated session never reaches a second factor.
+    Impersonation -> Error(service.Unauthorized)
     Password -> passwords(auth) |> result.map(fn(_) { Nil })
     Passkey -> passkey_config(auth) |> result.map(fn(_) { Nil })
     Provider(id) -> {

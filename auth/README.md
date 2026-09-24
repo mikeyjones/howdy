@@ -1654,6 +1654,15 @@ chosen as for registration, so outside `group.Single` pass
 `auth.in_group(identity, group_id)`. It is `Conflict` when the address already
 has an account where it must be unique, and is recorded as `user.provisioned`.
 
+`auth.impersonate(identity, user_id, by:)` issues a session for a user without
+a credential, for an operator console or the [`howdy_admin`](../admin/README.md)
+development area. The session's method is `auth.Impersonation` and the event
+is `session.impersonated`, so it is distinguishable from the user's own in
+`auth.sessions` and the audit trail. It skips second factors and SSO
+enforcement, so it must never be reachable by the user: authorize the caller.
+Suspended users are `NotFound`. `routes.signed_in` sets the browser cookies
+for a session obtained this way. Migration **18** allows the method name.
+
 Users manage their own sessions with `auth.sessions` and `auth.revoke_session`
 (`GET /sessions`, `POST /sessions/revoke`). Session ids are digests: they
 identify a session but cannot authenticate as it.
