@@ -89,12 +89,28 @@ jobs:
       - run: gleam test
       - run: gleam format --check src test
 
+  remote:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: remote
+    steps:
+      - uses: actions/checkout@v7
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: gleam deps download
+      - run: gleam test
+      - run: gleam format --check src test
+
   example:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        example: [simple, guards, chat, live]
+        example: [simple, guards, chat, live, remote]
     defaults:
       run:
         working-directory: examples/${{ matrix.example }}

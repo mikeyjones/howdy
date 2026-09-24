@@ -554,6 +554,31 @@ embedded in each page by default, served as one file in development with
 `ui.stylesheet`, or written to a minified static file for publishing with
 `howdy/ui/export`. See `examples/live` for a working page.
 
+## Calling other services
+
+[`howdy_remote`](remote/README.md) is an optional package for typed calls
+between services. Define a procedure once in a module both services share,
+serve it from the service that owns the data, and call it from anywhere:
+
+```gleam
+pub fn get_user() -> remote.Procedure(Int, User) {
+  remote.procedure("users.get", input: remote.int(), output: user_codec())
+}
+
+// In the users service. Handlers return the usual `service.Result`.
+remote.server()
+|> remote.handle(users_api.get_user(), user_service.find)
+|> remote.start
+
+// In any other service.
+remote.call(remote.cluster(), users_api.get_user(), id, timeout: 5000)
+|> remote.respond(ctx, user.to_json)
+```
+
+Calls travel over Erlang distribution between trusted nodes, or over HTTP
+with a bearer token across a trust boundary. The call site stays the same;
+only the target changes. See `examples/remote` for two services calling each other.
+
 ## Hot reload
 
 [`howdy_dev`](howdy_dev/README.md) is a dev dependency that rebuilds and
@@ -638,14 +663,15 @@ Run `gleam run -m routing_benchmark` for dispatch throughput and heap allocation
 and `gleam run -m rate_limit_benchmark` for identity-cardinality scaling.
 [Routing measurements](docs/benchmarks/routing.md) and
 [rate-limit measurements](docs/benchmarks/rate-limit-cardinality.md) describe the
-fixtures, results and limitations. CI tests all four examples and retains both
+fixtures, results and limitations. CI tests all five examples and retains both
 benchmarks. Generated `build/` directories are ignored throughout the repository.
 
 ### Reserved optional-package modules
 
 The core package reserves `howdy/auth`, every `howdy/auth/*` module and
 `howdy/authorization` for the optional `howdy_auth` package, and
-`howdy/database` and `howdy/migration` for `howdy_database`. Core must not
+`howdy/database` and `howdy/migration` for `howdy_database`, and
+`howdy/remote` and every `howdy/remote/*` module for `howdy_remote`. Core must not
 define these modules: Gleam/BEAM module names are
 global across dependencies. CI runs `scripts/check-auth-namespace.sh` to
 reject collisions. Applications should put their own modules in their own

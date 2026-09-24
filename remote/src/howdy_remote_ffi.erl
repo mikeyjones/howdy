@@ -91,24 +91,15 @@ run(Handler, Payload) ->
 
 %% -- Calling ------------------------------------------------------------------
 
-%% Prefer a server on this node: it needs no network hop and keeps working
-%% while the node is cut off from the cluster.
 call_cluster(Name, Payload, Timeout) ->
-    Scope = scope(),
-    case pg:get_local_members(Scope, Name) of
-        [] ->
-            case pg:get_members(Scope, Name) of
-                [] -> {error, {no_handler, Name}};
-                Members -> call_pid(pick(Members), Name, Payload, Timeout)
-            end;
-        Local ->
-            call_pid(pick(Local), Name, Payload, Timeout)
+    case choose(Name, Timeout) of
+        {ok, Pid} ->
+            guard(fun() ->
+                erpc:call(node(Pid), ?MODULE, dispatch, [Pid, Name, Payload], Timeout)
+            end);
+        {error, Error} ->
+            {error, Error}
     end.
-
-call_pid(Pid, Name, Payload, Timeout) ->
-    guard(fun() ->
-        erpc:call(node(Pid), ?MODULE, dispatch, [Pid, Name, Payload], Timeout)
-    end).
 
 call_node(Node, Name, Payload, Timeout) ->
     guard(fun() ->
@@ -116,25 +107,25 @@ call_node(Node, Name, Payload, Timeout) ->
     end).
 
 cast_cluster(Name, Payload) ->
-    Scope = scope(),
-    case pg:get_local_members(Scope, Name) ++ pg:get_members(Scope, Name) of
-        [] -> nil;
-        [Pid | _] when node(Pid) =:= node() -> cast(node(), Pid, Name, Payload);
-        Members -> Pid = pick(Members), cast(node(Pid), Pid, Name, Payload)
-    end.
-
-cast(Node, Pid, Name, Payload) ->
-    catch erpc:cast(Node, ?MODULE, dispatch, [Pid, Name, Payload]),
+    case choose(Name, 1000) of
+        {ok, Pid} -> safe_cast(node(Pid), dispatch, [Pid, Name, Payload]);
+        {error, _} -> ok
+    end,
     nil.
 
 cast_node(Node, Name, Payload) ->
-    catch erpc:cast(to_node(Node), ?MODULE, dispatch_local, [Name, Payload]),
+    safe_cast(to_node(Node), dispatch_local, [Name, Payload]),
     nil.
 
 %% Call every node that serves `Name`, in parallel. Returns `{Node, Result}`
 %% pairs ordered by node name.
 multicall(Name, Payload, Timeout) ->
-    Nodes = lists:usort([node(Pid) || Pid <- pg:get_members(scope(), Name)]),
+    Scope = scope(),
+    Members = case pg:get_members(Scope, Name) of
+        [] -> connected_members(Scope, Name, Timeout);
+        Known -> Known
+    end,
+    Nodes = lists:usort([node(Pid) || Pid <- Members]),
     Results = erpc:multicall(Nodes, ?MODULE, dispatch_local, [Name, Payload], Timeout),
     lists:zipwith(
         fun(Node, Result) -> {atom_to_binary(Node), multicall_result(Result)} end,
@@ -147,7 +138,7 @@ multicall_result({Class, Reason}) -> {error, failure(Class, Reason)}.
 
 apply(Node, Module, Function, Args, Timeout) ->
     guard(fun() ->
-        {ok, erpc:call(to_node(Node), binary_to_atom(Module), binary_to_atom(Function), Args, Timeout)}
+        erpc:call(to_node(Node), binary_to_atom(Module), binary_to_atom(Function), Args, Timeout)
     end).
 
 %% The nodes with a server for `Name`, sorted.
@@ -166,9 +157,14 @@ self_node() ->
 
 %% -- Helpers ------------------------------------------------------------------
 
+%% `erpc:cast` only raises for arguments it cannot use, such as a malformed
+%% node name. A cast promises nothing, so that is dropped too.
+safe_cast(Node, Function, Args) ->
+    try erpc:cast(Node, ?MODULE, Function, Args) catch error:_ -> ok end.
+
 guard(Call) ->
     try Call() of
-        Reply -> Reply
+        Reply -> {ok, Reply}
     catch
         Class:Reason -> {error, failure(Class, Reason)}
     end.
@@ -185,6 +181,34 @@ failure(Class, Reason) -> {crashed, format({Class, Reason})}.
 
 to_node(Node) when is_binary(Node) -> binary_to_atom(Node);
 to_node(Node) -> Node.
+
+%% Prefer a server on this node: it needs no network hop and keeps working
+%% while the node is cut off from the cluster.
+choose(Name, Timeout) ->
+    Scope = scope(),
+    case pg:get_local_members(Scope, Name) of
+        [] ->
+            case pg:get_members(Scope, Name) of
+                [] -> ask_connected(Scope, Name, Timeout);
+                Members -> {ok, pick(Members)}
+            end;
+        Local ->
+            {ok, pick(Local)}
+    end.
+
+%% `pg` learns about other nodes' members asynchronously, so a scope that
+%% has only just started, or a node that has only just connected, can look
+%% empty for a moment. Before reporting that nothing serves `Name`, ask the
+%% connected nodes directly.
+ask_connected(Scope, Name, Timeout) ->
+    case connected_members(Scope, Name, Timeout) of
+        [] -> {error, {no_handler, Name}};
+        Members -> {ok, pick(Members)}
+    end.
+
+connected_members(Scope, Name, Timeout) ->
+    Replies = erpc:multicall(nodes(), pg, get_local_members, [Scope, Name], Timeout),
+    lists:append([Pids || {ok, Pids} <- Replies]).
 
 pick([Only]) -> Only;
 pick(Members) -> lists:nth(rand:uniform(length(Members)), Members).
