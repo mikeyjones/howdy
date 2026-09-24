@@ -108,11 +108,38 @@ ui.theme_toggle([text("Toggle theme")], from: "light", to: "dark")
 
 ## Components
 
-`howdy/ui` has a small set to start: `h1`, `h2`, `h3`, `p`, `muted`, `link`,
-`button` with `Primary`, `Secondary` and `Danger` variants from
-`howdy/ui/button`, `input`, `label`, `container`, `card`, `stack` and `row`.
 Each component lives in its own module under `howdy/ui`, and `howdy/ui`
 re-exports them. Every one is a Sketch class built from tokens.
+
+| Module | Components |
+| --- | --- |
+| `heading`, `typography` | `h1`–`h3`, `p`, `muted`, `link` |
+| `button` | `button` in `Primary`, `Secondary`, `Outline`, `Ghost`, `Link` and `Danger`; `sized_button` in `Small`, `Medium`, `Large` and `Icon`; `theme_toggle` |
+| `input` | `input`, `textarea`, `select` (the native one), `label` |
+| `field` | `field`, `field_description`, `field_error`, `fieldset` |
+| `checkbox` | `checkbox`, `radio`, `choice` (a control with its label), `radio_group` |
+| `layout` | `container`, `stack`, `row`, `separator` |
+| `card` | `card`, `card_header`, `card_title`, `card_description`, `card_action`, `card_content`, `card_footer` |
+| `badge` | `badge` in `Primary`, `Secondary`, `Outline` and `Danger` |
+| `alert` | `alert` in `Info` and `Danger`, `alert_title`, `alert_description` |
+| `table` | `table`, `table_caption`, `table_header`, `table_body`, `table_footer`, `table_row`, `table_head`, `table_cell` |
+| `loading` | `skeleton`, `spinner` |
+
+Controls follow their native state. `attribute.disabled(True)` dims them
+and `attribute.aria_invalid("true")` gives them the danger colour, so a form
+is wired for assistive technology and styled by the same attributes:
+
+```gleam
+ui.field([], [
+  ui.label([attribute.for("email")], [text("Email")]),
+  ui.input([
+    attribute.id("email"),
+    attribute.aria_invalid("true"),
+    attribute.aria_describedby("email-error"),
+  ]),
+  ui.field_error([attribute.id("email-error")], [text("Enter an email address.")]),
+])
+```
 
 ### Making a component your own
 

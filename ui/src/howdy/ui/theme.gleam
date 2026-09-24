@@ -53,6 +53,9 @@ pub type Colors {
     background: String,
     /// Cards, panels and inputs.
     surface: String,
+    /// Subtle fills: secondary buttons and badges, hovered rows and ghost
+    /// buttons, skeletons.
+    muted: String,
     /// Lines around surfaces and inputs.
     border: String,
     /// Body text.
@@ -112,6 +115,7 @@ pub fn light() -> Theme {
     colors: Colors(
       background: "#f8fafc",
       surface: "#ffffff",
+      muted: "#f1f5f9",
       border: "#e2e8f0",
       text: "#0f172a",
       text_muted: "#64748b",
@@ -135,6 +139,7 @@ pub fn dark() -> Theme {
     colors: Colors(
       background: "#0f172a",
       surface: "#1e293b",
+      muted: "#334155",
       border: "#334155",
       text: "#f1f5f9",
       text_muted: "#94a3b8",
@@ -203,6 +208,7 @@ pub fn variables(theme: Theme) -> List(#(String, String)) {
   [
     #("background", c.background),
     #("surface", c.surface),
+    #("muted", c.muted),
     #("border", c.border),
     #("text", c.text),
     #("text-muted", c.text_muted),

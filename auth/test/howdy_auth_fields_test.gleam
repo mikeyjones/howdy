@@ -120,9 +120,10 @@ pub fn users_and_groups_record_when_they_were_created_test() {
   assert principal.user == session.user
   // On a fresh install the default group dates from its migration.
   let assert Ok(everyone) = groups.get(identity, group.default_id)
+  // The fixture migrates before `before` is read, so that is an upper bound.
   let #(since, _) =
     timestamp.to_unix_seconds_and_nanoseconds(everyone.created_at)
-  assert since >= before
+  assert since <= before && since > before - 60
 }
 
 pub fn postgres_keeps_instants_as_timestamps_test() {

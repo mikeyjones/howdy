@@ -50,6 +50,8 @@ fn enroll(identity, session) {
   let assert Ok(setup) = auth.begin_mfa(identity, p, auth.Totp)
   let assert Some(key) = setup.key
   let seed = secret.reveal(key)
+  let assert Some(qr) = setup.qr_code
+  assert string.starts_with(secret.reveal(qr), "<svg ")
   assert auth.mfa_status(identity, p) == Ok(None)
   let assert Ok(codes) =
     auth.confirm_mfa(
@@ -159,6 +161,17 @@ pub fn totp_rfc6238_vectors_replay_and_authenticated_encryption_test() {
   assert result.is_error(mfa.open(config, "user-b", cipher))
   assert result.is_error(mfa.open(other, "user-a", cipher))
   assert result.is_error(mfa.open(config, "user-a", "AAAA" <> cipher))
+}
+
+pub fn qr_codes_fit_any_enrollment_uri_test() {
+  // Version 1 is 21 modules plus a four-module quiet zone on each side.
+  let assert Ok(small) = mfa.qr_code("otpauth://x")
+  assert string.contains(small, "viewBox=\"0 0 29 29\"")
+  // A 128-byte issuer and 254-byte address, both fully percent-encoded,
+  // still fit well inside the 2331 bytes of version 40.
+  let assert Ok(_) = mfa.qr_code(string.repeat("%41", 400))
+  let assert Ok(_) = mfa.qr_code(string.repeat("a", 2331))
+  assert mfa.qr_code(string.repeat("a", 2332)) == Error(Nil)
 }
 
 pub fn signed_passkeys_login_rename_ownership_and_safe_delete_test() {

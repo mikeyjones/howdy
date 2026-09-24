@@ -194,6 +194,12 @@ pub fn add(
             "uri",
             json.nullable(setup.uri, fn(s) { json.string(secret.reveal(s)) }),
           ),
+          #(
+            "qr_code",
+            json.nullable(setup.qr_code, fn(s) {
+              json.string(secret.reveal(s))
+            }),
+          ),
         ])
       })
     }),

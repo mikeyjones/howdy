@@ -73,13 +73,20 @@ import gleam/http/request
 import gleam/http/response
 import gleam/list
 import howdy/controller.{type Controller}
+import howdy/ui/alert
+import howdy/ui/badge
 import howdy/ui/button
+import howdy/ui/card
+import howdy/ui/checkbox
 import howdy/ui/cli
+import howdy/ui/field
 import howdy/ui/heading
 import howdy/ui/input
 import howdy/ui/internal/stylesheet
 import howdy/ui/layout
+import howdy/ui/loading
 import howdy/ui/style
+import howdy/ui/table
 import howdy/ui/theme.{type Themes}
 import howdy/ui/typography
 import lustre/attribute.{type Attribute}
@@ -112,7 +119,14 @@ pub fn classes() -> List(Class) {
     typography.classes(),
     button.classes(),
     input.classes(),
+    field.classes(),
+    checkbox.classes(),
     layout.classes(),
+    card.classes(),
+    badge.classes(),
+    alert.classes(),
+    table.classes(),
+    loading.classes(),
   ])
 }
 
@@ -170,14 +184,24 @@ pub fn link(href: String, children: List(Element(msg))) -> Element(msg) {
   typography.link(href, children)
 }
 
-/// See `howdy/ui/button`. Variants are `button.Primary`, `button.Secondary`
-/// and `button.Danger`.
+/// See `howdy/ui/button`. Variants are `button.Primary`, `Secondary`,
+/// `Outline`, `Ghost`, `Link` and `Danger`.
 pub fn button(
   variant: button.Variant,
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {
   button.button(variant, attributes, children)
+}
+
+/// A button of a given size: `button.Small`, `Medium`, `Large` or `Icon`.
+pub fn sized_button(
+  variant: button.Variant,
+  size: button.Size,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  button.sized(variant, size, attributes, children)
 }
 
 pub fn theme_toggle(
@@ -193,11 +217,78 @@ pub fn input(attributes: List(Attribute(msg))) -> Element(msg) {
   input.input(attributes)
 }
 
+pub fn textarea(
+  attributes: List(Attribute(msg)),
+  content: String,
+) -> Element(msg) {
+  input.textarea(attributes, content)
+}
+
+pub fn select(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  input.select(attributes, children)
+}
+
 pub fn label(
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {
   input.label(attributes, children)
+}
+
+/// See `howdy/ui/field`.
+pub fn field(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  field.field(attributes, children)
+}
+
+pub fn field_description(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  field.description(attributes, children)
+}
+
+pub fn field_error(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  field.error(attributes, children)
+}
+
+pub fn fieldset(
+  attributes: List(Attribute(msg)),
+  legend legend: List(Element(msg)),
+  children children: List(Element(msg)),
+) -> Element(msg) {
+  field.fieldset(attributes, legend:, children:)
+}
+
+/// See `howdy/ui/checkbox`.
+pub fn checkbox(attributes: List(Attribute(msg))) -> Element(msg) {
+  checkbox.checkbox(attributes)
+}
+
+pub fn radio(attributes: List(Attribute(msg))) -> Element(msg) {
+  checkbox.radio(attributes)
+}
+
+pub fn choice(
+  control: Element(msg),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  checkbox.choice(control, children)
+}
+
+pub fn radio_group(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  checkbox.radio_group(attributes, children)
 }
 
 /// See `howdy/ui/layout`.
@@ -206,13 +297,6 @@ pub fn container(
   children: List(Element(msg)),
 ) -> Element(msg) {
   layout.container(attributes, children)
-}
-
-pub fn card(
-  attributes: List(Attribute(msg)),
-  children: List(Element(msg)),
-) -> Element(msg) {
-  layout.card(attributes, children)
 }
 
 pub fn stack(
@@ -227,4 +311,150 @@ pub fn row(
   children: List(Element(msg)),
 ) -> Element(msg) {
   layout.row(attributes, children)
+}
+
+pub fn separator(
+  orientation: layout.Orientation,
+  attributes: List(Attribute(msg)),
+) -> Element(msg) {
+  layout.separator(orientation, attributes)
+}
+
+/// See `howdy/ui/card`.
+pub fn card(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  card.card(attributes, children)
+}
+
+pub fn card_header(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  card.header(attributes, children)
+}
+
+pub fn card_title(children: List(Element(msg))) -> Element(msg) {
+  card.title(children)
+}
+
+pub fn card_description(children: List(Element(msg))) -> Element(msg) {
+  card.description(children)
+}
+
+pub fn card_action(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  card.action(attributes, children)
+}
+
+pub fn card_content(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  card.content(attributes, children)
+}
+
+pub fn card_footer(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  card.footer(attributes, children)
+}
+
+/// See `howdy/ui/badge`.
+pub fn badge(
+  variant: badge.Variant,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  badge.badge(variant, attributes, children)
+}
+
+/// See `howdy/ui/alert`.
+pub fn alert(
+  variant: alert.Variant,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  alert.alert(variant, attributes, children)
+}
+
+pub fn alert_title(children: List(Element(msg))) -> Element(msg) {
+  alert.title(children)
+}
+
+pub fn alert_description(children: List(Element(msg))) -> Element(msg) {
+  alert.description(children)
+}
+
+/// See `howdy/ui/table`.
+pub fn table(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.table(attributes, children)
+}
+
+pub fn table_caption(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.caption(attributes, children)
+}
+
+pub fn table_header(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.header(attributes, children)
+}
+
+pub fn table_body(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.body(attributes, children)
+}
+
+pub fn table_footer(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.footer(attributes, children)
+}
+
+pub fn table_row(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.row(attributes, children)
+}
+
+pub fn table_head(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.head(attributes, children)
+}
+
+pub fn table_cell(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  table.cell(attributes, children)
+}
+
+/// See `howdy/ui/loading`.
+pub fn skeleton(attributes: List(Attribute(msg))) -> Element(msg) {
+  loading.skeleton(attributes)
+}
+
+pub fn spinner(
+  label: String,
+  attributes: List(Attribute(msg)),
+) -> Element(msg) {
+  loading.spinner(label, attributes)
 }

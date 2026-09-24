@@ -13,19 +13,49 @@ import sketch/css/length.{rem}
 pub type Variant {
   /// The main action: filled with the primary colour.
   Primary
-  /// A supporting action: outlined.
+  /// A supporting action: filled with the muted colour.
   Secondary
+  /// A supporting action: outlined.
+  Outline
+  /// A quiet action, such as one in a toolbar: filled only when hovered.
+  Ghost
+  /// An action that looks like a link.
+  Link
   /// A destructive action: filled with the danger colour.
   Danger
 }
 
+/// How big a button is.
+pub type Size {
+  Small
+  Medium
+  Large
+  /// A square button for a single icon. Give it an `aria-label`.
+  Icon
+}
+
+const variants = [Primary, Secondary, Outline, Ghost, Link, Danger]
+
+const sizes = [Small, Medium, Large, Icon]
+
+/// A medium button.
 pub fn button(
   variant: Variant,
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {
+  sized(variant, Medium, attributes, children)
+}
+
+/// A button of the given size.
+pub fn sized(
+  variant: Variant,
+  size: Size,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
   html.button(
-    [class(button_class(variant)), attribute.type_("button"), ..attributes],
+    [class(sized_class(variant, size)), attribute.type_("button"), ..attributes],
     children,
   )
 }
@@ -39,7 +69,7 @@ pub fn theme_toggle(
   to b: String,
 ) -> Element(msg) {
   button(
-    Secondary,
+    Outline,
     [
       attribute.data("howdy-theme-from", a),
       attribute.data("howdy-theme-to", b),
@@ -51,51 +81,102 @@ pub fn theme_toggle(
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [button_class(Primary), button_class(Secondary), button_class(Danger)]
+  use variant <- list.flat_map(variants)
+  use size <- list.map(sizes)
+  sized_class(variant, size)
 }
 
+/// The class of a medium button, for styling your own markup, such as a
+/// link, as a button.
 pub fn button_class(variant: Variant) -> Class {
+  sized_class(variant, Medium)
+}
+
+pub fn sized_class(variant: Variant, size: Size) -> Class {
   let colours = case variant {
     Primary -> [
       css.background(tokens.primary),
       css.color(tokens.on_primary),
-      css.border("1px solid transparent"),
       css.hover([css.background(tokens.primary_hover)]),
     ]
     Secondary -> [
+      css.background(tokens.muted),
+      css.color(tokens.text),
+      css.hover([css.property("filter", "brightness(0.95)")]),
+    ]
+    Outline -> [
       css.background(tokens.surface),
       css.color(tokens.text),
-      css.border("1px solid " <> tokens.border),
+      css.property("border-color", tokens.border),
       css.hover([css.property("border-color", tokens.primary)]),
+    ]
+    Ghost -> [
+      css.background("transparent"),
+      css.color(tokens.text),
+      css.hover([css.background(tokens.muted)]),
+    ]
+    Link -> [
+      css.background("transparent"),
+      css.color(tokens.primary),
+      css.hover([css.text_decoration("underline")]),
     ]
     Danger -> [
       css.background(tokens.danger),
       css.color(tokens.on_danger),
-      css.border("1px solid transparent"),
       css.hover([css.property("filter", "brightness(0.9)")]),
     ]
   }
-  css.class(list.append(
-    [
-      css.display("inline-flex"),
-      css.align_items("center"),
-      css.gap(rem(0.5)),
+  // Every size keeps the same line height and 1px border, so buttons of
+  // one size line up whatever their variant.
+  let dimensions = case size {
+    Small -> [
+      css.padding_(tokens.space_1 <> " " <> tokens.space_3),
+      css.font_size(rem(0.875)),
+    ]
+    Medium -> [
       css.padding_(tokens.space_2 <> " " <> tokens.space_4),
-      css.property("border-radius", tokens.radius_medium),
-      css.font_family(tokens.font_body),
       css.font_size(rem(1.0)),
-      css.font_weight("500"),
-      css.line_height("1.25"),
-      css.cursor("pointer"),
-      css.transition("background 120ms, border-color 120ms"),
-      css.disabled([css.property("opacity", "0.5"), css.cursor("default")]),
-      css.focus_visible([
-        css.outline("2px solid " <> tokens.focus),
-        css.property("outline-offset", "2px"),
-      ]),
-    ],
-    colours,
-  ))
+    ]
+    Large -> [
+      css.padding_(tokens.space_3 <> " " <> tokens.space_6),
+      css.font_size(rem(1.0)),
+    ]
+    Icon -> [
+      css.justify_content("center"),
+      css.padding(rem(0.0)),
+      css.property("width", "calc(2.25rem + 2px)"),
+      css.property("height", "calc(2.25rem + 2px)"),
+      css.font_size(rem(1.0)),
+    ]
+  }
+  css.class(
+    list.flatten([
+      [
+        css.display("inline-flex"),
+        css.align_items("center"),
+        css.gap(rem(0.5)),
+        css.border("1px solid transparent"),
+        css.property("border-radius", tokens.radius_medium),
+        css.font_family(tokens.font_body),
+        css.font_weight("500"),
+        css.line_height("1.25"),
+        css.white_space("nowrap"),
+        css.cursor("pointer"),
+        css.transition("background 120ms, border-color 120ms"),
+        css.disabled([
+          css.property("opacity", "0.5"),
+          css.cursor("default"),
+          css.property("pointer-events", "none"),
+        ]),
+        css.focus_visible([
+          css.outline("2px solid " <> tokens.focus),
+          css.property("outline-offset", "2px"),
+        ]),
+      ],
+      dimensions,
+      colours,
+    ]),
+  )
 }
 
 // Theme names stay in HTML-escaped data attributes, never executable code.

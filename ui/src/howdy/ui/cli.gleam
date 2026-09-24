@@ -22,7 +22,10 @@ import simplifile
 pub const version = "0.1.0"
 
 /// The components that can be copied, in the order `list` shows them.
-pub const components = ["button", "heading", "typography", "input", "layout"]
+pub const components = [
+  "button", "heading", "typography", "input", "field", "checkbox", "layout",
+  "card", "badge", "alert", "table", "loading",
+]
 
 /// Run a command and print what happened.
 pub fn run(args: List(String)) -> Nil {

@@ -158,6 +158,12 @@ pub fn verify_totp(
   now: Int,
 ) -> Result(Int, Nil)
 
+/// An SVG QR code of `text`, error correction level M. Fails only beyond the
+/// 2331 bytes a QR code can hold at that level.
+@external(erlang, "howdy_auth_qr_ffi", "svg")
+@internal
+pub fn qr_code(text: String) -> Result(String, Nil)
+
 @internal
 pub fn keys(config: Config) -> Keyring {
   config.keys

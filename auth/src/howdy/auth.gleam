@@ -2968,6 +2968,9 @@ pub type MfaSetup {
     challenge: secret.Secret,
     key: Option(secret.Secret),
     uri: Option(secret.Secret),
+    /// `uri` as a standalone SVG QR code for an authenticator app to scan.
+    /// It contains the key: show it only to the user enrolling, never cache it.
+    qr_code: Option(secret.Secret),
   )
 }
 
@@ -3602,21 +3605,23 @@ pub fn begin_mfa(
       ),
     ))
     let setup = case method {
-      Totp ->
+      Totp -> {
+        let uri =
+          "otpauth://totp/"
+          <> uri.percent_encode(mfa.issuer(config) <> ":" <> user.email)
+          <> "?secret="
+          <> seed
+          <> "&issuer="
+          <> uri.percent_encode(mfa.issuer(config))
+          <> "&algorithm=SHA1&digits=6&period=30"
         MfaSetup(
           secret.wrap(challenge),
           Some(secret.wrap(seed)),
-          Some(secret.wrap(
-            "otpauth://totp/"
-            <> uri.percent_encode(mfa.issuer(config) <> ":" <> user.email)
-            <> "?secret="
-            <> seed
-            <> "&issuer="
-            <> uri.percent_encode(mfa.issuer(config))
-            <> "&algorithm=SHA1&digits=6&period=30",
-          )),
+          Some(secret.wrap(uri)),
+          mfa.qr_code(uri) |> option.from_result |> option.map(secret.wrap),
         )
-      _ -> MfaSetup(secret.wrap(challenge), None, None)
+      }
+      _ -> MfaSetup(secret.wrap(challenge), None, None, None)
     }
     Ok(#(user, setup))
   })

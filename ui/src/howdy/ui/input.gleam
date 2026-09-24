@@ -1,4 +1,9 @@
-//// Form fields.
+//// Text inputs, text areas, selects and labels.
+////
+//// Controls follow their native state: `attribute.disabled(True)` dims
+//// them, and `attribute.aria_invalid("true")` gives them the danger colour.
+//// Pair an invalid control with a `howdy/ui/field` error through
+//// `aria-describedby`.
 
 import howdy/ui/style.{class}
 import howdy/ui/theme/tokens
@@ -12,6 +17,27 @@ pub fn input(attributes: List(Attribute(msg))) -> Element(msg) {
   html.input([class(input_class()), ..attributes])
 }
 
+/// A multiline text input. `attribute.rows` sets its initial height; the
+/// user can make it taller.
+pub fn textarea(
+  attributes: List(Attribute(msg)),
+  content: String,
+) -> Element(msg) {
+  html.textarea([class(textarea_class()), ..attributes], content)
+}
+
+/// The browser's own select, styled to match the other controls. Children
+/// are `html.option` and `html.optgroup` elements. Attributes go on the
+/// `<select>`.
+pub fn select(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  html.div([class(select_wrapper_class())], [
+    html.select([class(select_class()), ..attributes], children),
+  ])
+}
+
 pub fn label(
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
@@ -21,11 +47,69 @@ pub fn label(
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [input_class(), label_class()]
+  [
+    input_class(),
+    textarea_class(),
+    select_wrapper_class(),
+    select_class(),
+    label_class(),
+  ]
 }
 
 pub fn input_class() -> Class {
+  css.class(control())
+}
+
+pub fn textarea_class() -> Class {
   css.class([
+    css.property("min-height", "5rem"),
+    css.property("resize", "vertical"),
+    css.line_height("1.5"),
+    ..control()
+  ])
+}
+
+pub fn select_wrapper_class() -> Class {
+  css.class([
+    css.position("relative"),
+    // A chevron drawn with borders, so it takes the theme's colour.
+    css.after([
+      css.content("\"\""),
+      css.position("absolute"),
+      css.property("right", tokens.space_3),
+      css.property("top", "50%"),
+      css.property("width", "0.45rem"),
+      css.property("height", "0.45rem"),
+      css.property("border-right", "2px solid " <> tokens.text_muted),
+      css.property("border-bottom", "2px solid " <> tokens.text_muted),
+      css.transform_("translateY(-70%) rotate(45deg)"),
+      css.property("pointer-events", "none"),
+    ]),
+  ])
+}
+
+pub fn select_class() -> Class {
+  css.class([
+    css.property("appearance", "none"),
+    css.property("padding-right", "2.25rem"),
+    css.cursor("pointer"),
+    ..control()
+  ])
+}
+
+pub fn label_class() -> Class {
+  css.class([
+    css.display("block"),
+    css.margin_("0 0 " <> tokens.space_1),
+    css.font_size(rem(0.875)),
+    css.font_weight("500"),
+    css.color(tokens.text),
+  ])
+}
+
+/// What every text control shares.
+fn control() -> List(css.Style) {
+  [
     css.display("block"),
     css.width(percent(100)),
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
@@ -40,15 +124,10 @@ pub fn input_class() -> Class {
       css.outline("2px solid " <> tokens.focus),
       css.property("outline-offset", "2px"),
     ]),
-  ])
-}
-
-pub fn label_class() -> Class {
-  css.class([
-    css.display("block"),
-    css.margin_("0 0 " <> tokens.space_1),
-    css.font_size(rem(0.875)),
-    css.font_weight("500"),
-    css.color(tokens.text),
-  ])
+    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
+    css.selector("[aria-invalid=\"true\"]", [
+      css.property("border-color", tokens.danger),
+      css.focus_visible([css.property("outline-color", tokens.danger)]),
+    ]),
+  ]
 }

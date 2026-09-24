@@ -22,6 +22,8 @@ pub const background = "var(--howdy-background)"
 
 pub const surface = "var(--howdy-surface)"
 
+pub const muted = "var(--howdy-muted)"
+
 pub const border = "var(--howdy-border)"
 
 pub const text = "var(--howdy-text)"
@@ -58,6 +60,7 @@ pub fn all() -> List(#(String, String)) {
   [
     #("--howdy-background", background),
     #("--howdy-surface", surface),
+    #("--howdy-muted", muted),
     #("--howdy-border", border),
     #("--howdy-text", text),
     #("--howdy-text-muted", text_muted),
