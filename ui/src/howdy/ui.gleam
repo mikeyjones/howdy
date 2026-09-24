@@ -76,6 +76,7 @@ import gleam/option
 import howdy/controller.{type Controller}
 import howdy/ui/accordion
 import howdy/ui/alert
+import howdy/ui/aspect_ratio
 import howdy/ui/attachment
 import howdy/ui/avatar
 import howdy/ui/badge
@@ -83,34 +84,51 @@ import howdy/ui/blocks/app_shell
 import howdy/ui/blocks/sign_in
 import howdy/ui/blocks/sign_up
 import howdy/ui/blocks/stat_card
+import howdy/ui/breadcrumb
 import howdy/ui/button
+import howdy/ui/button_group
 import howdy/ui/calendar
 import howdy/ui/card
+import howdy/ui/carousel
 import howdy/ui/chart
 import howdy/ui/chat
 import howdy/ui/checkbox
 import howdy/ui/cli
 import howdy/ui/command
+import howdy/ui/context_menu
 import howdy/ui/data_table
 import howdy/ui/dialog
 import howdy/ui/effects
+import howdy/ui/empty
 import howdy/ui/field
 import howdy/ui/heading
+import howdy/ui/hover_card
 import howdy/ui/input
+import howdy/ui/input_group
+import howdy/ui/input_otp
 import howdy/ui/internal/stylesheet
+import howdy/ui/item
+import howdy/ui/kbd
 import howdy/ui/layout
 import howdy/ui/loading
 import howdy/ui/menu
+import howdy/ui/menubar
+import howdy/ui/navigation_menu
 import howdy/ui/pagination
 import howdy/ui/popover
 import howdy/ui/progress
+import howdy/ui/resizable
+import howdy/ui/scroll_area
 import howdy/ui/select
 import howdy/ui/sidebar
+import howdy/ui/slider
 import howdy/ui/style
+import howdy/ui/switch
 import howdy/ui/table
 import howdy/ui/tabs
 import howdy/ui/theme.{type Themes}
 import howdy/ui/toast
+import howdy/ui/toggle
 import howdy/ui/tooltip
 import howdy/ui/typography
 import lustre/attribute.{type Attribute}
@@ -174,6 +192,24 @@ pub fn classes() -> List(Class) {
     stat_card.classes(),
     sign_in.classes(),
     sign_up.classes(),
+    aspect_ratio.classes(),
+    breadcrumb.classes(),
+    button_group.classes(),
+    carousel.classes(),
+    context_menu.classes(),
+    empty.classes(),
+    hover_card.classes(),
+    input_group.classes(),
+    input_otp.classes(),
+    item.classes(),
+    kbd.classes(),
+    menubar.classes(),
+    navigation_menu.classes(),
+    resizable.classes(),
+    scroll_area.classes(),
+    slider.classes(),
+    switch.classes(),
+    toggle.classes(),
   ])
 }
 
@@ -918,4 +954,260 @@ pub fn attachment(
   actions actions: List(Element(msg)),
 ) -> Element(msg) {
   attachment.attachment(name:, detail:, uploaded:, actions:)
+}
+
+/// See `howdy/ui/switch`.
+pub fn switch(attributes: List(Attribute(msg))) -> Element(msg) {
+  switch.switch(attributes)
+}
+
+/// See `howdy/ui/slider`.
+pub fn slider(attributes: List(Attribute(msg))) -> Element(msg) {
+  slider.slider(attributes)
+}
+
+/// See `howdy/ui/input_otp`.
+pub fn input_otp(
+  length: Int,
+  attributes: List(Attribute(msg)),
+) -> Element(msg) {
+  input_otp.input_otp(length, attributes)
+}
+
+/// See `howdy/ui/input_group`.
+pub fn input_group(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  input_group.group(attributes, children)
+}
+
+pub fn input_group_input(attributes: List(Attribute(msg))) -> Element(msg) {
+  input_group.input(attributes)
+}
+
+pub fn input_group_addon(children: List(Element(msg))) -> Element(msg) {
+  input_group.addon(children)
+}
+
+/// See `howdy/ui/kbd`.
+pub fn kbd(key: String) -> Element(msg) {
+  kbd.kbd(key)
+}
+
+pub fn shortcut(keys: List(String)) -> Element(msg) {
+  kbd.shortcut(keys)
+}
+
+/// See `howdy/ui/toggle`.
+pub fn toggle(
+  pressed: Bool,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  toggle.toggle(pressed, attributes, children)
+}
+
+pub fn toggle_group(
+  selection: toggle.Selection,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  toggle.group(selection, attributes, children)
+}
+
+/// See `howdy/ui/button_group`.
+pub fn button_group(
+  orientation: button_group.Orientation,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  button_group.group(orientation, attributes, children)
+}
+
+/// See `howdy/ui/breadcrumb`.
+pub fn breadcrumb(
+  attributes: List(Attribute(msg)),
+  items: List(Element(msg)),
+) -> Element(msg) {
+  breadcrumb.breadcrumb(attributes, items)
+}
+
+pub fn breadcrumb_link(
+  href: String,
+  children: List(Element(msg)),
+) -> Element(msg) {
+  breadcrumb.link(href, children)
+}
+
+pub fn breadcrumb_page(children: List(Element(msg))) -> Element(msg) {
+  breadcrumb.page(children)
+}
+
+pub fn breadcrumb_ellipsis() -> Element(msg) {
+  breadcrumb.ellipsis()
+}
+
+/// See `howdy/ui/empty`.
+pub fn empty(
+  icon icon: Element(msg),
+  title title: String,
+  description description: String,
+  actions actions: List(Element(msg)),
+) -> Element(msg) {
+  empty.empty(icon:, title:, description:, actions:)
+}
+
+/// See `howdy/ui/item`.
+pub fn item_group(items: List(Element(msg))) -> Element(msg) {
+  item.group(items)
+}
+
+pub fn item(
+  media media: Element(msg),
+  title title: List(Element(msg)),
+  description description: List(Element(msg)),
+  actions actions: List(Element(msg)),
+) -> Element(msg) {
+  item.item(media:, title:, description:, actions:)
+}
+
+pub fn item_link(
+  href: String,
+  media media: Element(msg),
+  title title: List(Element(msg)),
+  description description: List(Element(msg)),
+) -> Element(msg) {
+  item.link(href, media:, title:, description:)
+}
+
+/// See `howdy/ui/aspect_ratio`.
+pub fn aspect_ratio(
+  width: Int,
+  height: Int,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  aspect_ratio.aspect_ratio(width, height, attributes, children)
+}
+
+/// See `howdy/ui/scroll_area`.
+pub fn scroll_area(
+  label: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  scroll_area.scroll_area(label, attributes, children)
+}
+
+/// See `howdy/ui/carousel`.
+pub fn carousel(
+  id: String,
+  label label: String,
+  attributes attributes: List(Attribute(msg)),
+  slides slides: List(carousel.Slide(msg)),
+) -> Element(msg) {
+  carousel.carousel(id, label:, attributes:, slides:)
+}
+
+pub fn carousel_slide(children: List(Element(msg))) -> carousel.Slide(msg) {
+  carousel.slide(children)
+}
+
+/// See `howdy/ui/resizable`.
+pub fn resizable_group(
+  direction: resizable.Direction,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  resizable.group(direction, attributes, children)
+}
+
+pub fn resizable_panel(
+  size: Int,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  resizable.panel(size, attributes, children)
+}
+
+pub fn resizable_handle(label: String) -> Element(msg) {
+  resizable.handle(label)
+}
+
+/// See `howdy/ui/hover_card`.
+pub fn hover_card(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  hover_card.card(id, attributes, children)
+}
+
+pub fn hover_card_trigger(id: String) -> List(Attribute(msg)) {
+  hover_card.trigger(id)
+}
+
+/// See `howdy/ui/context_menu`. Its items are `menu_item` and friends.
+pub fn context_menu_area(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  context_menu.area(id, attributes, children)
+}
+
+pub fn context_menu(
+  id: String,
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  context_menu.menu(id, attributes, children)
+}
+
+/// See `howdy/ui/menubar`. Its menus are `menu`s.
+pub fn menubar(
+  attributes: List(Attribute(msg)),
+  buttons: List(Element(msg)),
+) -> Element(msg) {
+  menubar.menubar(attributes, buttons)
+}
+
+pub fn menubar_button(
+  id: String,
+  children: List(Element(msg)),
+) -> Element(msg) {
+  menubar.menu_button(id, children)
+}
+
+/// See `howdy/ui/navigation_menu`.
+pub fn navigation_menu(
+  attributes: List(Attribute(msg)),
+  items: List(Element(msg)),
+) -> Element(msg) {
+  navigation_menu.menu(attributes, items)
+}
+
+pub fn navigation_link(
+  href: String,
+  active active: Bool,
+  children children: List(Element(msg)),
+) -> Element(msg) {
+  navigation_menu.link(href, active:, children:)
+}
+
+pub fn navigation_panel(
+  id: String,
+  label label: List(Element(msg)),
+  links links: List(Element(msg)),
+) -> Element(msg) {
+  navigation_menu.panel(id, label:, links:)
+}
+
+pub fn navigation_panel_link(
+  href: String,
+  title title: String,
+  description description: String,
+) -> Element(msg) {
+  navigation_menu.panel_link(href, title:, description:)
 }

@@ -161,6 +161,22 @@ re-exports them. Every one is a Sketch class built from tokens.
 | `effects` | `scroll_fade`, `shimmer` |
 | `chat` | `chat_conversation`, `chat_message`, `chat_bubble`, `chat_note`; `chat.reactions`, `chat.reaction` |
 | `attachment` | `attachment`, with an optional upload bar |
+| `kbd` | `kbd`, `shortcut` |
+| `button_group` | `button_group` |
+| `toggle` | `toggle`, `toggle_group` (single or multiple) |
+| `switch`, `slider` | `switch`, `slider` (the browser's own controls, themed) |
+| `input_group` | `input_group`, `input_group_input`, `input_group_addon` |
+| `input_otp` | `input_otp`: one input drawn as a box per character |
+| `aspect_ratio`, `scroll_area` | `aspect_ratio`, `scroll_area` |
+| `resizable` | `resizable_group`, `resizable_panel`, `resizable_handle` |
+| `context_menu` | `context_menu_area`, `context_menu`, with `menu_item`s |
+| `menubar` | `menubar`, `menubar_button`, with `menu`s |
+| `hover_card` | `hover_card`, `hover_card_trigger` |
+| `breadcrumb` | `breadcrumb`, `breadcrumb_link`, `breadcrumb_page`, `breadcrumb_ellipsis` |
+| `navigation_menu` | `navigation_menu`, `navigation_link`, `navigation_panel`, `navigation_panel_link` |
+| `carousel` | `carousel`, `carousel_slide` |
+| `item` | `item_group`, `item`, `item_link` |
+| `empty` | `empty` |
 
 `calendar`, `data_table` and `chart` are builders with several options, so
 use them from their own modules rather than through `howdy/ui`.
@@ -284,9 +300,10 @@ gleam run -m howdy/ui add button layout
   `search <words>` finds them; `view <name>` shows what one depends on and
   its source.
 - `add` writes `src/<app>/ui/button.gleam` and `layout.gleam`: the source
-  the package ships, with a header saying where it came from. Components
-  depend only on the package's core modules, so you can change anything in
-  them.
+  the package ships, with a header saying where it came from. Most
+  components depend only on the package's core modules, so you can change
+  anything in them; a few build on another, as `context_menu` and
+  `menubar` do on `menu`, and `add` copies that too.
 - Adding a block also adds the components it uses, and points its imports
   at those copies, so the block is built from your versions. A copy you
   have already edited is kept, and the new block uses it.

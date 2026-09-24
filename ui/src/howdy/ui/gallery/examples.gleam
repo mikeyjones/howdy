@@ -14,6 +14,7 @@ import howdy/ui/blocks/stat_card
 import howdy/ui/button.{
   Danger, Ghost, Icon, Large, Link, Outline, Primary, Secondary, Small,
 }
+import howdy/ui/button_group
 import howdy/ui/calendar.{Date}
 import howdy/ui/chart
 import howdy/ui/chat.{Incoming, Outgoing}
@@ -21,8 +22,10 @@ import howdy/ui/command
 import howdy/ui/data_table.{Ascending, Links, Sort}
 import howdy/ui/dialog
 import howdy/ui/layout
+import howdy/ui/resizable
 import howdy/ui/select
 import howdy/ui/toast
+import howdy/ui/toggle
 import lustre/attribute
 import lustre/element.{type Element, text}
 import lustre/element/html
@@ -101,6 +104,29 @@ pub fn for(name: String) -> List(Example(msg)) {
     "sign_up" -> [
       Example("Sign up, with errors", "signing_up", signing_up),
     ]
+    "kbd" -> [Example("Keys and shortcuts", "keys", keys)]
+    "button_group" -> [Example("Button group", "button_group", button_group)]
+    "toggle" -> [
+      Example("Toggle", "toggle", toggle),
+      Example("Toggle group", "toggle_group", toggle_group),
+    ]
+    "switch" -> [Example("Switch", "switches", switches)]
+    "slider" -> [Example("Slider", "slider", slider)]
+    "input_group" -> [Example("Input group", "input_group", input_group)]
+    "input_otp" -> [Example("One-time code", "one_time_code", one_time_code)]
+    "aspect_ratio" -> [Example("16:9", "aspect_ratio", aspect_ratio)]
+    "scroll_area" -> [Example("Scroll area", "scroll_area", scroll_area)]
+    "resizable" -> [Example("Resizable panels", "resizable", resizable)]
+    "context_menu" -> [Example("Context menu", "context_menu", context_menu)]
+    "menubar" -> [Example("Menubar", "menubar", menubar)]
+    "hover_card" -> [Example("Hover card", "hover_card", hover_card)]
+    "breadcrumb" -> [Example("Breadcrumb", "breadcrumb", breadcrumb)]
+    "navigation_menu" -> [
+      Example("Navigation menu", "navigation_menu", navigation_menu),
+    ]
+    "carousel" -> [Example("Carousel", "carousel", carousel)]
+    "item" -> [Example("Items", "items", items)]
+    "empty" -> [Example("Empty state", "empty_state", empty_state)]
     _ -> [Example("A sample of components", "theme_sample", theme_sample)]
   }
 }
@@ -706,4 +732,235 @@ pub fn theme_sample() -> Element(msg) {
       ui.progress(label: "Progress", value: 60, max: 100),
     ]),
   ])
+}
+
+pub fn keys() -> Element(msg) {
+  ui.row([], [
+    ui.p([text("Search with "), ui.shortcut(["⌘", "K"])]),
+    ui.p([text("Close with "), ui.kbd("Esc")]),
+  ])
+}
+
+pub fn button_group() -> Element(msg) {
+  ui.button_group(button_group.Horizontal, [attribute.aria_label("Pages")], [
+    ui.button(Outline, [], [text("Previous")]),
+    ui.button(Outline, [], [text("Today")]),
+    ui.button(Outline, [], [text("Next")]),
+  ])
+}
+
+pub fn toggle() -> Element(msg) {
+  ui.toggle(False, [attribute.aria_label("Bold")], [
+    html.strong([], [text("B")]),
+  ])
+}
+
+pub fn toggle_group() -> Element(msg) {
+  ui.toggle_group(toggle.Single, [attribute.aria_label("Alignment")], [
+    ui.toggle(True, [], [text("Left")]),
+    ui.toggle(False, [], [text("Centre")]),
+    ui.toggle(False, [], [text("Right")]),
+  ])
+}
+
+pub fn switches() -> Element(msg) {
+  ui.stack([], [
+    ui.choice(ui.switch([attribute.checked(True)]), [text("Email alerts")]),
+    ui.choice(ui.switch([]), [text("Weekly summary")]),
+  ])
+}
+
+pub fn slider() -> Element(msg) {
+  ui.stack([], [
+    ui.label([attribute.for("example-volume")], [text("Volume")]),
+    ui.slider([
+      attribute.id("example-volume"),
+      attribute.min("0"),
+      attribute.max("100"),
+      attribute.value("40"),
+    ]),
+  ])
+}
+
+pub fn input_group() -> Element(msg) {
+  ui.input_group([], [
+    ui.input_group_addon([text("https://")]),
+    ui.input_group_input([
+      attribute.aria_label("Website"),
+      attribute.placeholder("example.com"),
+    ]),
+    ui.input_group_addon([ui.sized_button(Ghost, Small, [], [text("Check")])]),
+  ])
+}
+
+pub fn one_time_code() -> Element(msg) {
+  ui.stack([], [
+    ui.label([attribute.for("example-code")], [text("Verification code")]),
+    ui.input_otp(6, [attribute.id("example-code"), attribute.name("code")]),
+  ])
+}
+
+pub fn aspect_ratio() -> Element(msg) {
+  ui.aspect_ratio(16, 9, [], [
+    html.div([attribute.style("padding", "1rem")], [ui.muted("16 : 9")]),
+  ])
+}
+
+pub fn scroll_area() -> Element(msg) {
+  ui.scroll_area("Release notes", [attribute.style("height", "9rem")], [
+    ui.stack([attribute.style("padding", "0.75rem")], [
+      ui.p([text("2.0: live links between pages.")]),
+      ui.p([text("1.9: shared live runtimes.")]),
+      ui.p([text("1.8: themes as records.")]),
+      ui.p([text("1.7: static CSS export.")]),
+      ui.p([text("1.6: the first components.")]),
+    ]),
+  ])
+}
+
+pub fn resizable() -> Element(msg) {
+  ui.resizable_group(
+    resizable.Horizontal,
+    [attribute.style("height", "10rem")],
+    [
+      ui.resizable_panel(30, [attribute.style("padding", "1rem")], [
+        text("Folders"),
+      ]),
+      ui.resizable_handle("Resize folders"),
+      ui.resizable_panel(70, [attribute.style("padding", "1rem")], [
+        text("Messages"),
+      ]),
+    ],
+  )
+}
+
+pub fn context_menu() -> Element(msg) {
+  html.div([], [
+    ui.context_menu_area(
+      "example-context",
+      [
+        attribute.tabindex(0),
+        attribute.style("padding", "2rem"),
+        attribute.style("border", "1px dashed var(--howdy-border)"),
+        attribute.style("border-radius", "var(--howdy-radius-medium)"),
+      ],
+      [ui.muted("Right-click here, or focus it and press the menu key.")],
+    ),
+    ui.context_menu("example-context", [], [
+      ui.menu_item([], [text("Rename")]),
+      ui.menu_item([], [text("Duplicate")]),
+      ui.menu_separator(),
+      ui.menu_item([], [text("Delete")]),
+    ]),
+  ])
+}
+
+pub fn menubar() -> Element(msg) {
+  html.div([], [
+    ui.menubar([attribute.aria_label("Editor")], [
+      ui.menubar_button("example-file", [text("File")]),
+      ui.menubar_button("example-edit", [text("Edit")]),
+      ui.menubar_button("example-view", [text("View")]),
+    ]),
+    ui.menu("example-file", [], [
+      ui.menu_item([], [text("New")]),
+      ui.menu_item([], [text("Open…")]),
+      ui.menu_separator(),
+      ui.menu_item([], [text("Print")]),
+    ]),
+    ui.menu("example-edit", [], [
+      ui.menu_item([], [text("Undo")]),
+      ui.menu_item([], [text("Redo")]),
+    ]),
+    ui.menu("example-view", [], [
+      ui.menu_checkbox_item(True, [], [text("Show ruler")]),
+    ]),
+  ])
+}
+
+pub fn hover_card() -> Element(msg) {
+  html.p([], [
+    text("Written by "),
+    html.a([attribute.href("#"), ..ui.hover_card_trigger("example-card")], [
+      text("@ada"),
+    ]),
+    text("."),
+    ui.hover_card("example-card", [], [
+      ui.row([], [
+        ui.avatar_initials("AL"),
+        ui.stack([attribute.style("gap", "0.125rem")], [
+          html.strong([], [text("Ada Lovelace")]),
+          ui.muted("Writes the notes on the engine."),
+        ]),
+      ]),
+    ]),
+  ])
+}
+
+pub fn breadcrumb() -> Element(msg) {
+  ui.breadcrumb([], [
+    ui.breadcrumb_link("#", [text("Home")]),
+    ui.breadcrumb_ellipsis(),
+    ui.breadcrumb_link("#", [text("Orders")]),
+    ui.breadcrumb_page([text("#1042")]),
+  ])
+}
+
+pub fn navigation_menu() -> Element(msg) {
+  ui.navigation_menu([attribute.aria_label("Example")], [
+    ui.navigation_link("#", active: True, children: [text("Home")]),
+    ui.navigation_panel("example-products", label: [text("Products")], links: [
+      ui.navigation_panel_link(
+        "#",
+        title: "Analytics",
+        description: "See what your customers do.",
+      ),
+      ui.navigation_panel_link(
+        "#",
+        title: "Billing",
+        description: "Invoices and payments.",
+      ),
+    ]),
+    ui.navigation_link("#", active: False, children: [text("Pricing")]),
+  ])
+}
+
+pub fn carousel() -> Element(msg) {
+  ui.carousel("example-carousel", label: "Highlights", attributes: [], slides: [
+    ui.carousel_slide([
+      ui.card([], [ui.h3("Live views"), ui.muted("State on the server.")]),
+    ]),
+    ui.carousel_slide([
+      ui.card([], [ui.h3("Themes"), ui.muted("Records, not class names.")]),
+    ]),
+    ui.carousel_slide([
+      ui.card([], [ui.h3("Copies"), ui.muted("Components you own.")]),
+    ]),
+  ])
+}
+
+pub fn items() -> Element(msg) {
+  ui.item_group([
+    ui.item(
+      media: ui.avatar_initials("AL"),
+      title: [text("Ada Lovelace")],
+      description: [text("ada@example.com")],
+      actions: [ui.button(Outline, [], [text("Invite")])],
+    ),
+    ui.item_link(
+      "#",
+      media: ui.avatar_initials("GH"),
+      title: [text("Grace Hopper")],
+      description: [text("Joined last week")],
+    ),
+  ])
+}
+
+pub fn empty_state() -> Element(msg) {
+  ui.empty(
+    icon: text("📭"),
+    title: "No invoices yet",
+    description: "Invoices you send appear here, with who has paid.",
+    actions: [ui.button(Primary, [], [text("New invoice")])],
+  )
 }

@@ -12,7 +12,8 @@ import gleam/result
 import gleam/string
 
 pub type Kind {
-  /// A component module, depending only on `howdy/ui/style` and tokens.
+  /// A component module. It depends on `howdy/ui/style`, tokens and, for a
+  /// few, other components, which copying it copies too.
   Component
   /// A screen or card composed of components. Copying one copies the
   /// components it uses and points its imports at the copies.
@@ -52,10 +53,17 @@ pub fn entries() -> List(Entry) {
   [
     component("heading", "Typography"),
     component("typography", "Typography"),
+    component("kbd", "Typography"),
     component("button", "Actions"),
+    component("button_group", "Actions"),
+    component("toggle", "Actions"),
     component("input", "Forms"),
     component("field", "Forms"),
     component("checkbox", "Forms"),
+    component("switch", "Forms"),
+    component("slider", "Forms"),
+    component("input_group", "Forms"),
+    component("input_otp", "Forms"),
     component("select", "Forms"),
     component("command", "Forms"),
     component("calendar", "Forms"),
@@ -63,19 +71,30 @@ pub fn entries() -> List(Entry) {
     component("card", "Layout"),
     component("sidebar", "Layout"),
     component("effects", "Layout"),
+    component("aspect_ratio", "Layout"),
+    component("scroll_area", "Layout"),
+    component("resizable", "Layout"),
     component("dialog", "Overlays"),
     component("popover", "Overlays"),
     component("tooltip", "Overlays"),
     component("menu", "Overlays"),
+    component("context_menu", "Overlays"),
+    component("menubar", "Overlays"),
+    component("hover_card", "Overlays"),
     component("tabs", "Navigation"),
     component("accordion", "Navigation"),
     component("pagination", "Navigation"),
+    component("breadcrumb", "Navigation"),
+    component("navigation_menu", "Navigation"),
     component("table", "Data display"),
     component("data_table", "Data display"),
     component("chart", "Data display"),
     component("badge", "Data display"),
     component("avatar", "Data display"),
+    component("carousel", "Data display"),
+    component("item", "Data display"),
     component("progress", "Feedback"),
+    component("empty", "Feedback"),
     component("alert", "Feedback"),
     component("toast", "Feedback"),
     component("loading", "Feedback"),

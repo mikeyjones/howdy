@@ -193,10 +193,18 @@ pub fn every_copyable_entry_depends_only_on_what_it_may_test() {
     || string.starts_with(line, "import howdy/ui/theme/tokens")
   }
   case entry.kind {
-    // Components use only the core modules, so a copy stands alone.
+    // Components use the core modules and, for a few, other components,
+    // which `add` copies alongside.
     registry.Component -> {
       assert string.contains(source, "pub fn classes()")
-      assert list.all(own_imports, core)
+      assert list.all(own_imports, fn(line) {
+        core(line)
+        || list.any(registry.entries(), fn(other) {
+          other.kind == registry.Component
+          && other.name != entry.name
+          && string.starts_with(line, "import " <> other.module)
+        })
+      })
     }
     // Blocks may also use components, which `add` copies alongside.
     registry.Block -> {

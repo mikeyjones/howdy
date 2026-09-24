@@ -256,6 +256,11 @@ fn list_entries(options: Options) -> Result(String, String) {
 }
 
 fn show_summaries(summaries: List(Summary)) -> String {
+  let width =
+    list.fold(summaries, 0, fn(widest, summary) {
+      int.max(widest, string.length(summary.name))
+    })
+    + 2
   summaries
   |> list.chunk(fn(summary) { summary.category })
   |> list.map(fn(group) {
@@ -264,7 +269,7 @@ fn show_summaries(summaries: List(Summary)) -> String {
       first.category,
       ..list.map(group, fn(summary) {
         "  "
-        <> string.pad_end(summary.name, 14, " ")
+        <> string.pad_end(summary.name, width, " ")
         <> registry.summary(summary.description)
       })
     ]

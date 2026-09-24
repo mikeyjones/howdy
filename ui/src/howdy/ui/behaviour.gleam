@@ -53,6 +53,8 @@ const hasAnchors = CSS.supports('anchor-name: --a');
 const openers = new WeakMap();
 const watched = new WeakSet();
 const tooltips = new WeakMap();
+// Popovers closing because another is taking over, so focus stays put.
+const handingOver = new WeakSet();
 
 const byId = (node, id) => (id ? node.getRootNode().getElementById(id) : null);
 const inPath = (event, selector) =>
@@ -76,7 +78,8 @@ const deepFocus = () => {
 const place = (floating, anchor) => {
   if (hasAnchors) return;
   floating.style.visibility = '';
-  if (!anchor) return;
+  // Context menus are placed at the pointer when they open.
+  if (!anchor || floating.hasAttribute('data-howdy-at-pointer')) return;
   const a = anchor.getBoundingClientRect();
   const f = floating.getBoundingClientRect();
   const gap = 6;
@@ -99,10 +102,13 @@ const watch = (popover) => {
     if (event.newState === 'closed') hadFocus = popover.contains(deepFocus());
   });
   popover.addEventListener('toggle', (event) => {
+    const opener = openers.get(popover);
+    if (opener?.closest('[role=menubar]')) opener.setAttribute('aria-expanded', String(event.newState === 'open'));
     // Browsers put focus back on the shadow host, not the trigger, when a
     // popover in a live view closes, so put it back ourselves.
     if (event.newState === 'closed') {
       const focused = deepFocus();
+      if (handingOver.delete(popover)) return;
       if (hadFocus && (!focused || focused === document.body || focused === popover.getRootNode().host || popover.contains(focused))) openers.get(popover)?.focus();
       return;
     }
@@ -241,10 +247,14 @@ const typeahead = (items, current, key) => {
   return ordered.find((el) => el.textContent.trim().toLowerCase().startsWith(typed));
 };
 
+// Tooltips and hover cards: shown after a pause on hover or focus, kept
+// while the pointer or focus is on them.
 const tooltip = (trigger) => {
   if (tooltips.has(trigger)) return tooltips.get(trigger);
-  const tip = byId(trigger, trigger.dataset.howdyTooltip);
+  const card = trigger.hasAttribute('data-howdy-hover-card');
+  const tip = byId(trigger, card ? trigger.dataset.howdyHoverCard : trigger.dataset.howdyTooltip);
   if (!tip) return null;
+  const [openAfter, closeAfter] = card ? [500, 300] : [300, 100];
   let timer;
   const show = () => {
     clearTimeout(timer);
@@ -253,11 +263,11 @@ const tooltip = (trigger) => {
       if (!hasAnchors) tip.style.visibility = 'hidden';
       tip.showPopover();
       place(tip, trigger);
-    }, 300);
+    }, openAfter);
   };
   const hide = () => {
     clearTimeout(timer);
-    timer = setTimeout(() => isOpen(tip) && tip.hidePopover(), 100);
+    timer = setTimeout(() => isOpen(tip) && tip.hidePopover(), closeAfter);
   };
   trigger.addEventListener('pointerenter', show);
   trigger.addEventListener('pointerleave', hide);
@@ -268,13 +278,21 @@ const tooltip = (trigger) => {
   });
   tip.addEventListener('pointerenter', () => clearTimeout(timer));
   tip.addEventListener('pointerleave', hide);
+  tip.addEventListener('focusin', () => clearTimeout(timer));
+  tip.addEventListener('focusout', hide);
+  tip.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && isOpen(tip)) {
+      tip.hidePopover();
+      trigger.focus();
+    }
+  });
   tooltips.set(trigger, show);
   return show;
 };
 
 // The first hover or focus wires a tooltip up, then shows it.
 const startTooltip = (event) => {
-  const trigger = inPath(event, '[data-howdy-tooltip]');
+  const trigger = inPath(event, '[data-howdy-tooltip], [data-howdy-hover-card]');
   if (trigger && !tooltips.has(trigger)) tooltip(trigger)?.();
 };
 document.addEventListener('pointerover', startTooltip);
@@ -319,6 +337,109 @@ wide.addEventListener('change', () => {
   }
 });
 
+// Move a resizable handle by `delta`, in the same shares as the panels'
+// sizes. No panel goes below a tenth of the group.
+const shares = (group) =>
+  [...group.children]
+    .filter((el) => el.getAttribute('role') !== 'separator')
+    .reduce((sum, el) => sum + (parseFloat(el.style.flexGrow) || 1), 0);
+const resizeBy = (handle, delta) => {
+  const before = handle.previousElementSibling;
+  const after = handle.nextElementSibling;
+  if (!before || !after) return;
+  const a = parseFloat(before.style.flexGrow) || 1;
+  const b = parseFloat(after.style.flexGrow) || 1;
+  const all = shares(handle.parentElement);
+  const min = all / 10;
+  const next = Math.min(Math.max(a + delta, min), a + b - min);
+  before.style.flexGrow = String(next);
+  after.style.flexGrow = String(a + b - next);
+  handle.setAttribute('aria-valuenow', String(Math.round((next / all) * 100)));
+};
+
+document.addEventListener('pointerdown', (event) => {
+  const handle = inPath(event, '[data-howdy-resizable] > [role=separator]');
+  if (!handle || event.button !== 0) return;
+  event.preventDefault();
+  handle.focus();
+  const group = handle.parentElement;
+  const vertical = group.dataset.howdyResizable === 'vertical';
+  const size = vertical ? group.clientHeight : group.clientWidth;
+  const all = shares(group);
+  let last = vertical ? event.clientY : event.clientX;
+  // Keep receiving moves when the pointer leaves the thin handle.
+  try {
+    handle.setPointerCapture(event.pointerId);
+  } catch {}
+  const move = (moved) => {
+    const now = vertical ? moved.clientY : moved.clientX;
+    resizeBy(handle, ((now - last) / size) * all);
+    last = now;
+  };
+  const stop = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', stop);
+    handle.removeEventListener('pointercancel', stop);
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', stop);
+  handle.addEventListener('pointercancel', stop);
+});
+
+// A right click, or the context menu key, in an area opens its menu there.
+document.addEventListener('contextmenu', (event) => {
+  const area = inPath(event, '[data-howdy-context-menu]');
+  if (!area) return;
+  const popup = byId(area, area.dataset.howdyContextMenu);
+  if (!popup) return;
+  event.preventDefault();
+  const focused = deepFocus();
+  openers.set(popup, focused && area.contains(focused) ? focused : null);
+  watch(popup);
+  if (isOpen(popup)) popup.hidePopover();
+  let x = event.clientX;
+  let y = event.clientY;
+  if (!x && !y) {
+    const r = (focused && area.contains(focused) ? focused : area).getBoundingClientRect();
+    x = r.left;
+    y = r.bottom;
+  }
+  Object.assign(popup.style, { inset: 'auto', margin: '0', left: x + 'px', top: y + 'px' });
+  popup.showPopover();
+  const r = popup.getBoundingClientRect();
+  if (r.right > innerWidth) popup.style.left = Math.max(4, innerWidth - r.width - 4) + 'px';
+  if (r.bottom > innerHeight) popup.style.top = Math.max(4, y - r.height) + 'px';
+});
+
+// Once a menubar menu is open, pointing at another button opens its menu.
+document.addEventListener('pointerover', (event) => {
+  const button = inPath(event, '[role=menubar] > [data-howdy-menu-trigger]');
+  if (!button) return;
+  const buttons = [...button.parentElement.querySelectorAll(':scope > [data-howdy-menu-trigger]')];
+  const openOne = buttons.find((other) => other !== button && isOpen(byId(other, other.getAttribute('popovertarget'))));
+  if (!openOne) return;
+  const popover = byId(button, button.getAttribute('popovertarget'));
+  if (!popover) return;
+  handingOver.add(byId(openOne, openOne.getAttribute('popovertarget')));
+  for (const other of buttons) other.tabIndex = other === button ? 0 : -1;
+  open(popover, button);
+});
+
+// A menubar is one stop in the tab order: the button last focused.
+document.addEventListener('focusin', (event) => {
+  const button = event.composedPath()[0];
+  if (!(button instanceof Element) || !button.matches('[role=menubar] > [data-howdy-menu-trigger]')) return;
+  for (const other of button.parentElement.querySelectorAll(':scope > [data-howdy-menu-trigger]')) {
+    other.tabIndex = other === button ? 0 : -1;
+  }
+});
+
+// A resizable handle announces the size of the panel before it.
+document.addEventListener('focusin', (event) => {
+  const handle = event.composedPath()[0];
+  if (handle instanceof Element && handle.matches('[data-howdy-resizable] > [role=separator]')) resizeBy(handle, 0);
+});
+
 // Capture, so popovers are watched before the browser opens them.
 document.addEventListener('click', (event) => {
   const invoker = inPath(event, '[popovertarget], [commandfor]');
@@ -353,6 +474,23 @@ document.addEventListener('click', (event) => {
   if (day) pickDay(day);
   const command = inPath(event, 'dialog [data-howdy-command] [role=option]');
   if (command && !command.matches('[aria-disabled=true]')) command.closest('dialog').close();
+  const toggle = inPath(event, '[data-howdy-toggle]');
+  if (toggle && !toggle.disabled) {
+    const pressed = toggle.getAttribute('aria-pressed') !== 'true';
+    const group = toggle.closest('[data-howdy-toggle-group=single]');
+    if (group && pressed) {
+      for (const other of group.querySelectorAll('[data-howdy-toggle]')) other.setAttribute('aria-pressed', 'false');
+    }
+    toggle.setAttribute('aria-pressed', String(pressed));
+  }
+  const slideButton = inPath(event, '[data-howdy-carousel-previous], [data-howdy-carousel-next]');
+  if (slideButton) {
+    const viewport = byId(slideButton, slideButton.getAttribute('aria-controls'));
+    const forward = slideButton.hasAttribute('data-howdy-carousel-next');
+    const rtl = viewport && getComputedStyle(viewport).direction === 'rtl';
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    viewport?.scrollBy({ left: (forward !== rtl ? 1 : -1) * viewport.clientWidth, behavior: still ? 'instant' : 'smooth' });
+  }
   const toast = inPath(event, '[data-howdy-toast-close]');
   if (toast) toast.closest('[data-howdy-toast]').hidden = true;
   // On a wide screen the sidebar trigger collapses the sidebar instead of
@@ -377,6 +515,20 @@ document.addEventListener('keydown', (event) => {
   const popup = target.closest('[role=menu][popover], [role=listbox][popover]');
   if (popup) {
     const items = enabled(popup, '[role^=menuitem], [role=option]');
+    // In a menubar, left and right go to the neighbouring menu.
+    const opener = openers.get(popup);
+    const bar = opener?.closest('[role=menubar]');
+    if (bar && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+      event.preventDefault();
+      const buttons = enabled(bar, ':scope > [data-howdy-menu-trigger]');
+      const next = step(buttons, opener, key);
+      const menu = byId(next, next.getAttribute('popovertarget'));
+      handingOver.add(popup);
+      popup.hidePopover();
+      for (const button of buttons) button.tabIndex = button === next ? 0 : -1;
+      if (menu) open(menu, next);
+      return;
+    }
     if (arrows.includes(key)) {
       event.preventDefault();
       step(items, target, key)?.focus();
@@ -402,6 +554,34 @@ document.addEventListener('keydown', (event) => {
       event.preventDefault();
       current.click();
     }
+    return;
+  }
+
+  const handle = target.closest('[data-howdy-resizable] > [role=separator]');
+  if (handle) {
+    const all = shares(handle.parentElement);
+    const before = parseFloat(handle.previousElementSibling?.style.flexGrow) || 1;
+    const after = parseFloat(handle.nextElementSibling?.style.flexGrow) || 1;
+    const moves = {
+      ArrowLeft: -all / 20,
+      ArrowUp: -all / 20,
+      ArrowRight: all / 20,
+      ArrowDown: all / 20,
+      Home: all / 10 - before,
+      End: before + after - all / 10 - before,
+    };
+    if (Object.hasOwn(moves, key)) {
+      event.preventDefault();
+      resizeBy(handle, moves[key]);
+    }
+    return;
+  }
+
+  const barButton = target.closest('[role=menubar] > [data-howdy-menu-trigger]');
+  if (barButton && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) {
+    event.preventDefault();
+    const next = step(enabled(barButton.parentElement, ':scope > [data-howdy-menu-trigger]'), barButton, key);
+    next.focus();
     return;
   }
 
