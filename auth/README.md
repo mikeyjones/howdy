@@ -1654,6 +1654,13 @@ chosen as for registration, so outside `group.Single` pass
 `auth.in_group(identity, group_id)`. It is `Conflict` when the address already
 has an account where it must be unique, and is recorded as `user.provisioned`.
 
+For management consoles, `authorization.roles` lists every role with its
+permissions, `authorization.assignments` the roles a user holds,
+`authorization.holders` the users holding a role, and
+`authorization.delete_role` removes a role and its assignments (recorded as
+`role.deleted`). `scope_to_string` and `scope_from_string` round-trip a
+scope as `global` or `org:<id>`.
+
 `auth.impersonate(identity, user_id, by:)` issues a session for a user without
 a credential, for an operator console or the [`howdy_admin`](../admin/README.md)
 development area. The session's method is `auth.Impersonation` and the event

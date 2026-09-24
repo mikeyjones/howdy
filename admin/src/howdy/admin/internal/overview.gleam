@@ -15,6 +15,7 @@ import howdy/admin/internal/layout
 import howdy/admin/internal/schema
 import howdy/auth.{type Auth}
 import howdy/auth/group
+import howdy/authorization
 import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
 import howdy/service
@@ -150,6 +151,17 @@ fn auth_card(config: Config, identity: Auth) -> Element(msg) {
             text(accounts.describe(users, "user")),
             text(" · " <> accounts.describe(groups, "group")),
             text(" · group mode " <> group.mode_name(auth.group_mode(identity))),
+            case config.authorization {
+              Some(access) ->
+                text(
+                  " · "
+                  <> case authorization.roles(access) {
+                    Ok(roles) -> accounts.describe(list.length(roles), "role")
+                    Error(_) -> "roles unavailable"
+                  },
+                )
+              None -> element.none()
+            },
           ]),
         ]),
         ui.card_content([], [
@@ -175,6 +187,10 @@ fn auth_card(config: Config, identity: Auth) -> Element(msg) {
           ui.row([], [
             ui.link(config.path(config, "/users"), [text("Users")]),
             ui.link(config.path(config, "/groups"), [text("Groups")]),
+            case config.authorization {
+              Some(_) -> ui.link(config.path(config, "/roles"), [text("Roles")])
+              None -> element.none()
+            },
           ]),
         ]),
       ])

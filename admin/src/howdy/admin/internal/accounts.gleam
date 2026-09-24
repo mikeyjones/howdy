@@ -4,11 +4,14 @@ import ewe
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/result
+import gleam/string
 import gleam/time/calendar
 import gleam/time/timestamp.{type Timestamp}
 import howdy/admin/internal/config.{type Config}
 import howdy/admin/internal/layout
+import howdy/admin/internal/roles
 import howdy/auth.{type Auth}
 import howdy/auth/field
 import howdy/auth/group.{type Group, Single}
@@ -16,6 +19,7 @@ import howdy/auth/groups
 import howdy/auth/routes
 import howdy/auth/user.{type User}
 import howdy/auth/users
+import howdy/authorization.{type Authorization}
 import howdy/controller.{type Context, type Controller}
 import howdy/form
 import howdy/service
@@ -54,6 +58,16 @@ pub fn controller(config: Config, identity: Auth) -> Controller {
   })
   |> controller.post("/users/:id/impersonate", fn(ctx) {
     impersonate(config, identity, ctx)
+  })
+  |> controller.post("/users/:id/roles/assign", fn(ctx) {
+    role_change(config, ctx, fn(access, id, scope, role) {
+      authorization.assign(access, id, role, scope, by: actor)
+    })
+  })
+  |> controller.post("/users/:id/roles/revoke", fn(ctx) {
+    role_change(config, ctx, fn(access, id, scope, role) {
+      authorization.revoke(access, id, role, scope, by: actor)
+    })
   })
   |> controller.get("/groups", fn(ctx) { group_index(config, identity, ctx) })
   |> controller.post("/groups", fn(ctx) { group_create(config, identity, ctx) })
@@ -196,11 +210,19 @@ fn user_show(
     use suspended <- result.try(users.suspended(identity, id))
     use fields <- result.try(users.fields(identity, id))
     use groups <- result.try(groups.list(identity))
-    Ok(#(user, suspended, field.to_list(fields), groups))
+    use held <- result.try(case config.authorization {
+      Some(access) -> {
+        use assignments <- result.try(authorization.assignments(access, id))
+        use roles <- result.try(authorization.roles(access))
+        Ok(Some(#(assignments, roles)))
+      }
+      None -> Ok(None)
+    })
+    Ok(#(user, suspended, field.to_list(fields), groups, held))
   }
   case found {
     Error(error) -> failure(config, ctx, "/users", "User", error)
-    Ok(#(user, suspended, fields, groups)) -> {
+    Ok(#(user, suspended, fields, groups, held)) -> {
       let action = fn(name, variant, label) {
         html.form(
           [
@@ -258,6 +280,11 @@ fn user_show(
                 ui.card_header([], [ui.card_title([text("Fields")])]),
                 ui.card_content([], [facts(fields)]),
               ])
+          },
+          case held {
+            None -> element.none()
+            Some(#(assignments, roles)) ->
+              roles_card(config, id, assignments, roles)
           },
           case auth.group_mode(identity) {
             Single -> element.none()
@@ -326,6 +353,123 @@ fn impersonate(
   case auth.impersonate(identity, id, by: actor) {
     Ok(session) ->
       routes.signed_in(identity, ctx, layout.redirect("/"), session)
+    Error(error) -> failure(config, ctx, "/users", "User", error)
+  }
+}
+
+/// The roles a user holds, each with a revoke button, and a form to assign
+/// one they do not.
+fn roles_card(
+  config: Config,
+  id: String,
+  assignments: List(#(authorization.Scope, String)),
+  roles: List(authorization.Role),
+) -> Element(msg) {
+  let here = user_path(config, id) <> "/roles"
+  let available =
+    list.filter(roles, fn(role) {
+      !list.contains(assignments, #(role.scope, role.name))
+    })
+  ui.card([], [
+    ui.card_header([], [ui.card_title([text("Roles")])]),
+    ui.card_content([], [
+      case assignments {
+        [] -> ui.p([ui.muted("No roles.")])
+        _ ->
+          ui.table([], [
+            ui.table_body(
+              [],
+              list.map(assignments, fn(assignment) {
+                let #(scope, role) = assignment
+                ui.table_row([], [
+                  ui.table_cell([], [
+                    ui.link(roles.role_path(config, scope, role), [text(role)]),
+                  ]),
+                  ui.table_cell([], [roles.scope_badge(scope)]),
+                  ui.table_cell([], [
+                    html.form(
+                      [
+                        attribute.method("post"),
+                        attribute.action(here <> "/revoke"),
+                      ],
+                      [
+                        html.input([
+                          attribute.type_("hidden"),
+                          attribute.name("role"),
+                          attribute.value(role_value(scope, role)),
+                        ]),
+                        ui.sized_button(
+                          button.Ghost,
+                          button.Small,
+                          [attribute.type_("submit")],
+                          [text("Revoke")],
+                        ),
+                      ],
+                    ),
+                  ]),
+                ])
+              }),
+            ),
+          ])
+      },
+      case available {
+        [] -> element.none()
+        _ ->
+          html.form(
+            [attribute.method("post"), attribute.action(here <> "/assign")],
+            [
+              ui.row([], [
+                ui.native_select(
+                  [attribute.name("role")],
+                  list.map(available, fn(role) {
+                    html.option(
+                      [attribute.value(role_value(role.scope, role.name))],
+                      role.name
+                        <> " ("
+                        <> authorization.scope_to_string(role.scope)
+                        <> ")",
+                    )
+                  }),
+                ),
+                ui.submit_button(button.Secondary, [], [text("Assign")]),
+              ]),
+            ],
+          )
+      },
+    ]),
+  ])
+}
+
+/// A role and its scope in one form value. Names cannot contain a tab.
+fn role_value(scope: authorization.Scope, role: String) -> String {
+  authorization.scope_to_string(scope) <> "\t" <> role
+}
+
+fn role_change(
+  config: Config,
+  ctx: Context,
+  run: fn(Authorization, String, authorization.Scope, String) ->
+    service.Result(Nil),
+) -> Response(ewe.Body) {
+  let id = result.unwrap(controller.param(ctx, "id"), "")
+  use form <- form.read(ctx)
+  let parsed = {
+    use access <- result.try(option.to_result(
+      config.authorization,
+      service.NotFound("authorization"),
+    ))
+    use #(scope, role) <- result.try(
+      string.split_once(form.value(form, "role"), "\t")
+      |> result.replace_error(service.Invalid("choose a role")),
+    )
+    use scope <- result.try(
+      authorization.scope_from_string(scope)
+      |> result.replace_error(service.Invalid("unknown scope")),
+    )
+    run(access, id, scope, role)
+  }
+  case parsed {
+    Ok(Nil) -> layout.redirect(user_path(config, id))
     Error(error) -> failure(config, ctx, "/users", "User", error)
   }
 }

@@ -166,6 +166,151 @@ pub fn revoke(
   auth.event(conn, user_id, "role.revoked", actor, scope <> ":" <> role)
 }
 
+/// A defined role and its permissions.
+pub type Role {
+  Role(scope: Scope, name: String, permissions: List(String))
+}
+
+/// Every defined role in every scope, with its permissions, for management
+/// consoles. Roles come sorted by scope then name.
+pub fn roles(access: Authorization) -> service.Result(List(Role)) {
+  use conn <- db.connect(access.repo)
+  use rows <- result.try(
+    db.query(
+      conn,
+      "SELECT r.scope, r.name, p.permission FROM howdy_authz_roles r LEFT JOIN howdy_authz_permissions p ON p.scope = r.scope AND p.role = r.name ORDER BY r.scope, r.name, p.permission",
+      [],
+      {
+        use scope <- decode.field(0, decode.string)
+        use name <- decode.field(1, decode.string)
+        use permission <- decode.field(2, decode.optional(decode.string))
+        decode.success(#(scope, name, permission))
+      },
+    ),
+  )
+  rows
+  |> list.chunk(fn(row) { #(row.0, row.1) })
+  |> list.try_map(fn(group) {
+    let assert [#(scope, name, _), ..] = group
+    use scope <- result.try(scope_from_key(scope))
+    Ok(Role(
+      scope:,
+      name:,
+      permissions: list.filter_map(group, fn(row) {
+        option.to_result(row.2, Nil)
+      }),
+    ))
+  })
+}
+
+/// Remove a role and every assignment of it. Privileged: authorize the
+/// caller first. `NotFound` when there is no such role.
+pub fn delete_role(
+  access: Authorization,
+  scope: Scope,
+  name: String,
+  by actor: Actor,
+) -> service.Result(Nil) {
+  use scope <- result.try(scope_key(scope))
+  use <- cache.changing
+  use conn <- db.transaction(access.repo)
+  use roles <- result.try(db.query(
+    conn,
+    "SELECT name FROM howdy_authz_roles WHERE scope = $1 AND name = $2",
+    [sql.string(scope), sql.string(name)],
+    decode.field(0, decode.string, decode.success),
+  ))
+  use _ <- result.try(case roles {
+    [_] -> Ok(Nil)
+    _ -> Error(service.NotFound("role"))
+  })
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "DELETE FROM howdy_authz_assignments WHERE scope = $1 AND role = $2",
+      [sql.string(scope), sql.string(name)],
+    ),
+  )
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "DELETE FROM howdy_authz_permissions WHERE scope = $1 AND role = $2",
+      [sql.string(scope), sql.string(name)],
+    ),
+  )
+  use _ <- result.try(
+    db.execute(
+      conn,
+      "DELETE FROM howdy_authz_roles WHERE scope = $1 AND name = $2",
+      [sql.string(scope), sql.string(name)],
+    ),
+  )
+  auth.event(conn, "", "role.deleted", actor, scope <> ":" <> name)
+}
+
+/// The roles a user holds, as scope and role name, for management consoles.
+/// Suspension does not remove assignments; checks ignore them while it lasts.
+pub fn assignments(
+  access: Authorization,
+  user_id: String,
+) -> service.Result(List(#(Scope, String))) {
+  use conn <- db.connect(access.repo)
+  use rows <- result.try(
+    db.query(
+      conn,
+      "SELECT scope, role FROM howdy_authz_assignments WHERE user_id = $1 ORDER BY scope, role",
+      [sql.string(user_id)],
+      {
+        use scope <- decode.field(0, decode.string)
+        use role <- decode.field(1, decode.string)
+        decode.success(#(scope, role))
+      },
+    ),
+  )
+  list.try_map(rows, fn(row) {
+    use scope <- result.try(scope_from_key(row.0))
+    Ok(#(scope, row.1))
+  })
+}
+
+/// The ids of the users assigned a role, for management consoles.
+pub fn holders(
+  access: Authorization,
+  scope: Scope,
+  role: String,
+) -> service.Result(List(String)) {
+  use scope <- result.try(scope_key(scope))
+  use conn <- db.connect(access.repo)
+  db.query(
+    conn,
+    "SELECT a.user_id FROM howdy_authz_assignments a JOIN howdy_auth_users u ON u.id = a.user_id WHERE a.scope = $1 AND a.role = $2 ORDER BY u.email, u.id",
+    [sql.string(scope), sql.string(role)],
+    decode.field(0, decode.string, decode.success),
+  )
+}
+
+/// The text a scope is stored and displayed as: `global`, or `org:<id>`.
+pub fn scope_to_string(scope: Scope) -> String {
+  case scope {
+    Global -> "global"
+    Organization(id) -> "org:" <> id
+  }
+}
+
+/// Parse what `scope_to_string` produced.
+pub fn scope_from_string(text: String) -> Result(Scope, Nil) {
+  case text {
+    "global" -> Ok(Global)
+    "org:" <> id if id != "" -> Ok(Organization(id))
+    _ -> Error(Nil)
+  }
+}
+
+fn scope_from_key(key: String) -> service.Result(Scope) {
+  scope_from_string(key)
+  |> result.replace_error(service.Internal("unknown authorization scope"))
+}
+
 /// Simple role check. The principal must come from authentication.
 pub fn has_role(
   access: Authorization,
@@ -173,7 +318,7 @@ pub fn has_role(
   role: String,
   scope: Scope,
 ) -> service.Result(Bool) {
-  check(access, principal, Role(role), scope)
+  check(access, principal, RoleGrant(role), scope)
 }
 
 /// RBAC permission check. Any currently assigned role may grant a permission.
@@ -188,7 +333,7 @@ pub fn allowed(
 }
 
 type Grant {
-  Role(String)
+  RoleGrant(String)
   Permission(String)
 }
 
@@ -205,7 +350,7 @@ fn check(
       name,
       "permission",
     )
-    Role(name) -> #(
+    RoleGrant(name) -> #(
       "SELECT 1 FROM howdy_authz_assignments a JOIN howdy_auth_users u ON u.id = a.user_id WHERE a.user_id = $1 AND a.scope = $2 AND a.role = $3 AND u.suspended = 0 LIMIT 1",
       name,
       "role",

@@ -4,6 +4,7 @@
 import gleam/option.{type Option}
 import gloo/repo.{type Repo}
 import howdy/auth.{type Auth}
+import howdy/authorization.{type Authorization}
 
 pub type Config {
   Config(
@@ -13,6 +14,7 @@ pub type Config {
     name: String,
     database: Option(Repo),
     identity: Option(Auth),
+    authorization: Option(Authorization),
     /// Exact request hostnames the pages answer.
     hosts: List(String),
   )

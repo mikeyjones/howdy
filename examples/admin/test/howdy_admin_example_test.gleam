@@ -14,14 +14,22 @@ pub fn main() {
 pub fn the_admin_sees_the_notes_table_test() {
   let db = example.open(":memory:")
   let identity = example.identity(db)
+  let permissions = example.permissions(db)
   let app =
-    example.app(db, identity)
-    |> admin.mount(admin.new() |> admin.auth(identity))
+    example.app(db, identity, permissions)
+    |> admin.mount(
+      admin.new() |> admin.auth(identity) |> admin.authorization(permissions),
+    )
   let res =
     testing.get("/_howdy/data")
     |> request.set_host("localhost")
     |> testing.send(app)
   assert res.status == 200
   assert string.contains(testing.text(res), "notes_notes")
+  let res =
+    testing.get("/_howdy/roles")
+    |> request.set_host("localhost")
+    |> testing.send(app)
+  assert string.contains(testing.text(res), "reader")
   let assert Ok(_) = repo.close(db)
 }

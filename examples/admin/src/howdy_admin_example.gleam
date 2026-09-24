@@ -20,9 +20,11 @@ import howdy/auth/pages
 import howdy/auth/routes
 import howdy/auth/secret
 import howdy/auth/user.{type User}
+import howdy/authorization as access
 import howdy/body
 import howdy/controller
 import howdy/database
+import howdy/guard
 import howdy/migration
 import howdy/service
 
@@ -32,7 +34,7 @@ pub fn main() {
   let db = open("admin_example.sqlite")
   let identity = identity(db)
   let assert Ok(_) =
-    app(db, identity)
+    app(db, identity, permissions(db))
     |> howdy.bind(to: "127.0.0.1")
     |> howdy.listening(on: 8787)
     |> howdy.start
@@ -45,8 +47,25 @@ pub fn main() {
 pub fn open(path: String) -> Repo {
   let assert Ok(db) = sqlite.start(sqlite.file(path))
   let assert Ok(Nil) = database.sqlite_defaults(db)
-  let assert Ok(Nil) = migration.run(db, [auth.schema(), schema()])
+  let assert Ok(Nil) =
+    migration.run(db, [auth.schema(), access.schema(), schema()])
   db
+}
+
+/// Roles and permissions, with one role defined so the admin has something
+/// to assign. Assignment is left to the admin: there is no first-user
+/// administrator.
+pub fn permissions(db: Repo) -> access.Authorization {
+  let assert Ok(permissions) = access.new(db)
+  let assert Ok(Nil) =
+    access.define_role(
+      permissions,
+      access.Global,
+      "reader",
+      ["notes.read_all"],
+      by: user.System,
+    )
+  permissions
 }
 
 pub fn identity(db: Repo) -> auth.Auth {
@@ -63,11 +82,24 @@ pub fn identity(db: Repo) -> auth.Auth {
   auth.allow_registration(identity)
 }
 
-pub fn app(db: Repo, identity: auth.Auth) -> howdy.App {
+pub fn app(
+  db: Repo,
+  identity: auth.Auth,
+  permissions: access.Authorization,
+) -> howdy.App {
   let notes =
     controller.guarded("/notes", auth.required(identity))
     |> controller.get("/", fn(ctx) {
       list(db, ctx.guard.user)
+      |> service.respond(ctx, json.array(_, note_to_json))
+    })
+    // Everyone's notes, for a user holding the global `reader` role.
+    |> controller.get("/all", fn(ctx) {
+      use _ <- guard.require(
+        ctx,
+        access.require_permission(permissions, "notes.read_all", access.Global),
+      )
+      list_all(db)
       |> service.respond(ctx, json.array(_, note_to_json))
     })
     |> controller.post("/", fn(ctx) {
@@ -85,7 +117,7 @@ pub fn app(db: Repo, identity: auth.Auth) -> howdy.App {
     |> controller.get("/", fn(ctx) {
       controller.text(
         ctx,
-        "Register at /auth/register, then GET and POST /notes. In development the admin is at /_howdy.",
+        "Register at /auth/register, then GET and POST /notes. /notes/all needs the reader role. In development the admin is at /_howdy.",
       )
     }),
   )
@@ -113,6 +145,16 @@ pub fn list(db: Repo, owner: User) -> service.Result(List(Note)) {
     conn,
     "SELECT id, title, stars FROM notes_notes WHERE user_id = $1 ORDER BY id",
     [sql.string(owner.id)],
+    note_row(),
+  )
+}
+
+pub fn list_all(db: Repo) -> service.Result(List(Note)) {
+  use conn <- database.connect(db)
+  database.query(
+    conn,
+    "SELECT id, title, stars FROM notes_notes ORDER BY id",
+    [],
     note_row(),
   )
 }

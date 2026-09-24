@@ -14,14 +14,16 @@ import howdy_admin_example as example
 pub fn main() -> Nil {
   let db = example.open("admin_example.sqlite")
   let identity = example.identity(db)
+  let permissions = example.permissions(db)
   let dashboard =
     admin.new()
     |> admin.named("Notes admin")
     |> admin.auth(identity)
+    |> admin.authorization(permissions)
 
   let assert Ok(_) =
     dev.start(fn() {
-      example.app(db, identity)
+      example.app(db, identity, permissions)
       |> admin.mount(dashboard)
       |> howdy.listening(on: 8787)
     })

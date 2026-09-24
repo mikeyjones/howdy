@@ -21,10 +21,14 @@ import my_app
 pub fn main() {
   let db = my_app.open_database()
   let identity = my_app.identity(db)
-  let dashboard = admin.new() |> admin.auth(identity)
+  let permissions = my_app.permissions(db)
+  let dashboard =
+    admin.new() |> admin.auth(identity) |> admin.authorization(permissions)
 
   let assert Ok(_) =
-    dev.start(fn() { my_app.app(db, identity) |> admin.mount(dashboard) })
+    dev.start(fn() {
+      my_app.app(db, identity, permissions) |> admin.mount(dashboard)
+    })
   process.sleep_forever()
 }
 ```
@@ -49,6 +53,11 @@ registry of the Repo or `auth.Auth` the app built, so the app hands them over:
   a credential), suspend and resume them, sign them out everywhere, move them
   between groups, and create, rename and delete groups. Registering auth also
   registers its Repo, unless `admin.database` was given another.
+- `admin.authorization(permissions)`: roles in every scope, each with its
+  permissions and who holds it. Define a role (global, or in an organization)
+  with its permissions one per line, replace the list later, assign and revoke
+  it from the role's page or from a user's page, and delete it, which drops
+  its assignments. Needs `auth` too.
 - `admin.at("/somewhere")` moves the pages, and `admin.named` sets the sidebar
   title.
 

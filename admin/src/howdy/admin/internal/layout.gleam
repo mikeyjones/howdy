@@ -58,10 +58,16 @@ fn navigation(config: Config) -> List(app_shell.Group) {
     },
     case config.identity {
       Some(_) -> [
-        Group("Auth", [
-          Link(at("/users"), "Users"),
-          Link(at("/groups"), "Groups"),
-        ]),
+        Group(
+          "Auth",
+          list.append(
+            [Link(at("/users"), "Users"), Link(at("/groups"), "Groups")],
+            case config.authorization {
+              Some(_) -> [Link(at("/roles"), "Roles")]
+              None -> []
+            },
+          ),
+        ),
       ]
       None -> []
     },

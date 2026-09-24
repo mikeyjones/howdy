@@ -7,11 +7,14 @@ development area mounted from `dev/`.
 gleam dev
 ```
 
-Open <http://localhost:8787/_howdy>. The admin shows the app's tables, users
-and groups. Create a user, sign in as them, then `POST /notes` with
+Open <http://localhost:8787/_howdy>. The admin shows the app's tables, users,
+groups and roles. Create a user, sign in as them, then `POST /notes` with
 `{"title": "..."}` and watch the row appear in the `notes_notes` grid
 without a reload. Edit the row in another SQLite client and the grid follows
 within a second.
+
+Give a user the global `reader` role from their page or from **Roles**, sign
+in as them, and `GET /notes/all` answers; without it the route is `403`.
 
 `gleam run` serves the app without hot reload or the admin: both are dev
 dependencies and their entry point lives in `dev/`, which

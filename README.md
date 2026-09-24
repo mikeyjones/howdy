@@ -602,14 +602,16 @@ macOS. Nothing from it reaches a `gleam export erlang-shipment`.
 
 [`howdy_admin`](admin/README.md) is a dev dependency that mounts an admin
 area at `/_howdy` from the same `dev/` entry point: the tables of the app's
-database in a grid that follows changes, and its users and groups, with a
-button to sign in to the app as any of them. The app registers what it has,
+database in a grid that follows changes, its users and groups, and its
+roles and permissions, with a button to sign in to the app as any user. The app registers what it has,
 since Gleam cannot discover packages at runtime:
 
 ```gleam
 dev.start(fn() {
   my_app.app(db, identity)
-  |> admin.mount(admin.new() |> admin.auth(identity))
+  |> admin.mount(
+    admin.new() |> admin.auth(identity) |> admin.authorization(permissions),
+  )
 })
 ```
 

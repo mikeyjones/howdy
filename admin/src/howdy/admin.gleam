@@ -27,6 +27,8 @@
 //// - `auth`: users and groups, creating and suspending users, moving them
 ////   between groups, and signing in to the app as any user. Registering
 ////   auth registers its database too.
+//// - `authorization`: roles and their permissions, and which users hold
+////   them, in every scope.
 ////
 //// ## Development only
 ////
@@ -49,7 +51,9 @@ import howdy/admin/internal/accounts
 import howdy/admin/internal/config.{type Config, Config}
 import howdy/admin/internal/data
 import howdy/admin/internal/overview
+import howdy/admin/internal/roles
 import howdy/auth.{type Auth}
+import howdy/authorization.{type Authorization}
 import howdy/controller.{type Controller}
 import howdy/service
 
@@ -66,6 +70,7 @@ pub fn new() -> Admin {
       name: "Howdy admin",
       database: None,
       identity: None,
+      authorization: None,
       hosts: [
         "localhost",
         "127.0.0.1",
@@ -109,6 +114,12 @@ pub fn auth(admin: Admin, identity: Auth) -> Admin {
   Admin(Config(..admin.config, identity: Some(identity), database:))
 }
 
+/// Manage roles, their permissions and who holds them. Needs `auth` too,
+/// since roles are assigned to users.
+pub fn authorization(admin: Admin, access: Authorization) -> Admin {
+  Admin(Config(..admin.config, authorization: Some(access)))
+}
+
 /// Exact request hostnames (without port) the pages answer, replacing the
 /// loopback names. Anyone who can reach an allowed host owns your data.
 pub fn allow_hosts(admin: Admin, hosts: List(String)) -> Admin {
@@ -138,6 +149,12 @@ pub fn controllers(admin: Admin) -> List(Controller) {
       Some(identity) -> [accounts.controller(config, identity)]
       None -> []
     },
+    case config.identity, config.authorization {
+      Some(identity), Some(access) -> [
+        roles.controller(config, identity, access),
+      ]
+      _, _ -> []
+    },
   ])
   |> list.map(controller.middleware(_, only_hosts(config)))
 }
@@ -161,6 +178,11 @@ pub fn prefix(admin: Admin) -> String {
 /// Whether a database was registered.
 pub fn has_database(admin: Admin) -> Bool {
   option.is_some(admin.config.database)
+}
+
+/// Whether authorization was registered.
+pub fn has_authorization(admin: Admin) -> Bool {
+  option.is_some(admin.config.authorization)
 }
 
 /// Whether auth was registered.

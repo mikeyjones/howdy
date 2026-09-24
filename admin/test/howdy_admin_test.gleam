@@ -15,6 +15,7 @@ import howdy/admin
 import howdy/auth
 import howdy/auth/group
 import howdy/auth/user
+import howdy/authorization
 import howdy/database
 import howdy/migration
 import howdy/testing
@@ -364,4 +365,148 @@ pub fn the_live_grid_serves_a_socket_route_test() {
     |> testing.send(app)
   assert res.status != 404
   let _ = sql.string("unused")
+}
+
+// -- Authorization -----------------------------------------------------------
+
+fn with_authorization(
+  run: fn(Repo, auth.Auth, authorization.Authorization) -> a,
+) -> a {
+  let assert Ok(db) = sqlite.start(sqlite.memory())
+  let assert Ok(Nil) = database.sqlite_defaults(db)
+  let assert Ok(Nil) =
+    migration.run(db, [auth.schema(), authorization.schema(), notes()])
+  let assert Ok(identity) =
+    auth.new_without_email(repo: db, origin: "http://localhost:8787")
+  let assert Ok(access) = authorization.new(db)
+  let value = run(db, identity, access)
+  let assert Ok(_) = repo.close(db)
+  value
+}
+
+pub fn roles_are_hidden_until_authorization_is_registered_test() {
+  use _, identity, access <- with_authorization
+  let without = get(app(admin.auth(_, identity)), "/_howdy")
+  assert !string.contains(without, "/_howdy/roles")
+  let registered =
+    admin.new() |> admin.auth(identity) |> admin.authorization(access)
+  assert admin.has_authorization(registered)
+  let with = get(app(fn(_) { registered }), "/_howdy")
+  assert string.contains(with, "0 roles")
+  assert string.contains(with, "/_howdy/roles")
+}
+
+pub fn defines_lists_edits_and_deletes_roles_test() {
+  use db, identity, access <- with_authorization
+  let app =
+    app(fn(a) { a |> admin.auth(identity) |> admin.authorization(access) })
+  assert string.contains(get(app, "/_howdy/roles"), "No roles yet")
+
+  let location =
+    post(app, "/_howdy/roles", [
+      #("name", "editor"),
+      #("organization", "acme"),
+      #("permissions", "invoices.read\ninvoices.write, invoices.read\n\n"),
+    ])
+  assert location == "/_howdy/roles/role?scope=org%3Aacme&name=editor"
+  let _ =
+    post(app, "/_howdy/roles", [#("name", "admin"), #("organization", "")])
+  assert authorization.roles(access)
+    == Ok([
+      authorization.Role(authorization.Global, "admin", []),
+      authorization.Role(authorization.Organization("acme"), "editor", [
+        "invoices.read",
+        "invoices.write",
+      ]),
+    ])
+  let index = get(app, "/_howdy/roles")
+  assert string.contains(index, "editor")
+  assert string.contains(index, "org acme")
+  assert string.contains(index, "invoices.write")
+
+  let page = get(app, location)
+  assert string.contains(page, "invoices.read\ninvoices.write")
+  assert string.contains(page, "Nobody holds this role")
+  let _ = post(app, location, [#("permissions", "invoices.read")])
+  assert count(
+      db,
+      "SELECT COUNT(*) FROM howdy_authz_permissions WHERE role = 'editor'",
+    )
+    == 1
+
+  let deleted =
+    post(app, "/_howdy/roles/role/delete?scope=org%3Aacme&name=editor", [])
+  assert deleted == "/_howdy/roles"
+  assert count(db, "SELECT COUNT(*) FROM howdy_authz_roles") == 1
+
+  // A missing or malformed role is reported, not crashed on.
+  let res =
+    testing.get("/_howdy/roles/role?scope=org%3A&name=editor")
+    |> request.set_host("localhost")
+    |> testing.send(app)
+  assert string.contains(testing.text(res), "Not found")
+  let res =
+    testing.post_form("/_howdy/roles", [#("name", ""), #("organization", "")])
+    |> request.set_host("localhost")
+    |> testing.send(app)
+  assert res.status == 200
+  assert string.contains(testing.text(res), "nonempty")
+}
+
+pub fn assigns_and_revokes_roles_from_both_sides_test() {
+  use _, identity, access <- with_authorization
+  let app =
+    app(fn(a) { a |> admin.auth(identity) |> admin.authorization(access) })
+  let assert "/_howdy/users/" <> id =
+    post(app, "/_howdy/users", [#("email", "ada@example.com")])
+  let _ =
+    post(app, "/_howdy/roles", [#("name", "admin"), #("organization", "")])
+  let _ =
+    post(app, "/_howdy/roles", [#("name", "editor"), #("organization", "acme")])
+  let role = "/_howdy/roles/role?scope=global&name=admin"
+
+  // From the role page: the user is offered, assigned, then listed.
+  let page = get(app, role)
+  assert string.contains(page, "ada@example.com")
+  assert string.contains(page, "Nobody holds this role")
+  let _ =
+    post(app, "/_howdy/roles/role/assign?scope=global&name=admin", [
+      #("user", id),
+    ])
+  assert authorization.assignments(access, id)
+    == Ok([#(authorization.Global, "admin")])
+  let page = get(app, role)
+  assert !string.contains(page, "Nobody holds this role")
+  assert string.contains(page, "Revoke")
+
+  // From the user page: the held role shows, the other is offered.
+  let page = get(app, "/_howdy/users/" <> id)
+  assert string.contains(page, "global\tadmin")
+  assert string.contains(page, "org:acme\teditor")
+  let _ =
+    post(app, "/_howdy/users/" <> id <> "/roles/assign", [
+      #("role", "org:acme\teditor"),
+    ])
+  assert authorization.assignments(access, id)
+    == Ok([
+      #(authorization.Global, "admin"),
+      #(authorization.Organization("acme"), "editor"),
+    ])
+  let _ =
+    post(app, "/_howdy/users/" <> id <> "/roles/revoke", [
+      #("role", "global\tadmin"),
+    ])
+  let _ =
+    post(app, "/_howdy/roles/role/revoke?scope=org%3Aacme&name=editor", [
+      #("user", id),
+    ])
+  assert authorization.assignments(access, id) == Ok([])
+
+  let res =
+    testing.post_form("/_howdy/users/" <> id <> "/roles/assign", [
+      #("role", "nonsense"),
+    ])
+    |> request.set_host("localhost")
+    |> testing.send(app)
+  assert string.contains(testing.text(res), "choose a role")
 }
