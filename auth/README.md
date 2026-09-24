@@ -1661,6 +1661,11 @@ permissions, `authorization.assignments` the roles a user holds,
 `role.deleted`). `scope_to_string` and `scope_from_string` round-trip a
 scope as `global` or `org:<id>`.
 
+`auth.sessions_of(identity, user_id)` lists a user's live sessions for an
+operator, with no session marked current, and
+`auth.revoke_session_of(identity, user_id, session_id, by:)` ends one of them,
+recorded as `session.revoked` with the actor. Both are privileged.
+
 `auth.impersonate(identity, user_id, by:)` issues a session for a user without
 a credential, for an operator console or the [`howdy_admin`](../admin/README.md)
 development area. The session's method is `auth.Impersonation` and the event

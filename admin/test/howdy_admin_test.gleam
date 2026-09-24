@@ -4,6 +4,7 @@
 import gleam/dynamic/decode
 import gleam/http/request
 import gleam/list
+import gleam/result
 import gleam/string
 import gleeunit
 import gloo/adapter/sqlite
@@ -14,6 +15,7 @@ import howdy
 import howdy/admin
 import howdy/auth
 import howdy/auth/group
+import howdy/auth/secret
 import howdy/auth/user
 import howdy/authorization
 import howdy/database
@@ -509,4 +511,39 @@ pub fn assigns_and_revokes_roles_from_both_sides_test() {
     |> request.set_host("localhost")
     |> testing.send(app)
   assert string.contains(testing.text(res), "choose a role")
+}
+
+// -- Sessions ----------------------------------------------------------------
+
+pub fn lists_and_revokes_a_users_sessions_test() {
+  use _, identity <- with_auth
+  let app = app(admin.auth(_, identity))
+  let assert "/_howdy/users/" <> id =
+    post(app, "/_howdy/users", [#("email", "ada@example.com")])
+  assert string.contains(
+    get(app, "/_howdy/users/" <> id),
+    "Not signed in anywhere",
+  )
+
+  let assert Ok(first) = auth.impersonate(identity, id, by: user.System)
+  let assert Ok(second) = auth.impersonate(identity, id, by: user.System)
+  let page = get(app, "/_howdy/users/" <> id)
+  assert string.contains(page, "2 live sessions")
+  assert string.contains(page, "impersonation")
+  let assert Ok([newest, ..]) = auth.sessions_of(identity, id)
+
+  let _ =
+    post(app, "/_howdy/users/" <> id <> "/sessions/revoke", [
+      #("session", newest.id),
+    ])
+  let assert Ok(remaining) = auth.sessions_of(identity, id)
+  assert list.length(remaining) == 1
+  // One of the two tokens still authenticates, the other does not.
+  let alive =
+    [first, second]
+    |> list.filter(fn(session) {
+      auth.authenticate(identity, secret.reveal(session.token)) |> result.is_ok
+    })
+  assert list.length(alive) == 1
+  assert string.contains(get(app, "/_howdy/users/" <> id), "1 live session")
 }

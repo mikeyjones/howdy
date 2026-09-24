@@ -50,8 +50,10 @@ registry of the Repo or `auth.Auth` the app built, so the app hands them over:
   row is addressed by its primary key, or by `rowid` (SQLite) or `ctid`
   (PostgreSQL) when the table has none.
 - `admin.auth(identity)`: users and groups. Create a user (provisioned without
-  a credential), suspend and resume them, sign them out everywhere, move them
-  between groups, and create, rename and delete groups. Registering auth also
+  a credential), suspend and resume them, see their live sessions (method,
+  when they signed in, last seen, expiry and client) and revoke any one of
+  them or all at once, move them between groups, and create, rename and
+  delete groups. Registering auth also
   registers its Repo, unless `admin.database` was given another.
 - `admin.authorization(permissions)`: roles in every scope, each with its
   permissions and who holds it. Define a role (global, or in an organization)

@@ -59,6 +59,9 @@ pub fn controller(config: Config, identity: Auth) -> Controller {
   |> controller.post("/users/:id/impersonate", fn(ctx) {
     impersonate(config, identity, ctx)
   })
+  |> controller.post("/users/:id/sessions/revoke", fn(ctx) {
+    session_revoke(config, identity, ctx)
+  })
   |> controller.post("/users/:id/roles/assign", fn(ctx) {
     role_change(config, ctx, fn(access, id, scope, role) {
       authorization.assign(access, id, role, scope, by: actor)
@@ -218,11 +221,12 @@ fn user_show(
       }
       None -> Ok(None)
     })
-    Ok(#(user, suspended, field.to_list(fields), groups, held))
+    use sessions <- result.try(auth.sessions_of(identity, id))
+    Ok(#(user, suspended, field.to_list(fields), groups, held, sessions))
   }
   case found {
     Error(error) -> failure(config, ctx, "/users", "User", error)
-    Ok(#(user, suspended, fields, groups, held)) -> {
+    Ok(#(user, suspended, fields, groups, held, sessions)) -> {
       let action = fn(name, variant, label) {
         html.form(
           [
@@ -281,6 +285,7 @@ fn user_show(
                 ui.card_content([], [facts(fields)]),
               ])
           },
+          sessions_card(config, id, sessions),
           case held {
             None -> element.none()
             Some(#(assignments, roles)) ->
@@ -353,6 +358,110 @@ fn impersonate(
   case auth.impersonate(identity, id, by: actor) {
     Ok(session) ->
       routes.signed_in(identity, ctx, layout.redirect("/"), session)
+    Error(error) -> failure(config, ctx, "/users", "User", error)
+  }
+}
+
+/// The user's live sessions, newest first, each with a revoke button.
+fn sessions_card(
+  config: Config,
+  id: String,
+  sessions: List(auth.SessionInfo),
+) -> Element(msg) {
+  ui.card([], [
+    ui.card_header([], [
+      ui.card_title([text("Sessions")]),
+      ui.card_description([
+        text(describe(list.length(sessions), "live session")),
+      ]),
+    ]),
+    ui.card_content([], [
+      case sessions {
+        [] -> ui.p([ui.muted("Not signed in anywhere.")])
+        _ ->
+          ui.table([], [
+            ui.table_header([], [
+              ui.table_row([], [
+                ui.table_head([], [text("Method")]),
+                ui.table_head([], [text("Signed in")]),
+                ui.table_head([], [text("Last seen")]),
+                ui.table_head([], [text("Expires")]),
+                ui.table_head([], [text("Client")]),
+                ui.table_head([], [text("")]),
+              ]),
+            ]),
+            ui.table_body(
+              [],
+              list.map(sessions, fn(session) {
+                ui.table_row([], [
+                  ui.table_cell([], [method_badge(session.method)]),
+                  ui.table_cell([], [text(at(session.created_at))]),
+                  ui.table_cell([], [text(at(session.last_seen_at))]),
+                  ui.table_cell([], [text(at(session.expires_at))]),
+                  ui.table_cell([], [
+                    case session.client {
+                      "" -> ui.muted("unknown")
+                      client -> text(client)
+                    },
+                  ]),
+                  ui.table_cell([], [
+                    html.form(
+                      [
+                        attribute.method("post"),
+                        attribute.action(
+                          user_path(config, id) <> "/sessions/revoke",
+                        ),
+                      ],
+                      [
+                        html.input([
+                          attribute.type_("hidden"),
+                          attribute.name("session"),
+                          attribute.value(session.id),
+                        ]),
+                        ui.sized_button(
+                          button.Ghost,
+                          button.Small,
+                          [attribute.type_("submit")],
+                          [text("Revoke")],
+                        ),
+                      ],
+                    ),
+                  ]),
+                ])
+              }),
+            ),
+          ])
+      },
+    ]),
+  ])
+}
+
+fn method_badge(method: auth.Method) -> Element(msg) {
+  case method {
+    auth.EmailToken -> ui.badge(badge.Outline, [], [text("email token")])
+    auth.Password -> ui.badge(badge.Outline, [], [text("password")])
+    auth.Passkey -> ui.badge(badge.Outline, [], [text("passkey")])
+    auth.Provider(id) -> ui.badge(badge.Outline, [], [text("provider " <> id)])
+    auth.Impersonation -> ui.badge(badge.Primary, [], [text("impersonation")])
+  }
+}
+
+/// Unix seconds as a timestamp.
+fn at(seconds: Int) -> String {
+  when(timestamp.from_unix_seconds(seconds))
+}
+
+fn session_revoke(
+  config: Config,
+  identity: Auth,
+  ctx: Context,
+) -> Response(ewe.Body) {
+  let id = result.unwrap(controller.param(ctx, "id"), "")
+  use form <- form.read(ctx)
+  case
+    auth.revoke_session_of(identity, id, form.value(form, "session"), by: actor)
+  {
+    Ok(Nil) -> layout.redirect(user_path(config, id))
     Error(error) -> failure(config, ctx, "/users", "User", error)
   }
 }

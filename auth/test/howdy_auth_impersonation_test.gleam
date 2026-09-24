@@ -2,6 +2,7 @@
 //// session for a user without a credential.
 
 import gleam/list
+import gleam/string
 import howdy/auth
 import howdy/auth/secret
 import howdy/auth/user
@@ -49,4 +50,53 @@ pub fn users_are_listed_with_their_suspension_test() {
   let assert Ok(Nil) = auth.suspend(identity, grace.user.id, by: user.System)
   assert users.suspended(identity, grace.user.id) == Ok(True)
   assert users.suspended(identity, "nobody") == Error(service.NotFound("user"))
+}
+
+pub fn operators_list_and_revoke_a_users_sessions_test() {
+  use database, identity, _, mailbox <- fixture
+  let ada = signup(identity, mailbox, "ada@example.com")
+  let grace = signup(identity, mailbox, "grace@example.com")
+  let assert Ok(other) =
+    auth.impersonate(identity, ada.user.id, by: user.SystemFrom("admin"))
+  let assert Ok(listed) = auth.sessions_of(identity, ada.user.id)
+  assert list.length(listed) == 2
+  assert list.all(listed, fn(s) { !s.current })
+  // Both were created in the same second, so their order is by digest.
+  assert list.sort(
+      list.map(listed, fn(s) { string.inspect(s.method) }),
+      string.compare,
+    )
+    == ["EmailToken", "Impersonation"]
+  let assert [impersonated] =
+    list.filter(listed, fn(s) { s.method == auth.Impersonation })
+
+  // Grace's session cannot be revoked through Ada's id.
+  let assert Ok(grace_principal) =
+    auth.authenticate(identity, secret.reveal(grace.token))
+  let assert Ok(Nil) =
+    auth.revoke_session_of(
+      identity,
+      ada.user.id,
+      grace_principal.session_id,
+      by: user.SystemFrom("admin"),
+    )
+  let assert Ok(_) = auth.authenticate(identity, secret.reveal(grace.token))
+
+  let assert Ok(Nil) =
+    auth.revoke_session_of(
+      identity,
+      ada.user.id,
+      impersonated.id,
+      by: user.SystemFrom("admin"),
+    )
+  assert auth.authenticate(identity, secret.reveal(other.token))
+    == Error(service.Unauthorized)
+  let assert Ok(_) = auth.authenticate(identity, secret.reveal(ada.token))
+  assert auth.revoke_session_of(identity, "nobody", "x", by: user.System)
+    == Error(service.NotFound("user"))
+  assert count(
+      database,
+      "SELECT COUNT(*) FROM howdy_auth_events WHERE action = 'session.revoked' AND client = 'admin'",
+    )
+    == 2
 }

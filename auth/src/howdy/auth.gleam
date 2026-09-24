@@ -1840,14 +1840,29 @@ pub fn sessions(
   auth: Auth,
   principal: Principal,
 ) -> service.Result(List(SessionInfo)) {
+  use listed <- result.try(sessions_of(auth, principal.user.id))
+  Ok(
+    list.map(listed, fn(session) {
+      SessionInfo(..session, current: session.id == principal.session_id)
+    }),
+  )
+}
+
+/// A user's live sessions, newest first, for operators and management
+/// consoles. Privileged: authorize the caller first. No session is marked
+/// `current`, since the caller is not the user.
+pub fn sessions_of(
+  auth: Auth,
+  user_id: String,
+) -> service.Result(List(SessionInfo)) {
   let now = token.now()
   use rows <- result.try(case auth.sessions {
     InDatabase ->
-      db.connect(auth.repo, store.sessions_for_user(_, principal.user.id, now))
+      db.connect(auth.repo, store.sessions_for_user(_, user_id, now))
     External(external) -> {
-      use entries <- result.try(external.list(principal.user.id))
+      use entries <- result.try(external.list(user_id))
       use version <- result.try(
-        db.connect(auth.repo, account_store.version(_, principal.user.id)),
+        db.connect(auth.repo, account_store.version(_, user_id)),
       )
       entries
       |> list.filter(fn(entry) {
@@ -1878,11 +1893,28 @@ pub fn sessions(
         created_at: row.created_at,
         last_seen_at: row.last_seen_at,
         expires_at: row.expires_at,
-        current: row.digest == principal.session_id,
+        current: False,
         client: row.client,
       )
     }),
   )
+}
+
+/// Revoke one of a user's sessions by `SessionInfo.id`, as an operator.
+/// Privileged: authorize the caller first. An unknown id is not an error.
+pub fn revoke_session_of(
+  auth: Auth,
+  user_id: String,
+  session_id: String,
+  by actor: Actor,
+) -> service.Result(Nil) {
+  use _ <- result.try(
+    externally(auth, fn(external) { external.delete(session_id, user_id) }),
+  )
+  use conn <- db.transaction(auth.repo)
+  use _ <- result.try(store.require_user(conn, user_id))
+  use _ <- result.try(store.delete_session(conn, session_id, user_id))
+  event(conn, user_id, "session.revoked", actor, "")
 }
 
 /// Revoke one of the caller's own sessions by `SessionInfo.id`. Another
