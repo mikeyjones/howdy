@@ -12,15 +12,21 @@ Open <http://localhost:8791>.
   cookie, stat cards, a bar and an area chart, and a live orders table you
   can sort, filter by status and due date, select, mark paid and page
   through. Marking orders paid shows a toast.
+- **Chat** (`/chat`): a live view with a bot whose replies stream in a
+  word at a time. The conversation stays on the newest line while a reply
+  grows, and keeps its place if you scroll back.
 - **Components** (`/components`): a line chart, a data table sorted with
   plain links, pagination, a calendar inside an ordinary form, a command
   menu, and a toast that stays until it is closed.
 - **Sign in** and **Sign up** (`/sign-in`, `/sign-up`): centred forms. Sign
   up validates on the server and shows each problem beside its field.
 
+- **howdy_ui reference** (`/ui`): every component, block and theme preset,
+  with examples and their code, mounted with `gallery.controller`.
+
 Press ⌘K or Ctrl+K anywhere in the app to search its pages.
 
-`src/howdy_gallery/blocks.gleam` holds the screens as functions: the
-application shell, stat cards and the authentication cards. They are plain
-compositions of howdy_ui components, meant to be copied into your app and
-changed. `src/howdy_gallery/orders.gleam` is the live view.
+The screens use howdy_ui's blocks: `app_shell`, `stat_card`, `sign_in` and
+`sign_up`. `gleam run -m howdy/ui add sign_up` copies one into a project
+with the components it uses. `src/howdy_gallery/orders.gleam` and
+`src/howdy_gallery/chat.gleam` are the live views.

@@ -10,7 +10,15 @@ pub fn main() -> Nil {
 }
 
 pub fn every_page_renders_test() {
-  use path <- list.each(["/", "/components", "/sign-in", "/sign-up"])
+  use path <- list.each([
+    "/",
+    "/chat",
+    "/components",
+    "/sign-in",
+    "/sign-up",
+    "/ui",
+    "/ui/chat",
+  ])
   let res = testing.get(path) |> testing.send(howdy_gallery.app())
   assert res.status == 200
   assert string.contains(testing.text(res), "window.howdyBehaviour")
@@ -65,4 +73,13 @@ pub fn components_sort_with_links_test() {
   let assert Ok(#(_, rest)) = string.split_once(html, "Umbrella")
   assert string.contains(rest, "Globex")
   assert string.contains(html, "aria-sort=\"descending\"")
+}
+
+pub fn the_chat_view_offers_a_composer_test() {
+  let html =
+    testing.get("/chat")
+    |> testing.send(howdy_gallery.app())
+    |> testing.text
+  assert string.contains(html, "lustre-server-component")
+  assert string.contains(html, "route=\"/live/chat\"")
 }

@@ -72,19 +72,28 @@ import argv
 import gleam/http/request
 import gleam/http/response
 import gleam/list
+import gleam/option
 import howdy/controller.{type Controller}
 import howdy/ui/accordion
 import howdy/ui/alert
+import howdy/ui/attachment
+import howdy/ui/avatar
 import howdy/ui/badge
+import howdy/ui/blocks/app_shell
+import howdy/ui/blocks/sign_in
+import howdy/ui/blocks/sign_up
+import howdy/ui/blocks/stat_card
 import howdy/ui/button
 import howdy/ui/calendar
 import howdy/ui/card
 import howdy/ui/chart
+import howdy/ui/chat
 import howdy/ui/checkbox
 import howdy/ui/cli
 import howdy/ui/command
 import howdy/ui/data_table
 import howdy/ui/dialog
+import howdy/ui/effects
 import howdy/ui/field
 import howdy/ui/heading
 import howdy/ui/input
@@ -94,6 +103,7 @@ import howdy/ui/loading
 import howdy/ui/menu
 import howdy/ui/pagination
 import howdy/ui/popover
+import howdy/ui/progress
 import howdy/ui/select
 import howdy/ui/sidebar
 import howdy/ui/style
@@ -107,7 +117,7 @@ import lustre/attribute.{type Attribute}
 import lustre/element.{type Element}
 import sketch/css.{type Class}
 
-/// The command line: `gleam run -m howdy/ui list|add|diff`.
+/// The command line: `gleam run -m howdy/ui list|search|view|add|diff|init|registry`.
 pub fn main() -> Nil {
   cli.run(argv.load().arguments)
 }
@@ -155,6 +165,15 @@ pub fn classes() -> List(Class) {
     command.classes(),
     data_table.classes(),
     chart.classes(),
+    avatar.classes(),
+    progress.classes(),
+    effects.classes(),
+    chat.classes(),
+    attachment.classes(),
+    app_shell.classes(),
+    stat_card.classes(),
+    sign_in.classes(),
+    sign_up.classes(),
   ])
 }
 
@@ -830,4 +849,73 @@ pub fn combobox_option(
   children children: List(Element(msg)),
 ) -> Element(msg) {
   command.option(value, selected:, children:)
+}
+
+/// See `howdy/ui/avatar`.
+pub fn avatar(
+  src src: String,
+  alt alt: String,
+  initials initials: String,
+) -> Element(msg) {
+  avatar.avatar(src:, alt:, initials:)
+}
+
+pub fn avatar_initials(initials: String) -> Element(msg) {
+  avatar.initials(initials)
+}
+
+/// See `howdy/ui/progress`.
+pub fn progress(
+  label label: String,
+  value value: Int,
+  max max: Int,
+) -> Element(msg) {
+  progress.progress(label:, value:, max:)
+}
+
+/// See `howdy/ui/effects`.
+pub fn scroll_fade() -> Attribute(msg) {
+  effects.scroll_fade()
+}
+
+pub fn shimmer(children: List(Element(msg))) -> Element(msg) {
+  effects.shimmer(children)
+}
+
+/// See `howdy/ui/chat`.
+pub fn chat_conversation(
+  attributes: List(Attribute(msg)),
+  children: List(Element(msg)),
+) -> Element(msg) {
+  chat.conversation(attributes, children)
+}
+
+pub fn chat_message(
+  side: chat.Side,
+  avatar avatar_element: Element(msg),
+  header header: List(Element(msg)),
+  content content: List(Element(msg)),
+) -> Element(msg) {
+  chat.message(side, avatar: avatar_element, header:, content:)
+}
+
+pub fn chat_bubble(
+  side: chat.Side,
+  children: List(Element(msg)),
+) -> Element(msg) {
+  chat.bubble(side, children)
+}
+
+pub fn chat_note(children: List(Element(msg))) -> Element(msg) {
+  chat.note(children)
+}
+
+/// See `howdy/ui/attachment`.
+pub fn attachment(
+  name name: String,
+  detail detail: String,
+  uploaded uploaded: option.Option(Int),
+  actions actions: List(Element(msg)),
+) -> Element(msg) {
+  attachment.attachment(name:, detail:, uploaded:, actions:)
 }

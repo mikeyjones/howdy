@@ -1,20 +1,45 @@
+import gleam/json
 import gleam/list
 import gleam/string
 import howdy/ui/cli
+import howdy/ui/registry
 import simplifile
+
+const root = "build/cli_test"
 
 const dir = "build/cli_test/src/demo/ui"
 
 fn reset() -> Nil {
-  let _ = simplifile.delete("build/cli_test")
+  let _ = simplifile.delete(root)
   Nil
 }
 
-pub fn list_shows_every_component_with_a_summary_test() {
+pub fn list_shows_every_entry_by_category_test() {
   let assert Ok(output) = cli.execute(["list"])
-  use name <- list.each(cli.components)
-  assert string.contains(output, name)
+  use entry <- list.each(registry.entries())
+  assert string.contains(output, "  " <> entry.name <> " ")
+  assert string.contains(output, entry.category <> "\n")
   assert string.contains(output, "Buttons, and the theme toggle built on them.")
+}
+
+pub fn search_finds_by_description_and_category_test() {
+  let assert Ok(output) = cli.execute(["search", "sign"])
+  assert string.contains(output, "sign_in")
+  assert string.contains(output, "sign_up")
+  assert !string.contains(output, "button ")
+  let assert Ok(output) = cli.execute(["search", "themes", "violet"])
+  assert string.contains(output, "violet")
+  let assert Ok(output) = cli.execute(["search", "zebra"])
+  assert output == "nothing matches zebra"
+}
+
+pub fn view_shows_dependencies_and_source_test() {
+  let assert Ok(output) = cli.execute(["view", "sign_in", "--to=" <> dir])
+  assert string.contains(output, "sign_in (block, Blocks)")
+  assert string.contains(output, "depends on: alert, button, card, checkbox")
+  assert string.contains(output, "packages:   lustre, sketch")
+  assert string.contains(output, "adds:       " <> dir <> "/sign_in.gleam")
+  assert string.contains(output, "pub fn sign_in(")
 }
 
 pub fn add_copies_the_shipped_module_with_a_header_test() {
@@ -32,6 +57,49 @@ pub fn add_copies_the_shipped_module_with_a_header_test() {
   // The copy only depends on the package's core modules, never on itself.
   assert string.contains(copy, "import howdy/ui/style.{class}")
   assert !string.contains(copy, "import howdy/ui\n")
+}
+
+pub fn add_brings_a_blocks_components_and_points_it_at_them_test() {
+  reset()
+  let assert Ok(output) = cli.execute(["add", "sign_in", "--to=" <> dir])
+  // Dependencies first, then the block.
+  use name <- list.each(["alert", "button", "card", "field", "input", "sign_in"])
+  assert string.contains(output, "wrote " <> dir <> "/" <> name <> ".gleam")
+  let assert Ok(block) = simplifile.read(dir <> "/sign_in.gleam")
+  assert string.contains(block, "import demo/ui/button\n")
+  assert string.contains(block, "import demo/ui/card\n")
+  assert !string.contains(block, "import howdy/ui/button")
+  // Core modules stay where they are.
+  assert string.contains(block, "import howdy/ui/style.{class}")
+  let assert Ok(index) = simplifile.read(dir <> "/all.gleam")
+  assert string.contains(index, "sign_in.classes()")
+  assert string.contains(index, "button.classes()")
+}
+
+pub fn add_keeps_an_edited_dependency_test() {
+  reset()
+  let assert Ok(_) = cli.execute(["add", "button", "--to=" <> dir])
+  let path = dir <> "/button.gleam"
+  let assert Ok(copy) = simplifile.read(path)
+  let assert Ok(Nil) = simplifile.write(path, copy <> "\n// mine\n")
+  let assert Ok(output) = cli.execute(["add", "stat_card", "--to=" <> dir])
+  assert !string.contains(output, path <> " exists and differs; kept")
+  let assert Ok(output) = cli.execute(["add", "sign_in", "--to=" <> dir])
+  assert string.contains(
+    output,
+    path <> " exists and differs; kept your version",
+  )
+  let assert Ok(still) = simplifile.read(path)
+  assert string.ends_with(still, "// mine\n")
+}
+
+pub fn dry_runs_change_nothing_test() {
+  reset()
+  let assert Ok(output) =
+    cli.execute(["add", "sign_up", "--to=" <> dir, "--dry-run"])
+  assert string.contains(output, "would write " <> dir <> "/select.gleam")
+  assert string.contains(output, "would write " <> dir <> "/sign_up.gleam")
+  assert simplifile.is_directory(dir) != Ok(True)
 }
 
 pub fn add_regenerates_the_all_module_test() {
@@ -117,8 +185,57 @@ pub fn diff_reports_matching_missing_and_changed_copies_test() {
   let assert Ok(output) = cli.execute(["diff", "input", "--to=" <> dir])
   assert string.contains(output, "--- " <> path)
   assert string.contains(output, "+    css.display(\"block\"),")
-  assert string.contains(output, "     css.width(percent(100)),")
   assert string.contains(output, "...")
+}
+
+pub fn init_prepares_a_directory_and_a_theme_test() {
+  reset()
+  let assert Ok(output) = cli.execute(["init", "--to=" <> dir, "--theme=rose"])
+  assert string.contains(output, "created " <> dir)
+  assert string.contains(output, "wrote " <> dir <> "/rose.gleam")
+  assert string.contains(output, "page.themes(demo/ui/rose.themes())")
+  let assert Ok(theme) = simplifile.read(dir <> "/rose.gleam")
+  assert string.contains(theme, "pub fn themes() -> Themes")
+  let assert Ok(_) = simplifile.read(dir <> "/all.gleam")
+}
+
+pub fn a_published_registry_installs_like_the_built_in_one_test() {
+  reset()
+  let out = root <> "/registry"
+  let assert Ok(output) = cli.execute(["registry", "--out=" <> out])
+  assert string.contains(output, "index.json, llms.txt")
+  let assert Ok(llms) = simplifile.read(out <> "/llms.txt")
+  assert string.contains(llms, "# howdy_ui " <> cli.version)
+  assert string.contains(llms, "- [button](button.json): ")
+
+  // A registry of your own: an entry that depends on a built-in one.
+  let own =
+    cli.Item(
+      name: "hello",
+      kind: "block",
+      category: "Mine",
+      description: "Says hello.",
+      module: "acme/hello",
+      source: "//// Says hello.\n\nimport howdy/ui/button\n\npub fn classes() { [] }\n",
+      dependencies: ["button"],
+      packages: ["lustre"],
+      origin: "",
+    )
+  let assert Ok(Nil) =
+    simplifile.write(out <> "/hello.json", cli.item_json(own) |> json.to_string)
+  let assert Ok(output) =
+    cli.execute(["add", "hello", "--to=" <> dir, "--registry=" <> out])
+  assert string.contains(output, "wrote " <> dir <> "/button.gleam")
+  assert string.contains(output, "wrote " <> dir <> "/hello.gleam")
+  let assert Ok(copy) = simplifile.read(dir <> "/hello.gleam")
+  assert string.starts_with(
+    copy,
+    "//// Generated by " <> out <> " from `acme/hello`.",
+  )
+  assert string.contains(copy, "import demo/ui/button\n")
+
+  let assert Ok(listed) = cli.execute(["list", "--registry=" <> out])
+  assert string.contains(listed, "sign_in")
 }
 
 pub fn add_points_out_missing_direct_dependencies_test() {
@@ -130,11 +247,14 @@ pub fn add_points_out_missing_direct_dependencies_test() {
 
 pub fn bad_input_is_explained_test() {
   let assert Error(message) = cli.execute(["add"])
-  assert string.contains(message, "give at least one component name")
-  let assert Error(message) = cli.execute(["add", "modal"])
-  assert string.contains(message, "unknown component modal")
+  assert string.contains(message, "give at least one name")
+  let assert Error(message) = cli.execute(["add", "modal", "--to=" <> dir])
+  assert string.contains(message, "unknown name modal")
   let assert Error(message) = cli.execute(["add", "button", "--wat"])
   assert string.contains(message, "unknown option --wat")
   let assert Error(message) = cli.execute([])
   assert string.contains(message, "usage:")
+  let assert Error(message) =
+    cli.execute(["add", "x", "--to=" <> dir, "--registry=build/nowhere"])
+  assert string.contains(message, "could not read build/nowhere/x.json")
 }

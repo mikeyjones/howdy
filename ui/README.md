@@ -99,6 +99,24 @@ Adding a field to `Colors`, `Font` or `Radius` is a compile error until every
 theme supplies it. A test in this package checks every token in
 `howdy/ui/theme/tokens` is defined by every built-in theme.
 
+### Presets
+
+`howdy/ui/themes` has five presets, each a light and a dark theme: `zinc`
+and `stone` (neutral and warm greys with a near-black primary), and `rose`,
+`green` and `violet`. Every text colour in every theme, built-in or preset,
+meets WCAG AA contrast against the surfaces it sits on, and focus rings
+3:1 against the page; a test checks it. Chart colours are checked for
+colour-vision-deficiency separation against each theme's surfaces.
+
+```gleam
+import howdy/ui/themes/violet
+
+page.new("Orders")
+|> page.themes(violet.themes())
+```
+
+`gleam run -m howdy/ui add violet` copies one to adjust.
+
 `ui.theme_toggle` renders a button that switches the document between two
 named themes in place and stores the choice in a `theme` cookie:
 
@@ -138,6 +156,11 @@ re-exports them. Every one is a Sketch class built from tokens.
 | `calendar` | `calendar.new(...)` built up with `selected`, `today`, `disabled`, `navigation` and `name`, shown with `view` or as a date `picker` |
 | `data_table` | `data_table.new(columns, rows)` with `sort`, `selectable`, `empty` and `caption` |
 | `chart` | `chart.bar`, `chart.line` and `chart.area`, shown with `view` |
+| `avatar` | `avatar` with initials behind the picture, `avatar_initials` |
+| `progress` | `progress` |
+| `effects` | `scroll_fade`, `shimmer` |
+| `chat` | `chat_conversation`, `chat_message`, `chat_bubble`, `chat_note`; `chat.reactions`, `chat.reaction` |
+| `attachment` | `attachment`, with an optional upload bar |
 
 `calendar`, `data_table` and `chart` are builders with several options, so
 use them from their own modules rather than through `howdy/ui`.
@@ -212,43 +235,96 @@ no value depends on colour or a mouse. None of it needs a script.
 
 ### Blocks
 
-`examples/gallery` builds whole screens from these components: a dashboard
-with a collapsible sidebar, stat cards, charts and a live orders table, a
-page of components, and sign-in and sign-up screens with validation. Its
-`blocks` module is meant to be copied.
+Blocks are whole screens and cards built from the components:
+`howdy/ui/blocks/app_shell` (a sidebar, a top bar and the page),
+`stat_card`, `sign_in` and `sign_up`. Use them from the package, or copy
+one with `add` to make it your own; see below.
+
+`examples/gallery` builds an application from them: a dashboard with
+charts and a live orders table, a live chat whose replies stream in, and
+sign-in and sign-up screens with server-side validation.
+
+### Chat
+
+`howdy/ui/chat` lays a conversation out from the bottom, so it stays on the
+newest message as messages arrive or a reply streams in, and keeps its
+place when you scroll back to read; the browser does this, with no script.
+It is a `log` for screen readers. Pair it with `avatar`, `attachment` and
+`shimmer` for a reply being written.
+
+### The gallery
+
+`howdy/ui/gallery` is a browsable reference of everything here: each
+component, block and theme preset, its examples drawn beside the code that
+drew them, the command that copies it, and its full source. Mount it in
+development:
+
+```gleam
+howdy.new()
+|> howdy.controller(gallery.controller(at: "/ui"))
+```
+
+A menu redraws the gallery in any theme preset, and a toggle switches light
+and dark.
 
 ### Making a component your own
 
 Copy a component into your project and edit it, the way shadcn does:
 
 ```sh
+gleam run -m howdy/ui init --theme=zinc
 gleam run -m howdy/ui list
 gleam run -m howdy/ui add button layout
 ```
 
-`add` writes `src/<app>/ui/button.gleam` and `layout.gleam`: the same
-source the package ships, with a header noting the version it came from.
-They depend only on the package's core modules, so you can change anything
-in them. Use `--to=<dir>` to put them elsewhere and `--force` to overwrite a
-copy you have edited.
+- `init` makes `src/<app>/ui`, writes `all.gleam` there, and with
+  `--theme=<name>` copies a theme preset. It checks the project depends on
+  `lustre` and `sketch`, which copies import directly.
+- `list` shows every component, block and theme by category;
+  `search <words>` finds them; `view <name>` shows what one depends on and
+  its source.
+- `add` writes `src/<app>/ui/button.gleam` and `layout.gleam`: the source
+  the package ships, with a header saying where it came from. Components
+  depend only on the package's core modules, so you can change anything in
+  them.
+- Adding a block also adds the components it uses, and points its imports
+  at those copies, so the block is built from your versions. A copy you
+  have already edited is kept, and the new block uses it.
+- `diff button` shows how a copy has drifted from the version it came
+  from, or what a newer package version changed. `add` shows it too
+  instead of overwriting a copy that differs.
 
-Alongside them, `add` regenerates `all.gleam`, which lists the classes of
-every module in that directory that has a `classes` function. Hand that
-list to the export when publishing:
+Options: `--to=<dir>` puts copies elsewhere, `--force` overwrites copies
+you have edited, `--dry-run` shows what would change without changing
+anything, and `--install` runs `gleam add` for any package the copies need
+that the project lacks.
+
+`add` regenerates `all.gleam`, which lists the classes of every module in
+the directory that has a `classes` function. Hand that list to the export
+when publishing:
 
 ```gleam
 export.new(theme.default_themes())
 |> export.classes(my_app/ui/all.classes())
 ```
 
-To see how a copy has drifted from the version the package ships, or what
-a newer package version changed:
+### Registries
+
+The catalogue is data: `gleam run -m howdy/ui registry` writes it to
+`registry/`, as `index.json`, one `<name>.json` per entry holding its
+source and dependencies, and an `llms.txt` index for tools and coding
+assistants.
+
+Publish entries of your own the same way, serve the directory, and install
+from it by URL or path:
 
 ```sh
-gleam run -m howdy/ui diff button
+gleam run -m howdy/ui add invoice_table --registry=https://ui.example.com/r
+gleam run -m howdy/ui list --registry=./shared/ui-registry
 ```
 
-`add` also shows this diff instead of overwriting when a copy differs.
+An entry in another registry may depend on built-in ones, which are copied
+alongside it and its imports pointed at them.
 
 ### Writing one from scratch
 

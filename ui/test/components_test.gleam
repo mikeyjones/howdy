@@ -4,9 +4,9 @@ import howdy/ui
 import howdy/ui/alert
 import howdy/ui/badge
 import howdy/ui/button
-import howdy/ui/cli
 import howdy/ui/internal/stylesheet
 import howdy/ui/layout
+import howdy/ui/registry
 import howdy/ui/style
 import lustre/attribute
 import lustre/element.{type Element, text}
@@ -177,21 +177,43 @@ pub fn loading_indicators_carry_their_animation_test() {
   assert string.contains(skeleton, "@keyframes howdy-pulse")
 }
 
-pub fn every_copyable_component_is_exported_test() {
-  // Each module the CLI can copy contributes its classes to `ui.classes`,
-  // and depends only on the package's core modules.
+pub fn every_copyable_entry_depends_only_on_what_it_may_test() {
   let css = stylesheet.css_of(ui.classes())
-  use name <- list.each(cli.components)
-  let assert Ok(source) = simplifile.read("src/howdy/ui/" <> name <> ".gleam")
-  assert string.contains(source, "pub fn classes()")
+  assert css != ""
+  use entry <- list.each(registry.entries())
+  let assert Ok(source) = simplifile.read("src/" <> entry.module <> ".gleam")
+  assert registry.description(source) != ""
   assert !string.contains(source, "import howdy/ui\n")
   let own_imports =
     source
     |> string.split("\n")
     |> list.filter(string.starts_with(_, "import howdy/ui/"))
-  assert list.all(own_imports, fn(line) {
+  let core = fn(line) {
     string.starts_with(line, "import howdy/ui/style")
     || string.starts_with(line, "import howdy/ui/theme/tokens")
-  })
-  assert css != ""
+  }
+  case entry.kind {
+    // Components use only the core modules, so a copy stands alone.
+    registry.Component -> {
+      assert string.contains(source, "pub fn classes()")
+      assert list.all(own_imports, core)
+    }
+    // Blocks may also use components, which `add` copies alongside.
+    registry.Block -> {
+      assert string.contains(source, "pub fn classes()")
+      assert list.all(own_imports, fn(line) {
+        core(line)
+        || list.any(registry.entries(), fn(other) {
+          other.kind == registry.Component
+          && string.starts_with(line, "import " <> other.module)
+        })
+      })
+    }
+    registry.ThemePreset -> {
+      assert list.all(own_imports, string.starts_with(
+        _,
+        "import howdy/ui/theme",
+      ))
+    }
+  }
 }

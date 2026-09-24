@@ -1,0 +1,173 @@
+//// Attachments: a file shown as a card with its name, details, an optional
+//// upload bar and actions such as remove or download.
+////
+//// ```gleam
+//// attachment.attachment(
+////   name: "report.pdf",
+////   detail: "PDF · 2.4 MB",
+////   uploaded: Some(64),
+////   actions: [ui.sized_button(Ghost, Icon, [attribute.aria_label("Remove report.pdf")], [text("×")])],
+//// )
+//// ```
+////
+//// `uploaded` is the percentage sent so far, or `None` once the file is in
+//// place. Receiving and storing the file is the application's job.
+
+import gleam/int
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/string
+import howdy/ui/style.{class}
+import howdy/ui/theme/tokens
+import lustre/attribute
+import lustre/element.{type Element, text}
+import lustre/element/html
+import sketch/css.{type Class}
+import sketch/css/length.{percent, rem}
+
+pub fn attachment(
+  name name: String,
+  detail detail: String,
+  uploaded uploaded: Option(Int),
+  actions actions: List(Element(msg)),
+) -> Element(msg) {
+  let progress = case uploaded {
+    Some(done) -> {
+      let done = int.clamp(done, 0, 100)
+      html.div(
+        [
+          class(track_class()),
+          attribute.role("progressbar"),
+          attribute.aria_label("Uploading " <> name),
+          attribute.attribute("aria-valuemin", "0"),
+          attribute.attribute("aria-valuemax", "100"),
+          attribute.attribute("aria-valuenow", int.to_string(done)),
+        ],
+        [
+          html.div(
+            [
+              class(bar_class()),
+              attribute.style("width", int.to_string(done) <> "%"),
+            ],
+            [],
+          ),
+        ],
+      )
+    }
+    None -> element.none()
+  }
+  html.div([class(attachment_class())], [
+    html.span([class(icon_class()), attribute.aria_hidden(True)], [
+      text(extension(name)),
+    ]),
+    html.div([class(text_class())], [
+      html.div([class(name_class())], [text(name)]),
+      html.div([class(detail_class())], [text(detail)]),
+      progress,
+    ]),
+    html.div([class(actions_class())], actions),
+  ])
+}
+
+/// Up to four letters of the file's extension, for its icon.
+fn extension(name: String) -> String {
+  case string.split(name, ".") {
+    [_, _, ..] as parts ->
+      case list.last(parts) {
+        Ok(ext) -> string.uppercase(string.slice(ext, 0, 4))
+        Error(Nil) -> "FILE"
+      }
+    _ -> "FILE"
+  }
+}
+
+/// Every class this module uses, for `howdy/ui/export`.
+pub fn classes() -> List(Class) {
+  [
+    attachment_class(),
+    icon_class(),
+    text_class(),
+    name_class(),
+    detail_class(),
+    track_class(),
+    bar_class(),
+    actions_class(),
+  ]
+}
+
+pub fn attachment_class() -> Class {
+  css.class([
+    css.display("flex"),
+    css.align_items("center"),
+    css.gap(rem(0.75)),
+    css.padding(rem(0.5)),
+    css.property("max-width", "22rem"),
+    css.background(tokens.surface),
+    css.border("1px solid " <> tokens.border),
+    css.property("border-radius", tokens.radius_medium),
+  ])
+}
+
+pub fn icon_class() -> Class {
+  css.class([
+    css.display("inline-flex"),
+    css.align_items("center"),
+    css.justify_content("center"),
+    css.flex_shrink(0.0),
+    css.property("width", "2.5rem"),
+    css.property("height", "2.5rem"),
+    css.property("border-radius", tokens.radius_small),
+    css.background(tokens.muted),
+    css.color(tokens.text_muted),
+    css.font_size_("0.625rem"),
+    css.font_weight("700"),
+    css.letter_spacing("0.03em"),
+  ])
+}
+
+pub fn text_class() -> Class {
+  css.class([
+    css.display("flex"),
+    css.flex_direction("column"),
+    css.gap(rem(0.25)),
+    css.property("flex", "1"),
+    css.property("min-width", "0"),
+  ])
+}
+
+pub fn name_class() -> Class {
+  css.class([
+    css.font_size(rem(0.875)),
+    css.font_weight("500"),
+    css.color(tokens.text),
+    css.overflow("hidden"),
+    css.property("text-overflow", "ellipsis"),
+    css.white_space("nowrap"),
+  ])
+}
+
+pub fn detail_class() -> Class {
+  css.class([css.font_size(rem(0.75)), css.color(tokens.text_muted)])
+}
+
+pub fn track_class() -> Class {
+  css.class([
+    css.width(percent(100)),
+    css.property("height", "0.25rem"),
+    css.overflow("hidden"),
+    css.property("border-radius", "999px"),
+    css.background(tokens.muted),
+  ])
+}
+
+pub fn bar_class() -> Class {
+  css.class([
+    css.height(percent(100)),
+    css.background(tokens.primary),
+    css.transition("width 200ms"),
+  ])
+}
+
+pub fn actions_class() -> Class {
+  css.class([css.display("flex"), css.gap(rem(0.25))])
+}

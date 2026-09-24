@@ -133,7 +133,7 @@ pub fn light() -> Theme {
       on_primary: "#ffffff",
       danger: "#dc2626",
       on_danger: "#ffffff",
-      focus: "#93c5fd",
+      focus: "#3b82f6",
       chart_1: "#2a78d6",
       chart_2: "#eb6834",
       chart_3: "#1baf7a",

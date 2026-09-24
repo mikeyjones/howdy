@@ -1,9 +1,11 @@
 //// A gallery of howdy_ui: a dashboard with charts and a live orders table,
-//// a page of components, and sign-in and sign-up screens. Run with
-//// `gleam run` from `examples/gallery`, then open http://localhost:8791.
+//// a live chat, a page of components, sign-in and sign-up screens, and the
+//// howdy_ui reference at `/ui`. Run with `gleam run` from
+//// `examples/gallery`, then open http://localhost:8791.
 ////
-//// The screens are built from the blocks in `howdy_gallery/blocks`, which
-//// are ordinary compositions of howdy_ui components meant to be copied.
+//// The screens use howdy_ui's blocks: the application shell, stat cards,
+//// and the sign-in and sign-up cards. `gleam run -m howdy/ui add sign_up`
+//// copies one into a project, with the components it uses.
 
 import gleam/erlang/process
 import gleam/http/response
@@ -18,15 +20,21 @@ import howdy/cookie
 import howdy/form
 import howdy/query
 import howdy/ui
+import howdy/ui/blocks/app_shell.{Group, Link}
+import howdy/ui/blocks/sign_in
+import howdy/ui/blocks/sign_up
+import howdy/ui/blocks/stat_card
 import howdy/ui/button.{Primary}
 import howdy/ui/calendar.{type Date, Date}
 import howdy/ui/chart
+import howdy/ui/command
 import howdy/ui/data_table.{Ascending, Descending, Links, Sort}
+import howdy/ui/gallery
 import howdy/ui/live
 import howdy/ui/page
 import howdy/ui/toast
 import howdy/validate
-import howdy_gallery/blocks.{SignUp}
+import howdy_gallery/chat
 import howdy_gallery/orders
 import lustre/attribute
 import lustre/element.{type Element, text}
@@ -47,8 +55,22 @@ pub fn app() -> howdy.App {
     controller.new("/")
     |> controller.get("/", dashboard)
     |> controller.get("/components", components)
+    |> controller.get("/chat", fn(ctx) {
+      use page <- shell(ctx, "Chat", "/chat", [live.mount("/live/chat")])
+      page.live(page)
+    })
     |> controller.get("/sign-in", fn(ctx) {
-      auth_page(ctx, "Sign in", blocks.sign_in_card(email: ""))
+      auth_page(
+        ctx,
+        "Sign in",
+        sign_in.sign_in(
+          action: "/sign-in",
+          email: "",
+          error: None,
+          sign_up: "/sign-up",
+          forgot: "/sign-in",
+        ),
+      )
     })
     |> controller.post("/sign-in", fn(ctx) {
       use fields <- form.read(ctx)
@@ -58,14 +80,28 @@ pub fn app() -> howdy.App {
       )
     })
     |> controller.get("/sign-up", fn(ctx) {
-      auth_page(ctx, "Sign up", blocks.sign_up_card(blocks.blank_sign_up()))
+      auth_page(
+        ctx,
+        "Sign up",
+        sign_up.sign_up(
+          action: "/sign-up",
+          form: sign_up.empty(),
+          errors: [],
+          sign_in: "/sign-in",
+        ),
+      )
     })
     |> controller.post("/sign-up", sign_up),
   )
+  // The howdy_ui reference, for development.
+  |> howdy.controller(gallery.controller(at: "/ui"))
   |> howdy.controller(
     controller.new("/live")
     |> controller.get("/orders", fn(ctx) {
       live.serve(ctx, orders.app(today()), with: Nil)
+    })
+    |> controller.get("/chat", fn(ctx) {
+      live.serve(ctx, chat.app(), with: Nil)
     }),
   )
 }
@@ -85,11 +121,36 @@ fn shell(
   |> page.theme(theme)
   |> page.head([html.style([], gallery_css)])
   |> page.body([
-    blocks.app_shell(
+    app_shell.app_shell(
+      app: "Howdy gallery",
       collapsed: sidebar == "collapsed",
-      active:,
-      title:,
-      content:,
+      current: active,
+      navigation: [
+        Group("App", [
+          Link("/", "Dashboard"),
+          Link("/chat", "Chat"),
+          Link("/components", "Components"),
+          Link("/ui", "howdy_ui reference"),
+        ]),
+        Group("Account", [
+          Link("/sign-in", "Sign in"),
+          Link("/sign-up", "Sign up"),
+        ]),
+      ],
+      footer: [ui.muted("ada@example.com")],
+      heading: title,
+      actions: [
+        ui.button(
+          button.Outline,
+          [
+            attribute.aria_keyshortcuts("Meta+K Control+K"),
+            ..ui.dialog_trigger("search")
+          ],
+          [text("Search"), html.kbd([], [text("⌘K")])],
+        ),
+        ui.theme_toggle([text("Theme")], from: "light", to: "dark"),
+      ],
+      content: list.append(content, [search()]),
     ),
   ])
   |> next
@@ -111,17 +172,17 @@ fn dashboard(ctx: Context) {
   let months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep"]
   let content = [
     html.div([attribute.class("gallery-stats")], [
-      blocks.stat_card(
+      stat_card.stat_card(
         label: "Revenue",
         value: "$48,210",
         change: "+12% on last month",
       ),
-      blocks.stat_card(
+      stat_card.stat_card(
         label: "Orders",
         value: "1,284",
         change: "+4% on last month",
       ),
-      blocks.stat_card(
+      stat_card.stat_card(
         label: "Refund rate",
         value: "1.8%",
         change: "−0.3 points on last month",
@@ -320,6 +381,43 @@ fn components(ctx: Context) {
   page
 }
 
+/// The ⌘K command menu: every page, searchable.
+fn search() -> Element(msg) {
+  ui.command_dialog(
+    "search",
+    shortcut: "k",
+    attributes: [],
+    command: ui.command(
+      "search-input",
+      placeholder: "Search pages…",
+      attributes: [],
+      children: [
+        ui.command_group("Pages", [
+          ui.command_link("/", [], [text("Dashboard")]),
+          ui.command_link("/chat", [command.keywords("messages bot")], [
+            text("Chat"),
+          ]),
+          ui.command_link("/components", [command.keywords("calendar table")], [
+            text("Components"),
+          ]),
+          ui.command_link("/ui", [command.keywords("reference docs gallery")], [
+            text("howdy_ui reference"),
+          ]),
+        ]),
+        ui.command_group("Account", [
+          ui.command_link("/sign-in", [command.keywords("log in login")], [
+            text("Sign in"),
+          ]),
+          ui.command_link("/sign-up", [command.keywords("register")], [
+            text("Sign up"),
+          ]),
+        ]),
+        ui.command_empty([text("No pages match.")]),
+      ],
+    ),
+  )
+}
+
 fn section(title: String, children: List(Element(msg))) -> Element(msg) {
   ui.card([], [
     ui.card_header([], [ui.card_title([html.h2([], [text(title)])])]),
@@ -331,8 +429,7 @@ fn auth_page(ctx: Context, title: String, card: Element(msg)) {
   use theme <- cookie.string_or(ctx, "theme", default: "system")
   page.new(title <> " · Howdy gallery")
   |> page.theme(theme)
-  |> page.head([html.style([], gallery_css)])
-  |> page.body([blocks.auth_screen(card)])
+  |> page.body([sign_in.screen(card)])
   |> page.respond(ctx)
 }
 
@@ -372,13 +469,17 @@ fn sign_up(ctx: Context) {
       auth_page(
         ctx,
         "Sign up",
-        blocks.sign_up_card(SignUp(
-          name: form.value(fields, "name"),
-          email: form.value(fields, "email"),
-          plan: form.value(fields, "plan"),
-          terms:,
+        sign_up.sign_up(
+          action: "/sign-up",
+          form: sign_up.Form(
+            name: form.value(fields, "name"),
+            email: form.value(fields, "email"),
+            plan: form.value(fields, "plan"),
+            terms:,
+          ),
           errors:,
-        )),
+          sign_in: "/sign-in",
+        ),
       )
       |> controller.with_status(422)
     }
@@ -412,18 +513,13 @@ fn today() -> Date {
 
 /// Layout for the gallery's own pages, around the components.
 const gallery_css = "
-.gallery-topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--howdy-border); }
-.gallery-title { margin: 0; font-size: 1.125rem; }
-.gallery-content { display: flex; flex-direction: column; gap: 1.5rem; padding: 1.5rem; max-width: 72rem; }
 .gallery-stats { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
-.gallery-stat { font-size: 2rem; font-weight: 600; line-height: 1.2; }
 .gallery-charts { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); }
 .gallery-filters { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(12rem, 16rem)); }
 .gallery-bulk { padding: 0.5rem 0.75rem; border-radius: var(--howdy-radius-medium); background: var(--howdy-muted); }
 .gallery-command { max-width: 24rem; border: 1px solid var(--howdy-border); border-radius: var(--howdy-radius-medium); overflow: hidden; }
-.gallery-auth { display: grid; place-items: center; min-height: 100vh; padding: 1.5rem; }
-.gallery-auth-card { width: min(26rem, 100%); }
-.gallery-auth-card h1 { margin: 0; font-size: inherit; }
-.gallery-topbar kbd { font-size: 0.75rem; color: var(--howdy-text-muted); }
+.gallery-composer { display: flex; gap: 0.5rem; margin-top: 1rem; }
+.gallery-chat { max-width: 48rem; }
+kbd { font-size: 0.75rem; color: var(--howdy-text-muted); }
 h2 { margin: 0; font-size: inherit; }
 "
