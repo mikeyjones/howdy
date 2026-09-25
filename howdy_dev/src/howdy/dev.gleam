@@ -35,16 +35,15 @@
 //// restart. Files are polled four times a second, so a change is noticed
 //// within a quarter of a second.
 
-import ewe
 import gleam/erlang/process
 import gleam/http/request.{type Request}
 import gleam/int
 import gleam/io
 import gleam/list
 import gleam/otp/actor
-import gleam/otp/static_supervisor
 import gleam/string
 import howdy.{type App}
+import howdy/context.{type Body}
 import howdy/dev/internal/reload
 import howdy/dev/internal/watch
 
@@ -100,21 +99,19 @@ pub fn interval(dev: Dev, milliseconds: Int) -> Dev {
 /// `new(build) |> start`.
 pub fn start(
   build: fn() -> App,
-) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
+) -> Result(actor.Started(howdy.Address), actor.StartError) {
   new(build) |> run
 }
 
 /// Start the server and the file watcher. Returns like `howdy.start`; keep
 /// the calling process alive with `process.sleep_forever()`.
-pub fn run(
-  dev: Dev,
-) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
+pub fn run(dev: Dev) -> Result(actor.Started(howdy.Address), actor.StartError) {
   let session = reload.new(dev.hosts)
-  let handler = fn(request: Request(ewe.Connection)) {
+  let handler = fn(request: Request(Body)) {
     case reload.allowed_host(session, request.host) {
       False -> reload.forbidden()
       True -> {
-        let handle = wrap_session(dev.build, session) |> howdy.handler
+        let handle = wrap_session(dev.build, session) |> howdy.serve
         handle(request)
       }
     }

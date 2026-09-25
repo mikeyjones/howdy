@@ -5,6 +5,7 @@ import gleam/json
 import gleam/list
 import gleam/string
 import howdy
+import howdy/content
 import howdy/controller
 import howdy/dev
 import howdy/dev/internal/reload
@@ -19,7 +20,7 @@ fn app() -> howdy.App {
     })
     |> controller.get("/bytes", fn(ctx) {
       controller.html(ctx, "")
-      |> response.set_body(ewe.Bytes(bytes_tree.from_string("<p>raw</p>")))
+      |> response.set_body(content.Bytes(bytes_tree.from_string("<p>raw</p>")))
     })
     |> controller.get("/json", fn(ctx) {
       controller.json(ctx, json.object([#("ok", json.bool(True))]))
@@ -57,8 +58,6 @@ pub fn the_reload_socket_is_mounted_test() {
   let missing = testing.get(reload.path) |> testing.send(app())
   assert missing.status == 404
 }
-
-import ewe
 
 fn token(app: howdy.App) -> String {
   let html = testing.get("/") |> testing.send(app) |> testing.text

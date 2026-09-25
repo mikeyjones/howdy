@@ -9,7 +9,6 @@
 
 import ewe
 import gleam/dict
-import gleam/erlang/process
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -18,8 +17,9 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
-import gleam/otp/static_supervisor
+import gleam/result
 import gleam/string
+import howdy/content.{type Content}
 import howdy/context.{type Body, Context}
 import howdy/controller.{type Controller, type Middleware}
 import howdy/router
@@ -37,8 +37,19 @@ pub opaque type App {
     versions: Option(Group),
     bind_address: String,
     port: Int,
-    tls: Option(ewe.Tls),
+    tls: Option(Tls),
   )
+}
+
+type Tls {
+  CertificateFiles(cert: String, key: String)
+  CertificatePem(cert: BitArray, key: BitArray)
+}
+
+/// Where a started server is listening. `port` is the one the operating
+/// system chose when the app listens on port `0`.
+pub type Address {
+  Address(ip: String, port: Int)
 }
 
 pub fn new() -> App {
@@ -68,31 +79,31 @@ pub fn listening(app: App, on port: Int) -> App {
 /// Serve HTTPS using PEM-encoded certificate and key files. Browsers only
 /// speak HTTP/2 over TLS, so this is also what enables HTTP/2 for them; it is
 /// offered through ALPN alongside HTTP/1.1. For in-memory certificates use
-/// `tls_with`. Without TLS, HTTP/2 is still served to clients that open
+/// `tls_pem`. Without TLS, HTTP/2 is still served to clients that open
 /// with the HTTP/2 preface, such as `curl --http2-prior-knowledge`.
 pub fn tls(app: App, cert cert: String, key key: String) -> App {
-  tls_with(app, ewe.Disk(cert:, key:))
+  App(..app, tls: Some(CertificateFiles(cert:, key:)))
 }
 
-/// Serve HTTPS from any `ewe.Tls` source, such as `ewe.Pem` for
-/// certificates held in memory.
-pub fn tls_with(app: App, tls: ewe.Tls) -> App {
-  App(..app, tls: Some(tls))
+/// Serve HTTPS using a PEM-encoded certificate and key held in memory, such
+/// as ones read from a secret store. Otherwise the same as `tls`.
+pub fn tls_pem(app: App, cert cert: BitArray, key key: BitArray) -> App {
+  App(..app, tls: Some(CertificatePem(cert:, key:)))
 }
 
-/// Start the app's HTTP server, creating fresh process names for each start.
+/// Start the app's HTTP server.
 /// Defaults to `0.0.0.0:8787`; override with `bind` and `listening`.
 /// Prints a howdy banner with the framework version and bound URL once listening.
 ///
-/// Returns ewe's startup result, including the server supervisor. The server
-/// is linked to the calling process; keep it alive with `process.sleep_forever()`.
-/// For advanced ewe configuration or supervision, use `handler` with ewe directly.
-/// WebSockets over HTTP/2 are enabled; ewe turns them off by default, so
-/// pass `websocket: True` in your HTTP/2 options if you go direct.
-pub fn start(
-  app: App,
-) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
-  start_with(app, handler(app))
+/// Returns the server's process and the `Address` it is listening on. The
+/// server is linked to the calling process; keep it alive with
+/// `process.sleep_forever()`. For advanced server configuration or
+/// supervision, use `handler` with ewe directly.
+///
+/// Clients that disconnect while the server is still writing to them, such
+/// as a browser tab closed mid WebSocket, are not logged as crashes.
+pub fn start(app: App) -> Result(actor.Started(Address), actor.StartError) {
+  start_with(app, serve(app))
 }
 
 /// Start a server for `app` that answers requests with `handler` instead of
@@ -100,45 +111,58 @@ pub fn start(
 /// what development tooling such as `howdy_dev` uses to wrap an app.
 pub fn start_with(
   app: App,
-  handler: fn(Request(ewe.Connection)) -> Response(ewe.Body),
-) -> Result(actor.Started(static_supervisor.Supervisor), actor.StartError) {
-  ewe.new(
-    listener_name: process.new_name("howdy_listener"),
-    connection_factory_name: process.new_name("howdy_connection_factory"),
-    handler:,
-  )
+  handler: fn(Request(Body)) -> Response(Content),
+) -> Result(actor.Started(Address), actor.StartError) {
+  quiet_disconnects()
+  ewe.new(handler: to_ewe(handler))
   |> ewe.bind(to: app.bind_address)
   |> ewe.listening(on: app.port)
-  |> ewe.with_http2(
-    ewe.Http2Options(..ewe.default_http2_options(), websocket: True),
-  )
   |> with_tls(app.tls)
-  |> ewe.on_start(startup_banner)
+  |> ewe.on_start(fn(scheme, address) {
+    startup_banner(scheme, to_address(address))
+  })
   |> ewe.start
+  |> result.map(fn(started) {
+    actor.Started(..started, data: to_address(started.data))
+  })
 }
 
-fn with_tls(builder: ewe.Builder, tls: Option(ewe.Tls)) -> ewe.Builder {
+/// Stop OTP reporting a client that went away mid write as a crashed
+/// connection. Installed once per node; other reports are untouched.
+@external(erlang, "howdy_ffi", "quiet_disconnects")
+fn quiet_disconnects() -> Nil
+
+fn with_tls(builder: ewe.Builder, tls: Option(Tls)) -> ewe.Builder {
   case tls {
-    Some(tls) -> ewe.with_tls(builder, tls)
+    Some(CertificateFiles(cert:, key:)) ->
+      ewe.with_tls(builder, ewe.Disk(cert:, key:))
+    Some(CertificatePem(cert:, key:)) ->
+      ewe.with_tls(builder, ewe.Pem(cert:, key:))
     None -> builder
   }
 }
 
-fn startup_banner(scheme: http.Scheme, address: ewe.SocketAddress) -> Nil {
-  let url = case address {
-    ewe.TcpSocketAddress(ip_address:, port:) -> {
-      let host = case ip_address {
-        ewe.IpV4(..) -> ewe.ip_address_to_string(ip_address)
-        ewe.IpV6(..) -> "[" <> ewe.ip_address_to_string(ip_address) <> "]"
-      }
-      http.scheme_to_string(scheme)
-      <> "://"
-      <> host
-      <> ":"
-      <> int.to_string(port)
-    }
-    ewe.UnixSocketAddress(path:) -> "unix:" <> path
+fn to_address(address: ewe.SocketAddress) -> Address {
+  case address {
+    ewe.TcpSocketAddress(ip_address:, port:) ->
+      Address(ip: ewe.ip_address_to_string(ip_address), port:)
+    // `bind` only takes network interfaces.
+    ewe.UnixSocketAddress(..) ->
+      panic as "howdy: the server is listening on a Unix socket"
   }
+}
+
+fn startup_banner(scheme: http.Scheme, address: Address) -> Nil {
+  let host = case string.contains(address.ip, ":") {
+    True -> "[" <> address.ip <> "]"
+    False -> address.ip
+  }
+  let url =
+    http.scheme_to_string(scheme)
+    <> "://"
+    <> host
+    <> ":"
+    <> int.to_string(address.port)
 
   io.println("
  _   _                  _
@@ -174,21 +198,29 @@ pub fn versions(app: App, group: Group) -> App {
   }
 }
 
-/// Compile routes and middleware into a reusable request handler. Pass the
-/// result to `ewe.new`; construct it once and reuse it for every request.
+/// Compile routes and middleware into a reusable ewe request handler, for
+/// running the app under ewe directly with options `start` does not offer.
+/// Pass the result to `ewe.new`; construct it once and reuse it for every
+/// request. This is the one part of howdy's API that uses ewe's types.
 ///
 /// To exercise an app without a server, see `howdy/testing`.
 pub fn handler(app: App) -> fn(Request(ewe.Connection)) -> Response(ewe.Body) {
-  let serve = serve(app)
+  to_ewe(serve(app))
+}
+
+fn to_ewe(
+  serve: fn(Request(Body)) -> Response(Content),
+) -> fn(Request(ewe.Connection)) -> Response(ewe.Body) {
   fn(request: Request(ewe.Connection)) {
     serve(request.set_body(request, context.live(request.body)))
+    |> response.map(content.to_ewe)
   }
 }
 
 /// The handler for requests whose body has already been wrapped in a
 /// `context.Body`. `handler` and `howdy/testing` both build on this.
 @internal
-pub fn serve(app: App) -> fn(Request(Body)) -> Response(ewe.Body) {
+pub fn serve(app: App) -> fn(Request(Body)) -> Response(Content) {
   let middleware = list.reverse(app.middleware)
   let routes = router.compile(app.controllers, middleware)
   let versions =
@@ -216,8 +248,8 @@ pub fn serve(app: App) -> fn(Request(Body)) -> Response(ewe.Body) {
 /// Query strings, headers and bodies are left out, as they can hold secrets.
 fn traced(
   request: Request(Body),
-  respond: fn() -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  respond: fn() -> Response(Content),
+) -> Response(Content) {
   let method = http.method_to_string(request.method)
   trace.new(method)
   |> trace.kind(trace.Server)
@@ -279,7 +311,7 @@ fn versioned(
   group: Group,
   table: dict.Dict(String, router.Table),
   request: Request(Body),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let response = case version.resolve(group, request) {
     version.Version(name:, path:) -> {
       let assert Ok(routes) = dict.get(table, name)
@@ -307,10 +339,7 @@ fn versioned(
 
 /// Append to an existing `vary` header, since middleware such as
 /// `howdy/cors` may already have set one.
-fn add_vary(
-  response: Response(ewe.Body),
-  header: String,
-) -> Response(ewe.Body) {
+fn add_vary(response: Response(Content), header: String) -> Response(Content) {
   case response.get_header(response, "vary") {
     Ok(existing) ->
       response.set_header(response, "vary", existing <> ", " <> header)
@@ -323,7 +352,7 @@ fn respond(
   request: Request(Body),
   version: Option(String),
   route_prefix: String,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case match {
     router.Found(handler:, params:, route:) -> {
       traced_route(request, route_prefix <> route)
@@ -336,11 +365,11 @@ fn respond(
         "allow",
         allowed |> list.map(http.method_to_string) |> string.join(", "),
       )
-      |> response.set_body(ewe.Empty)
+      |> response.set_body(content.Empty)
   }
 }
 
-fn not_found() -> Response(ewe.Body) {
+fn not_found() -> Response(Content) {
   response.new(404)
-  |> response.set_body(ewe.Empty)
+  |> response.set_body(content.Empty)
 }

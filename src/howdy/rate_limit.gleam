@@ -41,11 +41,11 @@
 //// counts in a `Store` every node can reach, such as a database table, at
 //// the cost of one round trip per request.
 
-import ewe
 import gleam/http/request
 import gleam/http/response
 import gleam/int
 import gleam/option.{type Option, None, Some}
+import howdy/content.{type Content}
 import howdy/context
 import howdy/controller.{type Context, type Middleware}
 import howdy/service
@@ -354,10 +354,10 @@ fn ceil_seconds(ms: Int) -> Int {
 /// the time an outer one runs, and the innermost is the most specific limit
 /// for that route, so its headers are kept.
 fn set_if_absent(
-  res: response.Response(ewe.Body),
+  res: response.Response(Content),
   name: String,
   value: String,
-) -> response.Response(ewe.Body) {
+) -> response.Response(Content) {
   case response.get_header(res, name) {
     Ok(_) -> res
     Error(Nil) -> response.set_header(res, name, value)

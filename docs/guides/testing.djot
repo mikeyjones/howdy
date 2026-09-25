@@ -208,8 +208,8 @@ of step with the rules of the app.
   large file from `howdy/static`, and panic if asked to. Check the status
   and headers of those responses instead.
 - Nothing is sent over the network, so the server's own behaviour is not
-  covered: timeouts, TLS, HTTP/2. Those belong to the `ewe` server Howdy
-  runs on.
+  covered: timeouts, TLS, HTTP/2. Start the app with `howdy.start` on
+  port `0` and read the chosen port from `started.data.port` to test those.
 
 ## More examples
 

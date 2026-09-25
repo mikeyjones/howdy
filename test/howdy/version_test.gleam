@@ -1,10 +1,10 @@
-import ewe
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/list
 import gleam/option.{None, Some}
 import howdy
+import howdy/content.{type Content}
 import howdy/context.{type Body}
 import howdy/controller.{type Context}
 import howdy/testing
@@ -63,7 +63,7 @@ fn get(
   app: howdy.App,
   path: String,
   headers: List(#(String, String)),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   send(app, http.Get, path, headers)
 }
 
@@ -72,7 +72,7 @@ fn send(
   method: http.Method,
   path: String,
   headers: List(#(String, String)),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   list.fold(headers, testing.request(method, path), fn(req, header) {
     testing.header(req, header.0, header.1)
   })
@@ -316,6 +316,6 @@ pub fn second_group_panics_test() {
     })
 }
 
-fn ok(ctx: Context) -> Response(ewe.Body) {
+fn ok(ctx: Context) -> Response(Content) {
   controller.text(ctx, "ok")
 }

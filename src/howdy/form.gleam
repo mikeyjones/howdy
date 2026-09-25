@@ -37,7 +37,6 @@
 //// forms need CSRF protection. Use `howdy/csrf`, or the `Origin` check
 //// `howdy_auth` already applies to routes behind its guard.
 
-import ewe
 import gleam/bit_array
 import gleam/http/request
 import gleam/http/response.{type Response}
@@ -47,6 +46,8 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import howdy/body
+import howdy/content.{type Content}
+import howdy/context
 import howdy/controller.{type GuardedContext}
 import howdy/query
 import howdy/service.{type FieldError}
@@ -64,8 +65,8 @@ pub opaque type Form {
 /// never runs in either case.
 pub fn read(
   ctx: GuardedContext(guarded),
-  next: fn(Form) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Form) -> Response(Content),
+) -> Response(Content) {
   read_with_limit(ctx, body.default_limit, next)
 }
 
@@ -73,8 +74,8 @@ pub fn read(
 pub fn read_with_limit(
   ctx: GuardedContext(guarded),
   limit: Int,
-  next: fn(Form) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Form) -> Response(Content),
+) -> Response(Content) {
   case check_content_type(ctx) {
     Error(error) -> service.error_response(ctx, error)
     Ok(Nil) ->
@@ -85,8 +86,9 @@ pub fn read_with_limit(
             Error(Nil) ->
               invalid(ctx, "request body is not a valid urlencoded form")
           }
-        Error(ewe.BodyTooLarge) -> invalid(ctx, "request body too large")
-        Error(ewe.InvalidBody) -> invalid(ctx, "request body could not be read")
+        Error(context.BodyTooLarge) -> invalid(ctx, "request body too large")
+        Error(context.InvalidBody) ->
+          invalid(ctx, "request body could not be read")
       }
   }
 }
@@ -97,8 +99,8 @@ pub fn read_with_limit(
 pub fn validated(
   ctx: GuardedContext(guarded),
   validator: fn(Form) -> validate.Result(a),
-  next: fn(a) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(a) -> Response(Content),
+) -> Response(Content) {
   use form <- read(ctx)
   validate.check(ctx, validator(form), next)
 }
@@ -294,9 +296,6 @@ fn parse(bits: BitArray) -> Result(Form, Nil) {
   Form(fields:)
 }
 
-fn invalid(
-  ctx: GuardedContext(guarded),
-  message: String,
-) -> Response(ewe.Body) {
+fn invalid(ctx: GuardedContext(guarded), message: String) -> Response(Content) {
   service.error_response(ctx, service.Invalid(message))
 }

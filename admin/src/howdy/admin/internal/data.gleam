@@ -1,7 +1,6 @@
 //// The database pages: the list of tables, a live grid of each table's
 //// rows, and forms to insert, edit and delete a row.
 
-import ewe
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/http/request
@@ -18,6 +17,7 @@ import howdy/admin/internal/config.{type Config}
 import howdy/admin/internal/layout
 import howdy/admin/internal/notify
 import howdy/admin/internal/schema.{type Row, type Table, Row}
+import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
 import howdy/form
@@ -65,7 +65,7 @@ pub fn controller(config: Config, repo: Repo) -> Controller {
 /// them.
 const framework_prefix = "howdy_"
 
-fn index(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn index(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   let all =
     request.get_query(ctx.request) |> result.unwrap([]) |> list.key_find("all")
     == Ok("1")
@@ -164,7 +164,7 @@ fn index(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
   }
 }
 
-fn show(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn show(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   use table <- with_table(config, repo, ctx)
   layout.page(
     config,
@@ -211,7 +211,7 @@ fn show(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
   )
 }
 
-fn new(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn new(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   use table <- with_table(config, repo, ctx)
   layout.page(
     config,
@@ -236,7 +236,7 @@ fn new(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
   )
 }
 
-fn create(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn create(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   use table <- with_table(config, repo, ctx)
   use form <- form.read(ctx)
   let values =
@@ -274,7 +274,7 @@ fn create(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
   }
 }
 
-fn edit(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn edit(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   use table <- with_table(config, repo, ctx)
   let key = key_from(ctx)
   case schema.row(repo, table, key) {
@@ -316,7 +316,7 @@ fn edit(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
   }
 }
 
-fn save(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn save(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   use table <- with_table(config, repo, ctx)
   let key = key_from(ctx)
   use form <- form.read(ctx)
@@ -357,7 +357,7 @@ fn save(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
   }
 }
 
-fn remove(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn remove(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   use table <- with_table(config, repo, ctx)
   case schema.delete(repo, table, key_from(ctx)) {
     Ok(Nil) -> layout.redirect(table_path(config, table.name))
@@ -373,7 +373,7 @@ fn remove(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
   }
 }
 
-fn socket(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
+fn socket(config: Config, repo: Repo, ctx: Context) -> Response(Content) {
   use table <- with_table(config, repo, ctx)
   live.serve(ctx, grid(), with: Args(config, repo, table))
 }
@@ -459,8 +459,8 @@ fn with_table(
   config: Config,
   repo: Repo,
   ctx: Context,
-  next: fn(Table) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Table) -> Response(Content),
+) -> Response(Content) {
   let name = result.unwrap(controller.param(ctx, "table"), "")
   case schema.table(repo, name) {
     Ok(table) -> next(table)

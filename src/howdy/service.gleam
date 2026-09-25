@@ -9,11 +9,11 @@
 //// }
 //// ```
 
-import ewe
 import gleam
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/json.{type Json}
+import howdy/content.{type Content}
 import howdy/context.{type Context}
 import logging
 
@@ -58,7 +58,7 @@ pub fn respond(
   result: Result(a),
   ctx: Context(guarded),
   encode: fn(a) -> Json,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case result {
     Ok(value) -> json_response(encode(value))
     Error(error) -> error_response(ctx, error)
@@ -70,7 +70,7 @@ pub fn created(
   result: Result(a),
   ctx: Context(guarded),
   encode: fn(a) -> Json,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case result {
     Ok(value) -> json_response(encode(value)) |> with_status(201)
     Error(error) -> error_response(ctx, error)
@@ -81,9 +81,9 @@ pub fn created(
 pub fn no_content(
   result: Result(Nil),
   ctx: Context(guarded),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case result {
-    Ok(Nil) -> response.new(204) |> response.set_body(ewe.Empty)
+    Ok(Nil) -> response.new(204) |> response.set_body(content.Empty)
     Error(error) -> error_response(ctx, error)
   }
 }
@@ -123,7 +123,7 @@ pub fn message(error: Error) -> String {
 pub fn error_response(
   _ctx: Context(guarded),
   error: Error,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case error {
     Internal(detail) -> logging.log(logging.Error, detail)
     _ -> Nil
@@ -157,12 +157,12 @@ pub fn error_response(
   }
 }
 
-fn json_response(body: Json) -> Response(ewe.Body) {
+fn json_response(body: Json) -> Response(Content) {
   response.new(200)
   |> response.set_header("content-type", "application/json; charset=utf-8")
-  |> response.set_body(ewe.Text(json.to_string(body)))
+  |> response.set_body(content.Text(json.to_string(body)))
 }
 
-fn with_status(res: Response(ewe.Body), code: Int) -> Response(ewe.Body) {
+fn with_status(res: Response(Content), code: Int) -> Response(Content) {
   response.Response(..res, status: code)
 }

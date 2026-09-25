@@ -9,9 +9,9 @@
 //// }
 //// ```
 
-import ewe
 import gleam/http/response.{type Response}
 import gleam/int
+import howdy/content.{type Content}
 import howdy/controller.{type GuardedContext}
 import howdy/service
 
@@ -19,8 +19,8 @@ import howdy/service
 pub fn string(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(String) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(String) -> Response(Content),
+) -> Response(Content) {
   case controller.param(ctx, name) {
     Ok(value) -> next(value)
     Error(Nil) -> missing(ctx, name)
@@ -31,8 +31,8 @@ pub fn string(
 pub fn int(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(Int) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Int) -> Response(Content),
+) -> Response(Content) {
   use value <- string(ctx, name)
   case int.parse(value) {
     Ok(value) -> next(value)
@@ -40,7 +40,7 @@ pub fn int(
   }
 }
 
-fn missing(ctx: GuardedContext(guarded), name: String) -> Response(ewe.Body) {
+fn missing(ctx: GuardedContext(guarded), name: String) -> Response(Content) {
   service.error_response(ctx, service.Invalid("missing parameter " <> name))
 }
 
@@ -48,7 +48,7 @@ fn invalid(
   ctx: GuardedContext(guarded),
   name: String,
   expected: String,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   service.error_response(
     ctx,
     service.Invalid("parameter " <> name <> " must be " <> expected),

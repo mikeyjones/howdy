@@ -1,10 +1,10 @@
-import ewe
 import gleam/http/request
 import gleam/http/response.{type Response}
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import howdy
+import howdy/content.{type Content}
 import howdy/controller
 import howdy/cookie
 import howdy/testing
@@ -21,7 +21,7 @@ fn send(headers: List(#(String, String)), handler: controller.Handler) {
   request.Request(..req, headers:) |> testing.send(app(handler))
 }
 
-fn bad_request(res: Response(ewe.Body), message: String) {
+fn bad_request(res: Response(Content), message: String) {
   assert res.status == 400
   assert response.get_header(res, "content-type")
     == Ok("application/json; charset=utf-8")

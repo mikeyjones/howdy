@@ -11,13 +11,13 @@
 //// }
 //// ```
 
-import ewe
 import gleam/dict
 import gleam/http.{type Method}
 import gleam/http/response.{type Response}
 import gleam/json.{type Json}
 import gleam/list
 import gleam/string
+import howdy/content.{type Content}
 import howdy/context
 import howdy/service
 
@@ -31,15 +31,15 @@ pub type GuardedContext(guarded) =
 
 /// A function that answers a request.
 pub type Handler =
-  fn(Context) -> Response(ewe.Body)
+  fn(Context) -> Response(Content)
 
 /// The rest of the chain a middleware hands the request on to.
 pub type Next =
-  fn(Context) -> Response(ewe.Body)
+  fn(Context) -> Response(Content)
 
 /// A function that runs around a handler. See `howdy/middleware`.
 pub type Middleware =
-  fn(Context, Next) -> Response(ewe.Body)
+  fn(Context, Next) -> Response(Content)
 
 /// A single route: method, path pattern (already prefixed) and handler.
 pub type Route {
@@ -135,7 +135,7 @@ pub fn options_handler(
   let handler = fn(_ctx) {
     response.new(204)
     |> response.set_header("allow", allow)
-    |> response.set_body(ewe.Empty)
+    |> response.set_body(content.Empty)
   }
   wrap_all(handler, list.reverse(controller.middleware))
 }
@@ -159,7 +159,7 @@ pub fn route(
   controller: Builder(guarded),
   method: Method,
   path: String,
-  handler: fn(GuardedContext(guarded)) -> Response(ewe.Body),
+  handler: fn(GuardedContext(guarded)) -> Response(Content),
 ) -> Builder(guarded) {
   let check = controller.check
   let route =
@@ -185,7 +185,7 @@ pub fn route(
 pub fn get(
   controller: Builder(guarded),
   path: String,
-  handler: fn(GuardedContext(guarded)) -> Response(ewe.Body),
+  handler: fn(GuardedContext(guarded)) -> Response(Content),
 ) -> Builder(guarded) {
   route(controller, http.Get, path, handler)
 }
@@ -193,7 +193,7 @@ pub fn get(
 pub fn post(
   controller: Builder(guarded),
   path: String,
-  handler: fn(GuardedContext(guarded)) -> Response(ewe.Body),
+  handler: fn(GuardedContext(guarded)) -> Response(Content),
 ) -> Builder(guarded) {
   route(controller, http.Post, path, handler)
 }
@@ -201,7 +201,7 @@ pub fn post(
 pub fn put(
   controller: Builder(guarded),
   path: String,
-  handler: fn(GuardedContext(guarded)) -> Response(ewe.Body),
+  handler: fn(GuardedContext(guarded)) -> Response(Content),
 ) -> Builder(guarded) {
   route(controller, http.Put, path, handler)
 }
@@ -209,7 +209,7 @@ pub fn put(
 pub fn patch(
   controller: Builder(guarded),
   path: String,
-  handler: fn(GuardedContext(guarded)) -> Response(ewe.Body),
+  handler: fn(GuardedContext(guarded)) -> Response(Content),
 ) -> Builder(guarded) {
   route(controller, http.Patch, path, handler)
 }
@@ -217,7 +217,7 @@ pub fn patch(
 pub fn delete(
   controller: Builder(guarded),
   path: String,
-  handler: fn(GuardedContext(guarded)) -> Response(ewe.Body),
+  handler: fn(GuardedContext(guarded)) -> Response(Content),
 ) -> Builder(guarded) {
   route(controller, http.Delete, path, handler)
 }
@@ -243,43 +243,43 @@ pub fn param(
 pub fn read_body(
   ctx: GuardedContext(guarded),
   limit limit: Int,
-) -> Result(BitArray, ewe.BodyError) {
+) -> Result(BitArray, context.BodyError) {
   context.read_body(ctx.request, limit:)
 }
 
 // -- Response helpers --------------------------------------------------------
 
 /// A `200` response with a UTF-8 text body.
-pub fn text(_ctx: GuardedContext(guarded), body: String) -> Response(ewe.Body) {
+pub fn text(_ctx: GuardedContext(guarded), body: String) -> Response(Content) {
   response.new(200)
   |> response.set_header("content-type", "text/plain; charset=utf-8")
-  |> response.set_body(ewe.Text(body))
+  |> response.set_body(content.Text(body))
 }
 
 /// A `200` response with an HTML body.
-pub fn html(_ctx: GuardedContext(guarded), body: String) -> Response(ewe.Body) {
+pub fn html(_ctx: GuardedContext(guarded), body: String) -> Response(Content) {
   response.new(200)
   |> response.set_header("content-type", "text/html; charset=utf-8")
-  |> response.set_body(ewe.Text(body))
+  |> response.set_body(content.Text(body))
 }
 
 /// A `200` response with a JSON body.
-pub fn json(_ctx: GuardedContext(guarded), body: Json) -> Response(ewe.Body) {
+pub fn json(_ctx: GuardedContext(guarded), body: Json) -> Response(Content) {
   response.new(200)
   |> response.set_header("content-type", "application/json; charset=utf-8")
-  |> response.set_body(ewe.Text(json.to_string(body)))
+  |> response.set_body(content.Text(json.to_string(body)))
 }
 
 /// A response with the given status and no body.
-pub fn status(_ctx: GuardedContext(guarded), code: Int) -> Response(ewe.Body) {
+pub fn status(_ctx: GuardedContext(guarded), code: Int) -> Response(Content) {
   response.new(code)
-  |> response.set_body(ewe.Empty)
+  |> response.set_body(content.Empty)
 }
 
 /// Change the status of a response built with one of the helpers above.
 pub fn with_status(
-  response: Response(ewe.Body),
+  response: Response(Content),
   code: Int,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   response.Response(..response, status: code)
 }

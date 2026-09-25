@@ -3,7 +3,6 @@
 //// log lines. They read the recorder `howdy_telemetry` fills, so they show
 //// whatever the app traced: the spans Howdy opens and the app's own.
 
-import ewe
 import gleam/dict.{type Dict}
 import gleam/erlang/process
 import gleam/float
@@ -17,6 +16,7 @@ import gleam/time/calendar
 import gleam/time/timestamp
 import howdy/admin/internal/config.{type Config}
 import howdy/admin/internal/layout
+import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/telemetry/recorder.{type Log, type Recorder, type Span, type Trace}
 import howdy/trace
@@ -140,7 +140,7 @@ fn is_tooling(config: Config, trace: Trace) -> Bool {
 
 // -- The list ------------------------------------------------------------------
 
-fn traces_page(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn traces_page(config: Config, ctx: Context) -> Response(Content) {
   layout.page(
     config,
     ctx,
@@ -424,7 +424,7 @@ fn trace_page(
   config: Config,
   recorder: Recorder,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let assert Ok(id) = controller.param(ctx, "id")
   case recorder.trace(recorder, id) {
     Error(Nil) ->
@@ -818,7 +818,7 @@ fn kind_name(kind: trace.Kind) -> String {
 
 // -- Logs ------------------------------------------------------------------------
 
-fn logs_page(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn logs_page(config: Config, ctx: Context) -> Response(Content) {
   layout.page(
     config,
     ctx,

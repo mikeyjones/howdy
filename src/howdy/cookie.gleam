@@ -12,7 +12,6 @@
 //// |> cookie.set("theme", theme, cookie.defaults())
 //// ```
 
-import ewe
 import gleam/http
 import gleam/http/cookie as http_cookie
 import gleam/http/request
@@ -21,6 +20,7 @@ import gleam/list
 import gleam/option.{type Option}
 import gleam/string as text
 import gleam/uri
+import howdy/content.{type Content}
 import howdy/controller.{type GuardedContext}
 import howdy/service
 
@@ -101,8 +101,8 @@ pub fn domain(options: Options, value: String) -> Options {
 pub fn string(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(String) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(String) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_string(ctx, name)
   case value {
     option.Some(value) -> next(value)
@@ -115,8 +115,8 @@ pub fn string(
 pub fn optional_string(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(Option(String)) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Option(String)) -> Response(Content),
+) -> Response(Content) {
   let values =
     request.get_cookies(ctx.request)
     |> list.filter(fn(pair) { pair.0 == name })
@@ -136,8 +136,8 @@ pub fn string_or(
   ctx: GuardedContext(guarded),
   name: String,
   default default: String,
-  next next: fn(String) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next next: fn(String) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_string(ctx, name)
   next(option.unwrap(value, default))
 }
@@ -200,9 +200,6 @@ fn valid_attribute_bytes(value: BitArray) -> Bool {
   }
 }
 
-fn invalid(
-  ctx: GuardedContext(guarded),
-  message: String,
-) -> Response(ewe.Body) {
+fn invalid(ctx: GuardedContext(guarded), message: String) -> Response(Content) {
   service.error_response(ctx, service.Invalid(message))
 }

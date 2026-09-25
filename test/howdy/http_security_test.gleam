@@ -27,19 +27,13 @@ pub fn live_http_checks_containment_and_handshake_origin_test() {
     )
     |> howdy.controller(static.serve("/", from: root))
   use port <- with_http_server(fn() {
-    let listener = process.new_name("security_listener")
     let assert Ok(started) =
-      ewe.new(
-        listener_name: listener,
-        connection_factory_name: process.new_name("security_connections"),
-        handler: howdy.handler(app),
-      )
+      ewe.new(handler: howdy.handler(app))
       |> ewe.bind("127.0.0.1")
       |> ewe.listening(0)
       |> ewe.quiet
       |> ewe.start
-    let assert ewe.TcpSocketAddress(_, port) =
-      ewe.get_server_info(process.named_subject(listener))
+    let assert ewe.TcpSocketAddress(_, port) = started.data
     #(started.pid, port)
   })
   let origin = "http://localhost:" <> int.to_string(port)

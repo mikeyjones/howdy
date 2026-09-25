@@ -15,6 +15,14 @@ pub opaque type Body {
   Fake(bits: BitArray, ip: Option(String))
 }
 
+/// Why a request body could not be read.
+pub type BodyError {
+  /// The body is larger than the limit given.
+  BodyTooLarge
+  /// The body was malformed, or the client stopped sending it.
+  InvalidBody
+}
+
 /// `guard` holds the successful controller guard value, or `Nil` for an
 /// ordinary controller. `version` is the API version resolved by
 /// `howdy/version`, or `None` for routes outside a version group.
@@ -70,16 +78,17 @@ pub fn connection(body: Body) -> Option(ewe.Connection) {
 pub fn read_body(
   request: Request(Body),
   limit limit: Int,
-) -> Result(BitArray, ewe.BodyError) {
+) -> Result(BitArray, BodyError) {
   case request.body {
     Live(connection:) ->
       case ewe.read_body(request.set_body(request, connection), limit:) {
         Ok(request) -> Ok(request.body)
-        Error(error) -> Error(error)
+        Error(ewe.BodyTooLarge) -> Error(BodyTooLarge)
+        Error(ewe.InvalidBody) -> Error(InvalidBody)
       }
     Fake(bits:, ..) ->
       case bit_array.byte_size(bits) > limit {
-        True -> Error(ewe.BodyTooLarge)
+        True -> Error(BodyTooLarge)
         False -> Ok(bits)
       }
   }
@@ -91,10 +100,9 @@ pub fn client_ip(request: Request(Body)) -> Option(String) {
   case request.body {
     Live(connection:) ->
       case ewe.get_client_info(connection) {
-        Ok(ewe.TcpSocketAddress(ip_address:, ..)) ->
+        ewe.TcpSocketAddress(ip_address:, ..) ->
           Some(ewe.ip_address_to_string(ip_address))
-        Ok(ewe.UnixSocketAddress(path)) -> Some(path)
-        Error(Nil) -> None
+        ewe.UnixSocketAddress(path) -> Some(path)
       }
     Fake(ip:, ..) -> ip
   }

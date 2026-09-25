@@ -1,6 +1,5 @@
 //// The auth pages: users and groups, and signing in as a user.
 
-import ewe
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
@@ -20,6 +19,7 @@ import howdy/auth/routes
 import howdy/auth/user.{type User}
 import howdy/auth/users
 import howdy/authorization.{type Authorization}
+import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/form
 import howdy/service
@@ -92,7 +92,7 @@ fn user_index(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let listed = {
     use listed <- result.try(users.list(identity))
     use groups <- result.try(groups.list(identity))
@@ -192,7 +192,7 @@ fn user_create(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   use form <- form.read(ctx)
   let email = form.value(form, "email")
   let identity = case form.get(form, "group") {
@@ -209,7 +209,7 @@ fn user_show(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   let found = {
     use user <- result.try(users.get(identity, id))
@@ -337,7 +337,7 @@ fn user_action(
   identity: Auth,
   ctx: Context,
   run: fn(String) -> service.Result(Nil),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let _ = identity
   let id = result.unwrap(controller.param(ctx, "id"), "")
   case run(id) {
@@ -350,7 +350,7 @@ fn user_move(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   use form <- form.read(ctx)
   case groups.move(identity, id, to: form.value(form, "group"), by: actor) {
@@ -365,7 +365,7 @@ fn impersonate(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   case auth.impersonate(identity, id, by: actor) {
     Ok(session) ->
@@ -411,7 +411,7 @@ fn user_delete(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   use form <- form.read(ctx)
   let deleted = {
@@ -526,7 +526,7 @@ fn session_revoke(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   use form <- form.read(ctx)
   case
@@ -630,7 +630,7 @@ fn role_change(
   ctx: Context,
   run: fn(Authorization, String, authorization.Scope, String) ->
     service.Result(Nil),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   use form <- form.read(ctx)
   let parsed = {
@@ -660,7 +660,7 @@ fn group_index(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case groups.list(identity) {
     Error(error) -> failure(config, ctx, "/groups", "Groups", error)
     Ok(listed) ->
@@ -740,7 +740,7 @@ fn group_create(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   use form <- form.read(ctx)
   let name = form.value(form, "name")
   let created = case form.value(form, "id") {
@@ -757,7 +757,7 @@ fn group_show(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   let found = {
     use group <- result.try(groups.get(identity, id))
@@ -821,7 +821,7 @@ fn group_rename(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   use form <- form.read(ctx)
   case groups.rename(identity, id, to: form.value(form, "name"), by: actor) {
@@ -834,7 +834,7 @@ fn group_delete(
   config: Config,
   identity: Auth,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let id = result.unwrap(controller.param(ctx, "id"), "")
   case groups.delete(identity, id, by: actor) {
     Ok(Nil) -> layout.redirect(config.path(config, "/groups"))
@@ -924,7 +924,7 @@ fn failure(
   current: String,
   heading: String,
   error: service.Error,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   layout.failure(
     config,
     ctx,

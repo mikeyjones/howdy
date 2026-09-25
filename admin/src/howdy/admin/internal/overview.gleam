@@ -1,6 +1,5 @@
 //// The first page: what the admin found, and where to go.
 
-import ewe
 import gleam/dynamic/decode
 import gleam/http/response.{type Response}
 import gleam/int
@@ -16,6 +15,7 @@ import howdy/admin/internal/schema
 import howdy/auth.{type Auth}
 import howdy/auth/group
 import howdy/authorization
+import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
 import howdy/mail/outbox.{type Outbox}
@@ -29,7 +29,7 @@ pub fn controller(config: Config) -> Controller {
   |> controller.get("/", fn(ctx) { index(config, ctx) })
 }
 
-fn index(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn index(config: Config, ctx: Context) -> Response(Content) {
   layout.page(
     config,
     ctx,

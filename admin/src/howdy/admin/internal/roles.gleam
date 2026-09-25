@@ -1,6 +1,5 @@
 //// The authorization pages: roles, their permissions, and who holds them.
 
-import ewe
 import gleam/http/request
 import gleam/http/response.{type Response}
 import gleam/list
@@ -14,6 +13,7 @@ import howdy/auth.{type Auth}
 import howdy/auth/user.{type User}
 import howdy/auth/users
 import howdy/authorization.{type Authorization, type Scope, Global, Organization}
+import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/form.{type Form}
 import howdy/service
@@ -59,7 +59,7 @@ fn index(
   config: Config,
   access: Authorization,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case authorization.roles(access) {
     Error(error) -> failure(config, ctx, "Roles", error)
     Ok(roles) ->
@@ -119,7 +119,7 @@ fn show(
   identity: Auth,
   access: Authorization,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   use scope, name <- with_role(config, ctx)
   let found = {
     use roles <- result.try(authorization.roles(access))
@@ -199,7 +199,7 @@ fn define(
   config: Config,
   access: Authorization,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   use form <- form.read(ctx)
   let scope = case form.value(form, "organization") {
     "" -> Global
@@ -218,7 +218,7 @@ fn redefine(
   config: Config,
   access: Authorization,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   use scope, name <- with_role(config, ctx)
   use form <- form.read(ctx)
   case
@@ -234,7 +234,7 @@ fn change(
   access: Authorization,
   ctx: Context,
   run: fn(Scope, String, String) -> service.Result(Nil),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let _ = access
   use scope, name <- with_role(config, ctx)
   use form <- form.read(ctx)
@@ -248,7 +248,7 @@ fn delete(
   config: Config,
   access: Authorization,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   use scope, name <- with_role(config, ctx)
   case authorization.delete_role(access, scope, name, by: actor) {
     Ok(Nil) -> layout.redirect(config.path(config, "/roles"))
@@ -405,8 +405,8 @@ pub fn permission_badges(permissions: List(String)) -> List(Element(msg)) {
 fn with_role(
   config: Config,
   ctx: Context,
-  next: fn(Scope, String) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Scope, String) -> Response(Content),
+) -> Response(Content) {
   let query = request.get_query(ctx.request) |> result.unwrap([])
   let scope =
     list.key_find(query, "scope")
@@ -431,7 +431,7 @@ fn failure(
   ctx: Context,
   heading: String,
   error: service.Error,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   layout.failure(
     config,
     ctx,

@@ -26,10 +26,10 @@
 //// Every page includes `howdy/ui/behaviour`, the small script behind menus,
 //// tabs, selects and tooltips, in the page and in its live views.
 
-import ewe
 import gleam/http/response.{type Response}
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import howdy/content.{type Content}
 import howdy/controller.{type GuardedContext}
 import howdy/ui/behaviour
 import howdy/ui/direction
@@ -170,7 +170,7 @@ pub fn to_string(page: Page(msg)) -> String {
 pub fn respond(
   page: Page(msg),
   ctx: GuardedContext(guarded),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   controller.html(ctx, to_string(page))
 }
 

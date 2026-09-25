@@ -36,8 +36,10 @@ import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import gleam/string
 import gleam/uri
+import howdy/content.{type Content}
 import howdy/context
 import howdy/controller.{type Controller, type GuardedContext}
 import howdy/service
@@ -119,7 +121,7 @@ pub fn build(files: Files) -> Controller {
 /// type from its extension, or a `404` if there is no such file. The path
 /// is used as given, so build it from trusted values only; the controller
 /// from `build` is the safe way to serve user-chosen paths.
-pub fn file(ctx: GuardedContext(guarded), path: String) -> Response(ewe.Body) {
+pub fn file(ctx: GuardedContext(guarded), path: String) -> Response(Content) {
   case simplifile.is_file(path) {
     Ok(True) -> send(ctx, path)
     _ -> not_found(ctx)
@@ -130,7 +132,7 @@ fn respond(
   ctx: controller.Context,
   files: Files,
   path: String,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let response = case safe_segments(path) {
     Ok(segments) -> {
       case resolve(files.root, segments, files.index) {
@@ -228,12 +230,14 @@ fn valid_relative_name(name: String) -> Bool {
   })
 }
 
-fn send(ctx: GuardedContext(guarded), path: String) -> Response(ewe.Body) {
+fn send(ctx: GuardedContext(guarded), path: String) -> Response(Content) {
   let body = case context.connection(ctx.request.body) {
-    Some(connection) -> ewe.file(connection, path, offset: None, limit: None)
+    Some(connection) ->
+      ewe.file(connection, path, offset: None, limit: None)
+      |> result.map(content.native)
     None ->
       case simplifile.read_bits(path) {
-        Ok(bits) -> Ok(ewe.Bytes(bytes_tree.from_bit_array(bits)))
+        Ok(bits) -> Ok(content.Bytes(bytes_tree.from_bit_array(bits)))
         Error(_) -> Error(ewe.UnknownError)
       }
   }
@@ -251,7 +255,7 @@ fn send(ctx: GuardedContext(guarded), path: String) -> Response(ewe.Body) {
   }
 }
 
-fn not_found(ctx: GuardedContext(guarded)) -> Response(ewe.Body) {
+fn not_found(ctx: GuardedContext(guarded)) -> Response(Content) {
   service.error_response(ctx, service.NotFound("file not found"))
 }
 

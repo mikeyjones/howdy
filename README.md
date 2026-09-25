@@ -36,11 +36,13 @@ howdy.new()
 |> howdy.start
 ```
 
-`howdy.start` creates the process names and returns ewe's startup result.
+`howdy.start` returns the server's process and the `howdy.Address` it is
+listening on, whose `port` is the real one even when configured with port `0`.
 Once listening, it prints a HOWDY ASCII banner, the framework version (`2.0.0`),
-and the bound URL including the actual port (even when configured with port `0`).
-Keep the calling process alive while serving requests. For advanced ewe options
-or supervision, `howdy.handler` is still available for use with `ewe.new`.
+and the bound URL. Keep the calling process alive while serving requests.
+Howdy runs on the [ewe](https://hexdocs.pm/ewe/) server, but your code never
+needs to name it. For ewe options `howdy.start` does not offer, pass
+`howdy.handler(app)` to `ewe.new` yourself.
 
 HTTP/2 is always on. Add `howdy.tls(cert: "priv/cert.pem", key: "priv/key.pem")`
 to serve HTTPS, which is also what lets browsers use HTTP/2. See

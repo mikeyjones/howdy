@@ -40,7 +40,6 @@
 //// private network. Across a trust boundary, serve with `controller` and
 //// call with `http`.
 
-import ewe
 import gleam/bit_array
 import gleam/crypto
 import gleam/dict.{type Dict}
@@ -60,6 +59,7 @@ import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import howdy/body
+import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/service
 import howdy/trace
@@ -198,7 +198,7 @@ pub fn respond(
   result: Result(a, Error),
   ctx: controller.GuardedContext(guarded),
   encode: fn(a) -> Json,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   result
   |> result.map_error(to_service_error)
   |> service.respond(ctx, encode)
@@ -360,7 +360,7 @@ fn serve_http(
   server: Server,
   token: String,
   ctx: Context,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let assert Ok(name) = controller.param(ctx, "procedure")
   case authorised(ctx, token), dict.get(server.handlers, name) {
     False, _ -> wire_error(ctx, 401, "refused", [])
@@ -404,10 +404,10 @@ fn authorised(ctx: Context, token: String) -> Bool {
   }
 }
 
-fn wire_reply(_ctx: Context, status: Int, body: String) -> Response(ewe.Body) {
+fn wire_reply(_ctx: Context, status: Int, body: String) -> Response(Content) {
   response.new(status)
   |> response.set_header("content-type", "application/json; charset=utf-8")
-  |> response.set_body(ewe.Text(body))
+  |> response.set_body(content.Text(body))
 }
 
 fn wire_error(
@@ -415,7 +415,7 @@ fn wire_error(
   status: Int,
   kind: String,
   fields: List(#(String, Json)),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   json.object([#("kind", json.string(kind)), ..fields])
   |> json.to_string
   |> wire_reply(ctx, status, _)

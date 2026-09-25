@@ -1,7 +1,6 @@
 //// Live checks that `howdy.tls` serves HTTPS with HTTP/2 offered through
 //// ALPN, and that plaintext HTTP/2 with prior knowledge works without it.
 
-import ewe
 import gleam/erlang/process
 import howdy
 import howdy/controller
@@ -46,7 +45,7 @@ fn with_server(app: howdy.App, run: fn() -> a) -> a {
 pub fn tls_serves_http1_and_http2_over_alpn_test() {
   let port = free_port()
   let #(cert, key) = test_certificate()
-  use <- with_server(app(port) |> howdy.tls_with(ewe.Pem(cert:, key:)))
+  use <- with_server(app(port) |> howdy.tls_pem(cert:, key:))
 
   let #(protocol, outcome) = tls_probe(port, "h2")
   assert protocol == "h2"

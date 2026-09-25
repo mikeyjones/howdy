@@ -13,10 +13,10 @@ opentelemetry = ">= 1.7.0 and < 2.0.0"
 opentelemetry_exporter = ">= 1.10.0 and < 2.0.0"
 
 [dev_dependencies]
+ewe = ">= 8.0.0 and < 9.0.0"
 gleeunit = ">= 1.0.0 and < 2.0.0"
 gleam_http = ">= 4.4.0 and < 5.0.0"
 logging = ">= 1.5.0 and < 2.0.0"
-ewe = ">= 7.0.0 and < 8.0.0"
 
 [erlang]
 # The OTLP exporter needs inets and ssl running before the SDK starts, or it

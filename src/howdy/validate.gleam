@@ -15,12 +15,12 @@
 //// }
 //// ```
 
-import ewe
 import gleam
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
 import gleam/string
+import howdy/content.{type Content}
 import howdy/controller.{type GuardedContext}
 import howdy/service
 
@@ -66,8 +66,8 @@ pub fn ok(value: a) -> Result(a) {
 pub fn check(
   ctx: GuardedContext(guarded),
   result: Result(a),
-  next: fn(a) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(a) -> Response(Content),
+) -> Response(Content) {
   case result {
     Ok(value) -> next(value)
     Error(errors) -> service.error_response(ctx, service.Validation(errors))

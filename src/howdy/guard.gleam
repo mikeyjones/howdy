@@ -1,7 +1,7 @@
 //// Guards reject a request or provide a typed value to its continuation.
 
-import ewe
 import gleam/http/response.{type Response}
+import howdy/content.{type Content}
 import howdy/context.{type Context}
 import howdy/service
 
@@ -19,8 +19,8 @@ pub type Guard(existing, value) =
 pub fn require(
   ctx: Context(existing),
   check: Guard(existing, value),
-  next: fn(value) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(value) -> Response(Content),
+) -> Response(Content) {
   case check(ctx) {
     Ok(value) -> next(value)
     Error(error) -> service.error_response(ctx, error)

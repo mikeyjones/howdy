@@ -53,10 +53,10 @@
 //// what a reload, a bookmark, a new tab or a browser without JavaScript
 //// loads.
 
-import ewe
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Subject}
 import gleam/http/response.{type Response}
+import howdy/content.{type Content}
 import howdy/controller.{type GuardedContext}
 import howdy/ui/internal/stylesheet
 import howdy/ui/style.{class}
@@ -182,7 +182,7 @@ pub fn serve(
   ctx: GuardedContext(guarded),
   app: App(args, model, msg),
   with args: args,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   socket(app, args)
   |> websocket.upgrade(ctx)
 }
@@ -222,7 +222,7 @@ pub fn start(
 pub fn serve_shared(
   ctx: GuardedContext(guarded),
   runtime: Runtime(msg),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   socket_shared(runtime)
   |> websocket.upgrade(ctx)
 }

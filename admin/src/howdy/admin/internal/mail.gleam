@@ -1,7 +1,6 @@
 //// The mail pages: the outbox as messages arrive, each message rendered,
 //// and email previews built from sample data.
 
-import ewe
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/http/request
@@ -16,6 +15,7 @@ import gleam/time/timestamp
 import gleam/uri
 import howdy/admin/internal/config.{type Config}
 import howdy/admin/internal/layout
+import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/mail.{type Address, type Mailer, type Outgoing}
 import howdy/mail/mime
@@ -63,7 +63,7 @@ pub fn controller(config: Config) -> Controller {
 
 // -- The outbox --------------------------------------------------------------
 
-fn outbox_page(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn outbox_page(config: Config, ctx: Context) -> Response(Content) {
   case config.outbox {
     None -> layout.redirect(config.path(config, "/mail/previews"))
     Some(box) ->
@@ -94,7 +94,7 @@ fn outbox_page(config: Config, ctx: Context) -> Response(ewe.Body) {
   }
 }
 
-fn clear(config: Config) -> Response(ewe.Body) {
+fn clear(config: Config) -> Response(Content) {
   case config.outbox {
     Some(box) -> outbox.clear(box)
     None -> Nil
@@ -102,7 +102,7 @@ fn clear(config: Config) -> Response(ewe.Body) {
   layout.redirect(config.path(config, "/mail"))
 }
 
-fn socket(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn socket(config: Config, ctx: Context) -> Response(Content) {
   case config.outbox {
     Some(box) -> live.serve(ctx, list_app(), with: Args(config, box))
     None -> layout.redirect(config.path(config, "/mail/previews"))
@@ -211,7 +211,7 @@ fn list_view(model: Model) -> Element(Msg) {
 
 // -- One message -------------------------------------------------------------
 
-fn message_page(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn message_page(config: Config, ctx: Context) -> Response(Content) {
   use outgoing <- with_message(config, ctx)
   let base = config.path(config, "/mail/message/" <> outgoing.id)
   let width = width_of(ctx)
@@ -240,8 +240,8 @@ fn message_page(config: Config, ctx: Context) -> Response(ewe.Body) {
 fn with_message(
   config: Config,
   ctx: Context,
-  next: fn(Outgoing) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Outgoing) -> Response(Content),
+) -> Response(Content) {
   let id = controller.param(ctx, "id") |> result.unwrap("")
   let found = case config.outbox {
     Some(box) -> outbox.get(box, id)
@@ -480,7 +480,7 @@ fn linkify(body: String) -> List(Element(msg)) {
 /// `data:` URLs so `cid:` images show, and links open in a new tab. The
 /// content security policy repeats the frame's sandbox, so opening this URL
 /// directly runs no script either.
-fn html_response(outgoing: Outgoing) -> Response(ewe.Body) {
+fn html_response(outgoing: Outgoing) -> Response(Content) {
   let body =
     option.unwrap(outgoing.html, "")
     |> inline_images(outgoing.attachments)
@@ -493,7 +493,7 @@ fn html_response(outgoing: Outgoing) -> Response(ewe.Body) {
   )
   |> response.set_header("x-content-type-options", "nosniff")
   |> response.set_header("referrer-policy", "no-referrer")
-  |> response.set_body(ewe.Text(body))
+  |> response.set_body(content.Text(body))
 }
 
 fn inline_images(html: String, attachments: List(mail.Attachment)) -> String {
@@ -521,17 +521,17 @@ fn with_base(html: String) -> String {
   }
 }
 
-fn source_response(outgoing: Outgoing) -> Response(ewe.Body) {
+fn source_response(outgoing: Outgoing) -> Response(Content) {
   response.new(200)
   |> response.set_header("content-type", "message/rfc822")
   |> response.set_header(
     "content-disposition",
     "attachment; filename=\"" <> outgoing.id <> ".eml\"",
   )
-  |> response.set_body(ewe.Text(mime.encode(outgoing)))
+  |> response.set_body(content.Text(mime.encode(outgoing)))
 }
 
-fn attachment_response(outgoing: Outgoing, ctx: Context) -> Response(ewe.Body) {
+fn attachment_response(outgoing: Outgoing, ctx: Context) -> Response(Content) {
   let found = {
     use index <- result.try(
       controller.param(ctx, "index") |> result.try(int.parse),
@@ -549,15 +549,17 @@ fn attachment_response(outgoing: Outgoing, ctx: Context) -> Response(ewe.Body) {
           <> "\"",
       )
       |> response.set_header("x-content-type-options", "nosniff")
-      |> response.set_body(ewe.Bytes(bytes_tree.from_bit_array(file.content)))
+      |> response.set_body(
+        content.Bytes(bytes_tree.from_bit_array(file.content)),
+      )
     Error(Nil) ->
-      response.new(404) |> response.set_body(ewe.Text("No such attachment"))
+      response.new(404) |> response.set_body(content.Text("No such attachment"))
   }
 }
 
 // -- Previews ----------------------------------------------------------------
 
-fn previews_page(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn previews_page(config: Config, ctx: Context) -> Response(Content) {
   let page = fn(heading, content) {
     layout.page(
       config,
@@ -732,8 +734,8 @@ fn render(mailer: Mailer, selected: Preview) -> Result(Outgoing, Element(msg)) {
 fn with_preview(
   config: Config,
   ctx: Context,
-  next: fn(Outgoing) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Outgoing) -> Response(Content),
+) -> Response(Content) {
   let found = {
     use mailer <- result.try(option.to_result(config.mailer, Nil))
     use key <- result.try(query(ctx, "p"))
@@ -743,11 +745,11 @@ fn with_preview(
   case found {
     Ok(outgoing) -> next(outgoing)
     Error(Nil) ->
-      response.new(404) |> response.set_body(ewe.Text("No such preview"))
+      response.new(404) |> response.set_body(content.Text("No such preview"))
   }
 }
 
-fn send_preview(config: Config, ctx: Context) -> Response(ewe.Body) {
+fn send_preview(config: Config, ctx: Context) -> Response(Content) {
   let base = config.path(config, "/mail/previews")
   let sent = {
     use mailer <- result.try(option.to_result(
@@ -796,7 +798,7 @@ fn send_preview(config: Config, ctx: Context) -> Response(ewe.Body) {
   }
 }
 
-fn back_to(base: String, key: String, mailer: Mailer) -> Response(ewe.Body) {
+fn back_to(base: String, key: String, mailer: Mailer) -> Response(Content) {
   layout.redirect(
     base
     <> "?p="

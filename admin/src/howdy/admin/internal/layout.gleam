@@ -1,11 +1,11 @@
 //// The admin's page shell and small response helpers.
 
-import ewe
 import gleam/http/response.{type Response}
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import howdy/admin/internal/config.{type Config}
+import howdy/content.{type Content}
 import howdy/controller.{type Context}
 import howdy/cookie
 import howdy/service
@@ -23,7 +23,7 @@ pub fn page(
   heading heading: String,
   live live: Bool,
   content content: List(Element(msg)),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   use theme <- cookie.string_or(ctx, "theme", default: "system")
   use sidebar <- cookie.string_or(ctx, "sidebar", default: "expanded")
   let document =
@@ -102,10 +102,10 @@ fn navigation(config: Config) -> List(app_shell.Group) {
 }
 
 /// A `303 See Other` to `location`, after a form has been handled.
-pub fn redirect(location: String) -> Response(ewe.Body) {
+pub fn redirect(location: String) -> Response(Content) {
   response.new(303)
   |> response.set_header("location", location)
-  |> response.set_body(ewe.Text(""))
+  |> response.set_body(content.Text(""))
 }
 
 /// A page explaining a failed operation, in place of the page it failed on.
@@ -116,7 +116,7 @@ pub fn failure(
   heading heading: String,
   error error: service.Error,
   back back: String,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   page(config, ctx, current:, heading:, live: False, content: [
     problem(error),
     ui.p([ui.link(back, [text("Back")])]),

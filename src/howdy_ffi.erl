@@ -5,6 +5,7 @@
 -export([channel_join/2, channel_leave/2, channel_members/1, channel_broadcast/3, tuple_second/1]).
 -export([parse_query/1]).
 -export([console_put/2, console_get/1]).
+-export([quiet_disconnects/0]).
 
 %% -- Query strings ---------------------------------------------------------------
 %%
@@ -341,3 +342,61 @@ console_get(Name) ->
         Missing -> {error, nil};
         Value -> {ok, Value}
     end.
+
+%% -- Quiet disconnects -----------------------------------------------------------
+%%
+%% A client that goes away while ewe is writing to it, such as a browser tab
+%% closing mid WebSocket close handshake, ends its connection process with a
+%% plain socket error. OTP reports each one as a crash: a supervisor report
+%% from the connection pool and a crash report from the process. Nothing went
+%% wrong on the server, so this primary logger filter drops exactly those
+%% reports: an exit whose reason is one of the socket errors below, from a
+%% temporary child of a factory supervisor. Every other report passes.
+
+-define(DISCONNECT_FILTER, howdy_quiet_disconnects).
+
+quiet_disconnects() ->
+    case logger:add_primary_filter(?DISCONNECT_FILTER,
+                                   {fun drop_disconnect/2, nil}) of
+        ok -> nil;
+        {error, {already_exist, _}} -> nil
+    end.
+
+drop_disconnect(#{msg := {report, #{label := {supervisor, child_terminated},
+                                    report := Report}}} = Event, _) ->
+    Reason = proplists:get_value(reason, Report),
+    Offender = proplists:get_value(offender, Report, []),
+    case disconnect_reason(Reason) andalso pooled_connection(Offender) of
+        true -> stop;
+        false -> Event
+    end;
+drop_disconnect(#{msg := {report, #{label := {proc_lib, crash},
+                                    report := [Crash | _]}}} = Event, _) ->
+    case proplists:get_value(error_info, Crash) of
+        {exit, Reason, _Stack} ->
+            case disconnect_reason(Reason) of
+                true -> stop;
+                false -> Event
+            end;
+        _ -> Event
+    end;
+drop_disconnect(Event, _) ->
+    Event.
+
+pooled_connection(Offender) ->
+    case {proplists:get_value(mfargs, Offender),
+          proplists:get_value(restart_type, Offender)} of
+        {{gleam@otp@factory_supervisor, _, _}, temporary} -> true;
+        _ -> false
+    end.
+
+%% How tup, ewe's connection pool, words the socket errors that mean the
+%% client has gone.
+disconnect_reason(<<"the socket is closed">>) -> true;
+disconnect_reason(<<"the peer reset the connection">>) -> true;
+disconnect_reason(<<"an argument was invalid">>) -> true;
+disconnect_reason(<<"the connection was reset by the network">>) -> true;
+disconnect_reason(<<"the socket is not connected">>) -> true;
+disconnect_reason(<<"the write end is closed">>) -> true;
+disconnect_reason(<<"the connection timed out">>) -> true;
+disconnect_reason(_) -> false.

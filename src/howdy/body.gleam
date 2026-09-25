@@ -9,12 +9,13 @@
 //// }
 //// ```
 
-import ewe
 import gleam/dynamic/decode.{type Decoder}
 import gleam/http/response.{type Response}
 import gleam/json
 import gleam/list
 import gleam/string
+import howdy/content.{type Content}
+import howdy/context
 import howdy/controller.{type GuardedContext}
 import howdy/service
 import howdy/validate
@@ -26,8 +27,8 @@ pub const default_limit = 1_048_576
 pub fn json(
   ctx: GuardedContext(guarded),
   decoder: Decoder(a),
-  next: fn(a) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(a) -> Response(Content),
+) -> Response(Content) {
   json_with_limit(ctx, default_limit, decoder, next)
 }
 
@@ -38,8 +39,8 @@ pub fn validated(
   ctx: GuardedContext(guarded),
   decoder: Decoder(a),
   validator: fn(a) -> validate.Result(b),
-  next: fn(b) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(b) -> Response(Content),
+) -> Response(Content) {
   use input <- json(ctx, decoder)
   validate.check(ctx, validator(input), next)
 }
@@ -49,13 +50,13 @@ pub fn json_with_limit(
   ctx: GuardedContext(guarded),
   limit: Int,
   decoder: Decoder(a),
-  next: fn(a) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(a) -> Response(Content),
+) -> Response(Content) {
   case controller.read_body(ctx, limit:) {
     Ok(bits) -> json_from(ctx, bits, decoder, next)
-    Error(ewe.BodyTooLarge) ->
+    Error(context.BodyTooLarge) ->
       service.error_response(ctx, service.Invalid("request body too large"))
-    Error(ewe.InvalidBody) ->
+    Error(context.InvalidBody) ->
       service.error_response(
         ctx,
         service.Invalid("request body could not be read"),
@@ -69,8 +70,8 @@ pub fn json_from(
   ctx: GuardedContext(guarded),
   bits: BitArray,
   decoder: Decoder(a),
-  next: fn(a) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(a) -> Response(Content),
+) -> Response(Content) {
   case json.parse_bits(bits, decoder) {
     Ok(value) -> next(value)
     Error(error) ->

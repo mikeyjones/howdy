@@ -61,7 +61,6 @@
 //// your users. If you really want that, `allow_origins_matching` with a
 //// function that always returns `True` states the intent explicitly.
 
-import ewe
 import gleam/http.{type Method}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -69,6 +68,7 @@ import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
+import howdy/content.{type Content}
 import howdy/context.{type Body}
 import howdy/controller.{type Context, type Middleware, type Next}
 
@@ -218,10 +218,10 @@ fn preflight(
   config: Config,
   request: Request(Body),
   origin: String,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let res =
     response.new(204)
-    |> response.set_body(ewe.Empty)
+    |> response.set_body(content.Empty)
     |> vary(config)
   case allow_origin(config, origin) {
     None -> res
@@ -245,10 +245,10 @@ fn preflight(
 }
 
 fn actual(
-  res: Response(ewe.Body),
+  res: Response(Content),
   config: Config,
   origin: String,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let res = vary(res, config)
   case allow_origin(config, origin) {
     None -> res

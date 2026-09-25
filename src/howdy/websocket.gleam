@@ -39,6 +39,7 @@ import gleam/http/response.{type Response}
 import gleam/json.{type Json}
 import gleam/option.{None, Some}
 import gleam/result
+import howdy/content.{type Content}
 import howdy/context
 import howdy/controller.{type GuardedContext}
 import howdy/service
@@ -75,7 +76,11 @@ pub fn close(
   code: CloseCode,
   reason: String,
 ) -> Next(state) {
-  let _ = ewe.send_close_frame(socket.conn, ewe.CloseReason(code, reason))
+  let _ =
+    ewe.send_close_frame(
+      socket.conn,
+      ewe.CloseReason(to_ewe_close_code(code), reason),
+    )
   Stop
 }
 
@@ -84,14 +89,74 @@ pub fn stop() -> Next(state) {
   Stop
 }
 
-/// The status code a close frame carries. See `ewe.CloseCode` for the
-/// meaning of each; `NormalClosure` is the usual choice.
-pub type CloseCode =
-  ewe.CloseCode
+/// The status code a close frame carries. `NormalClosure` is the usual
+/// choice.
+pub type CloseCode {
+  /// The connection did what it was for and is closing normally (1000).
+  NormalClosure
+  /// The server is going away, such as shutting down (1001).
+  GoingAway
+  /// The client broke the protocol (1002).
+  ProtocolError
+  /// Data arrived that the server cannot accept (1003).
+  UnsupportedData
+  /// A message did not match the type it declared, such as a text frame
+  /// that is not UTF-8 (1007).
+  InvalidPayloadData
+  /// The client broke your rules when no more specific code applies (1008).
+  PolicyViolation
+  /// A message was larger than the server will handle (1009).
+  MessageTooBig
+  /// Something went wrong on the server (1011).
+  InternalError
+  /// The server is restarting and clients may reconnect shortly (1012).
+  ServiceRestart
+  /// The server is overloaded and the client should retry later (1013).
+  TryAgainLater
+  /// An upstream server answered badly (1014).
+  BadGateway
+  /// An application specific code, between 3000 and 4999.
+  ApplicationCode(code: Int)
+}
 
 /// Why a frame could not be sent.
-pub type SendError =
-  ewe.SendError
+pub type SendError {
+  /// The client is gone, so nothing further can be written.
+  ConnectionClosed
+  /// The client cancelled the HTTP/2 stream the socket runs on.
+  StreamReset
+  /// The client stopped reading for long enough that the write gave up.
+  SendTimedOut
+  /// The socket refused the write for another reason, described by `reason`.
+  SocketError(reason: String)
+}
+
+fn to_ewe_close_code(code: CloseCode) -> ewe.CloseCode {
+  case code {
+    NormalClosure -> ewe.NormalClosure
+    GoingAway -> ewe.GoingAway
+    ProtocolError -> ewe.ProtocolError
+    UnsupportedData -> ewe.UnsupportedData
+    InvalidPayloadData -> ewe.InvalidPayloadData
+    PolicyViolation -> ewe.PolicyViolation
+    MessageTooBig -> ewe.MessageTooBig
+    InternalError -> ewe.InternalError
+    ServiceRestart -> ewe.ServiceRestart
+    TryAgainLater -> ewe.TryAgainLater
+    BadGateway -> ewe.BadGateway
+    ApplicationCode(code:) -> ewe.ApplicationCode(code:)
+  }
+}
+
+fn from_ewe_send_error(error: ewe.SendError) -> SendError {
+  case error {
+    ewe.ConnectionClosed -> ConnectionClosed
+    ewe.StreamReset -> StreamReset
+    ewe.SendTimedOut -> SendTimedOut
+    ewe.SocketError(reason:) ->
+      SocketError(reason: ewe.socket_reason_to_string(reason))
+  }
+}
 
 // -- Building ----------------------------------------------------------------
 
@@ -183,7 +248,7 @@ pub fn on_json(
 ///
 /// ```gleam
 /// |> websocket.on_json_or(decoder, handle, fn(socket, _state, _error) {
-///   websocket.close(socket, ewe.InvalidPayloadData, "expected json")
+///   websocket.close(socket, websocket.InvalidPayloadData, "expected json")
 /// })
 /// ```
 pub fn on_json_or(
@@ -244,7 +309,7 @@ fn tuple_second(message: Dynamic) -> Frame
 pub fn upgrade(
   builder: Builder(state, msg),
   ctx: GuardedContext(guarded),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case origin.allowed(ctx.request, builder.origins, builder.origin_required) {
     False -> service.error_response(ctx, service.Forbidden)
     True -> upgrade_allowed(builder, ctx)
@@ -254,12 +319,12 @@ pub fn upgrade(
 fn upgrade_allowed(
   builder: Builder(state, msg),
   ctx: GuardedContext(guarded),
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   case context.connection(ctx.request.body) {
     None ->
       response.new(426)
       |> response.set_header("content-type", "text/plain; charset=utf-8")
-      |> response.set_body(ewe.Text("upgrade required"))
+      |> response.set_body(content.Text("upgrade required"))
     Some(connection) -> {
       // Each frame is traced on its own, as a trace of its own that links
       // back to the request that opened the socket.
@@ -314,6 +379,7 @@ fn upgrade_allowed(
         },
         on_close: fn(_conn, pair) { builder.on_close(pair.0, pair.1) },
       )
+      |> response.map(content.native)
     }
   }
 }
@@ -334,6 +400,7 @@ fn inbound(
 /// Send a text frame.
 pub fn send_text(socket: Socket(msg), text: String) -> Result(Nil, SendError) {
   ewe.send_text_frame(socket.conn, text)
+  |> result.map_error(from_ewe_send_error)
 }
 
 /// Send a binary frame.
@@ -342,6 +409,7 @@ pub fn send_binary(
   data: BitArray,
 ) -> Result(Nil, SendError) {
   ewe.send_binary_frame(socket.conn, data)
+  |> result.map_error(from_ewe_send_error)
 }
 
 /// Send JSON as a text frame.

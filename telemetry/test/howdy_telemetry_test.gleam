@@ -231,19 +231,13 @@ pub fn websocket_frames_are_spans_linked_to_the_upgrade_test() {
       controller.new("ws")
       |> controller.get("/", fn(ctx: Context) { websocket.upgrade(socket, ctx) }),
     )
-  let listener = process.new_name("telemetry_ws_listener")
-  let assert Ok(_) =
-    ewe.new(
-      listener_name: listener,
-      connection_factory_name: process.new_name("telemetry_ws_connections"),
-      handler: howdy.handler(app),
-    )
+  let assert Ok(started) =
+    ewe.new(handler: howdy.handler(app))
     |> ewe.bind("127.0.0.1")
     |> ewe.listening(0)
     |> ewe.quiet
     |> ewe.start
-  let assert ewe.TcpSocketAddress(_, port) =
-    ewe.get_server_info(process.named_subject(listener))
+  let assert ewe.TcpSocketAddress(_, port) = started.data
   let _ = websocket_roundtrip(port, "/ws", "hello")
   process.sleep(50)
 

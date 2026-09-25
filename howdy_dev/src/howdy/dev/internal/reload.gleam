@@ -1,7 +1,6 @@
 //// The browser side: a socket every open page listens on, and the script
 //// that connects to it.
 
-import ewe
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/http/request
@@ -9,6 +8,7 @@ import gleam/http/response.{type Response}
 import gleam/json
 import gleam/list
 import gleam/string
+import howdy/content.{type Content}
 import howdy/controller.{type Controller, type Middleware}
 import howdy/websocket
 import howdy/websocket/channel
@@ -50,8 +50,8 @@ fn authorized(session: Session, ctx: controller.Context) -> Bool {
   }
 }
 
-pub fn forbidden() -> Response(ewe.Body) {
-  response.new(403) |> response.set_body(ewe.Text("forbidden"))
+pub fn forbidden() -> Response(Content) {
+  response.new(403) |> response.set_body(content.Text("forbidden"))
 }
 
 /// The controller that upgrades pages to the reload socket.
@@ -100,10 +100,10 @@ pub fn inject(session: Session) -> Middleware {
   }
 }
 
-fn add_script(res: Response(ewe.Body), session: Session) -> Response(ewe.Body) {
+fn add_script(res: Response(Content), session: Session) -> Response(Content) {
   case response.get_header(res, "content-type"), res.body {
-    Ok("text/html" <> _), ewe.Text(html) -> with_script(res, html, session)
-    Ok("text/html" <> _), ewe.Bytes(tree) ->
+    Ok("text/html" <> _), content.Text(html) -> with_script(res, html, session)
+    Ok("text/html" <> _), content.Bytes(tree) ->
       case bit_array.to_string(bytes_tree.to_bit_array(tree)) {
         Ok(html) -> with_script(res, html, session)
         Error(Nil) -> res
@@ -113,10 +113,10 @@ fn add_script(res: Response(ewe.Body), session: Session) -> Response(ewe.Body) {
 }
 
 fn with_script(
-  res: Response(ewe.Body),
+  res: Response(Content),
   html: String,
   session: Session,
-) -> Response(ewe.Body) {
+) -> Response(Content) {
   let res =
     response.Response(
       ..res,
@@ -126,7 +126,7 @@ fn with_script(
     )
   res
   |> response.set_header("cache-control", "no-store")
-  |> response.set_body(ewe.Text(insert(html, session)))
+  |> response.set_body(content.Text(insert(html, session)))
 }
 
 fn insert(html: String, session: Session) -> String {

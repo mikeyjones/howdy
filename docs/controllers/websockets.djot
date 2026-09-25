@@ -97,18 +97,16 @@ about to close and `on_close` will run, so it is usually ignored with
 ## Closing
 
 `websocket.close(socket, code, reason)` sends the client a close frame and
-ends the connection. The code is one of the standard close codes from the
-`ewe` package, which Howdy is built on:
+ends the connection. The code is one of the standard close codes in
+`websocket.CloseCode`:
 
 ```gleam
-import ewe
-
-websocket.close(socket, ewe.NormalClosure, "goodbye")
+websocket.close(socket, websocket.NormalClosure, "goodbye")
 ```
 
 `NormalClosure` is the usual choice. `InvalidPayloadData` suits a message
 you could not understand, and `PolicyViolation` one that broke your rules.
-To use them, add `ewe` to your own dependencies with `gleam add ewe`.
+`ApplicationCode(code)` carries a code of your own, between 3000 and 4999.
 `websocket.stop()` ends the connection without telling the client why.
 
 `on_close` runs once when a connection ends, however that happens: your
@@ -125,7 +123,6 @@ This is a complete chat room. The room comes from the path and the name
 from the query string, read with the same helpers as any other handler:
 
 ```gleam
-import ewe
 import gleam/json
 import howdy/param
 import howdy/query
@@ -154,7 +151,7 @@ fn chat(ctx: Context) {
       websocket.continue(name)
     },
     fn(socket, _name, _error) {
-      websocket.close(socket, ewe.InvalidPayloadData, "expected json")
+      websocket.close(socket, websocket.InvalidPayloadData, "expected json")
     },
   )
   |> websocket.on_close(fn(_socket, name) {
@@ -215,7 +212,7 @@ fn prices(ctx: Context) {
           websocket.send_json(socket, json.object([#("price", json.int(pence))]))
         websocket.continue(state)
       }
-      Shutdown -> websocket.close(socket, ewe.GoingAway, "server restarting")
+      Shutdown -> websocket.close(socket, websocket.GoingAway, "server restarting")
     }
   })
   |> websocket.upgrade(ctx)

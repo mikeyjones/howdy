@@ -10,12 +10,12 @@
 //// use search <- query.optional_string(ctx, "search")
 //// ```
 
-import ewe
 import gleam/http/request
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import howdy/content.{type Content}
 import howdy/controller.{type GuardedContext}
 import howdy/service
 
@@ -23,8 +23,8 @@ import howdy/service
 pub fn string(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(String) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(String) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_string(ctx, name)
   case value {
     Some(value) -> next(value)
@@ -36,8 +36,8 @@ pub fn string(
 pub fn optional_string(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(Option(String)) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Option(String)) -> Response(Content),
+) -> Response(Content) {
   optional(ctx, name, parse_string, next)
 }
 
@@ -46,8 +46,8 @@ pub fn string_or(
   ctx: GuardedContext(guarded),
   name: String,
   default default: String,
-  next next: fn(String) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next next: fn(String) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_string(ctx, name)
   next(option.unwrap(value, default))
 }
@@ -56,8 +56,8 @@ pub fn string_or(
 pub fn int(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(Int) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Int) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_int(ctx, name)
   case value {
     Some(value) -> next(value)
@@ -69,8 +69,8 @@ pub fn int(
 pub fn optional_int(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(Option(Int)) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Option(Int)) -> Response(Content),
+) -> Response(Content) {
   optional(ctx, name, parse_int, next)
 }
 
@@ -79,8 +79,8 @@ pub fn int_or(
   ctx: GuardedContext(guarded),
   name: String,
   default default: Int,
-  next next: fn(Int) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next next: fn(Int) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_int(ctx, name)
   next(option.unwrap(value, default))
 }
@@ -89,8 +89,8 @@ pub fn int_or(
 pub fn bool(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(Bool) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Bool) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_bool(ctx, name)
   case value {
     Some(value) -> next(value)
@@ -102,8 +102,8 @@ pub fn bool(
 pub fn optional_bool(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(Option(Bool)) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Option(Bool)) -> Response(Content),
+) -> Response(Content) {
   optional(ctx, name, parse_bool, next)
 }
 
@@ -112,8 +112,8 @@ pub fn bool_or(
   ctx: GuardedContext(guarded),
   name: String,
   default default: Bool,
-  next next: fn(Bool) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next next: fn(Bool) -> Response(Content),
+) -> Response(Content) {
   use value <- optional_bool(ctx, name)
   next(option.unwrap(value, default))
 }
@@ -123,8 +123,8 @@ pub fn bool_or(
 pub fn strings(
   ctx: GuardedContext(guarded),
   name: String,
-  next: fn(List(String)) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(List(String)) -> Response(Content),
+) -> Response(Content) {
   case get_query(ctx.request) {
     Ok(pairs) ->
       pairs
@@ -157,8 +157,8 @@ fn optional(
   ctx: GuardedContext(guarded),
   name: String,
   parse: fn(String) -> Result(a, String),
-  next: fn(Option(a)) -> Response(ewe.Body),
-) -> Response(ewe.Body) {
+  next: fn(Option(a)) -> Response(Content),
+) -> Response(Content) {
   use values <- strings(ctx, name)
   case values {
     [] -> next(None)
@@ -191,9 +191,6 @@ fn parse_bool(value: String) -> Result(Bool, String) {
   }
 }
 
-fn invalid(
-  ctx: GuardedContext(guarded),
-  message: String,
-) -> Response(ewe.Body) {
+fn invalid(ctx: GuardedContext(guarded), message: String) -> Response(Content) {
   service.error_response(ctx, service.Invalid(message))
 }

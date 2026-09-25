@@ -36,7 +36,6 @@
 //// Requests are ordinary `gleam/http/request` values, so anything that
 //// module offers, such as `request.set_header`, works on them too.
 
-import ewe
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dynamic/decode.{type Decoder}
@@ -50,6 +49,7 @@ import gleam/result
 import gleam/string
 import gleam/uri
 import howdy.{type App}
+import howdy/content.{type Content}
 import howdy/context.{type Body}
 import howdy/service.{type FieldError}
 
@@ -169,7 +169,7 @@ pub fn from_ip(req: Request(Body), ip: String) -> Request(Body) {
 
 /// Run the request through the app and return the response, exactly as the
 /// server would produce it.
-pub fn send(req: Request(Body), app: App) -> Response(ewe.Body) {
+pub fn send(req: Request(Body), app: App) -> Response(Content) {
   howdy.serve(app)(req)
 }
 
@@ -177,7 +177,7 @@ pub fn send(req: Request(Body), app: App) -> Response(ewe.Body) {
 
 /// The response body as text. `Empty` is `""`. Panics for bodies that are
 /// not UTF-8 or that stream, since those cannot be read in a test.
-pub fn text(res: Response(ewe.Body)) -> String {
+pub fn text(res: Response(Content)) -> String {
   case bit_array.to_string(bytes(res)) {
     Ok(text) -> text
     Error(Nil) -> panic as "howdy/testing: response body is not valid UTF-8"
@@ -186,18 +186,18 @@ pub fn text(res: Response(ewe.Body)) -> String {
 
 /// The response body as bytes. `Empty` is `<<>>`. Panics for bodies that
 /// stream, since those cannot be read in a test.
-pub fn bytes(res: Response(ewe.Body)) -> BitArray {
+pub fn bytes(res: Response(Content)) -> BitArray {
   case res.body {
-    ewe.Text(text) -> <<text:utf8>>
-    ewe.Bytes(tree) -> bytes_tree.to_bit_array(tree)
-    ewe.Empty -> <<>>
+    content.Text(text) -> <<text:utf8>>
+    content.Bytes(tree) -> bytes_tree.to_bit_array(tree)
+    content.Empty -> <<>>
     _ -> panic as "howdy/testing: response body is streamed and cannot be read"
   }
 }
 
 /// Decode the response body as JSON with `decoder`.
 pub fn json(
-  res: Response(ewe.Body),
+  res: Response(Content),
   decoder: Decoder(a),
 ) -> Result(a, json.DecodeError) {
   json.parse_bits(bytes(res), decoder)
@@ -206,7 +206,7 @@ pub fn json(
 /// The message from a standard error response, `{"error": "..."}`, as
 /// produced by `service.error_response`. `Error(Nil)` when the body is not
 /// one.
-pub fn error(res: Response(ewe.Body)) -> Result(String, Nil) {
+pub fn error(res: Response(Content)) -> Result(String, Nil) {
   let decoder = {
     use message <- decode.field("error", decode.string)
     decode.success(message)
@@ -216,7 +216,7 @@ pub fn error(res: Response(ewe.Body)) -> Result(String, Nil) {
 
 /// The field errors from a `422` validation response. `Error(Nil)` when the
 /// body is not one.
-pub fn field_errors(res: Response(ewe.Body)) -> Result(List(FieldError), Nil) {
+pub fn field_errors(res: Response(Content)) -> Result(List(FieldError), Nil) {
   let field = {
     use field <- decode.field("field", decode.string)
     use message <- decode.field("message", decode.string)
@@ -233,7 +233,7 @@ pub fn field_errors(res: Response(ewe.Body)) -> Result(List(FieldError), Nil) {
 /// order they were set. A deleted cookie appears with an empty value.
 /// Attributes such as `Path` and `Max-Age` are dropped; read the raw
 /// `set-cookie` headers to check those.
-pub fn cookies(res: Response(ewe.Body)) -> List(#(String, String)) {
+pub fn cookies(res: Response(Content)) -> List(#(String, String)) {
   res.headers
   |> list.filter(fn(pair) { pair.0 == "set-cookie" })
   // gleam/http prepends headers, so the newest cookie comes first.
