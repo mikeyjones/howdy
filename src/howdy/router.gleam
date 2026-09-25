@@ -13,7 +13,8 @@ import howdy/controller.{
 pub type Match {
   /// A route matched. Params are the values captured by `:name` segments
   /// and by a trailing `*name` segment, which holds the rest of the path.
-  Found(handler: Handler, params: Dict(String, String))
+  /// `route` is the pattern that matched, such as `/user/:id`.
+  Found(handler: Handler, params: Dict(String, String), route: String)
   /// The path matched at least one route but none with this method. An
   /// `OPTIONS` request never produces this: it is answered by
   /// `controller.options_handler` instead, and neither does a `HEAD` request
@@ -174,8 +175,8 @@ fn scan(
       case first, get {
         None, _ -> NotFound
         _, Some(Candidate(route:, params:, ..)) ->
-          Found(handler: route.handler, params:)
-        Some(Candidate(controller: ctrl, params:, ..)), None -> {
+          Found(handler: route.handler, params:, route: pattern(route))
+        Some(Candidate(controller: ctrl, params:, route:)), None -> {
           let allowed = allowed |> list.reverse |> list.unique |> with_head
           case method {
             http.Options ->
@@ -183,6 +184,7 @@ fn scan(
                 handler: controller.options_handler(ctrl, allowed)
                   |> controller.wrap_all(middleware),
                 params:,
+                route: pattern(route),
               )
             _ -> MethodNotAllowed(allowed:)
           }
@@ -193,7 +195,8 @@ fn scan(
         Error(Nil) -> scan(rest, path, method, allowed, first, get, middleware)
         Ok(params) ->
           case route.method == method {
-            True -> Found(handler: route.handler, params:)
+            True ->
+              Found(handler: route.handler, params:, route: pattern(route))
             False -> {
               let candidate = Some(Candidate(ctrl, route, params))
               let first = option.or(first, candidate)
@@ -228,6 +231,10 @@ fn with_head(allowed: List(Method)) -> List(Method) {
         }
       })
   }
+}
+
+fn pattern(route: Route) -> String {
+  "/" <> string.join(route.segments, "/")
 }
 
 fn is_wildcard(route: Route) -> Bool {

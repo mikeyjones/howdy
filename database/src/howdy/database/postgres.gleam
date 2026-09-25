@@ -25,6 +25,7 @@ import gleam/uri
 import gloo/adapter.{Adapter, PgConnection}
 import gloo/repo.{type Repo}
 import gloo/telemetry
+import howdy/database
 import pog
 
 /// The oldest PostgreSQL major version still supported upstream.
@@ -277,6 +278,7 @@ pub fn start(config: Config) -> Result(Repo, Error) {
           savepoint_depth: 0,
           telemetry: telemetry.disabled(),
         ))
+        |> database.traced
       case ready(db, now() + config.startup_timeout) {
         Ok(Nil) -> Ok(db)
         Error(error) -> {

@@ -10,6 +10,8 @@ reaches a deployment. Depending on what you give it, it lets you:
   app as any user
 - [read the mail your app sends](/docs/mail/development), and preview your
   email templates
+- [follow each request](/docs/admin/telemetry) as a timeline of its
+  queries, calls, emails and logs
 
 ## Install
 

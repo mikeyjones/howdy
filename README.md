@@ -617,6 +617,21 @@ dev.start(fn() {
 
 See `examples/admin` for a working app.
 
+## Telemetry
+
+[`howdy_telemetry`](telemetry/README.md) switches on OpenTelemetry. Howdy
+opens a span for every request, query, remote call, email and sign-in with
+`howdy/trace`, but they go nowhere until the app starts telemetry, so apps
+that do not want it pay next to nothing. Send traces to any OTLP collector
+in production, or record them in memory for the admin to show:
+
+```gleam
+let assert Ok(Nil) =
+  telemetry.new("acme-web")
+  |> telemetry.otlp
+  |> telemetry.start
+```
+
 ## Email
 
 [`howdy_mail`](mail/README.md) writes email with

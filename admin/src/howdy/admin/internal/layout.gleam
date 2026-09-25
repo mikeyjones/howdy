@@ -89,6 +89,15 @@ fn navigation(config: Config) -> List(app_shell.Group) {
         ),
       ]
     },
+    case config.recorder {
+      Some(_) -> [
+        Group("Telemetry", [
+          Link(at("/telemetry"), "Traces"),
+          Link(at("/telemetry/logs"), "Logs"),
+        ]),
+      ]
+      None -> []
+    },
   ])
 }
 

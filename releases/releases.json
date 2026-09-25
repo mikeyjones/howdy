@@ -11,7 +11,8 @@
         "howdy_auth": "0.1.0",
         "howdy_mail": "0.1.0",
         "howdy_admin": "0.1.0",
-        "howdy_remote": "0.1.0"
+        "howdy_remote": "0.1.0",
+        "howdy_telemetry": "0.1.0"
       }
     }
   ]

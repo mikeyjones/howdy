@@ -78,6 +78,12 @@ registry of the Repo or `auth.Auth` the app built, so the app hands them over:
   SMTP server, never production. A template that crashes on its sample, or a
   message the mailer would refuse, shows why. Calls add up, so the app's
   previews and `howdy/auth/emails.previews` can be registered separately.
+- `admin.telemetry(recorder)`: the traces and log lines a
+  `howdy/telemetry/recorder` holds, listed as requests finish. Each trace
+  opens as a timeline of its spans with their attributes and events, with
+  failures, statements repeated five or more times (a query per row) and
+  statements slower than 100 ms pointed out. See
+  [`howdy_telemetry`](../telemetry/README.md).
 - `admin.at("/somewhere")` moves the pages, and `admin.named` sets the sidebar
   title.
 

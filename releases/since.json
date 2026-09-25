@@ -629,6 +629,92 @@
         }
       }
     },
+    "howdy/trace": {
+      "since": "2.0.0",
+      "items": {
+        "Attribute": {
+          "since": "2.0.0"
+        },
+        "Builder": {
+          "since": "2.0.0"
+        },
+        "Context": {
+          "since": "2.0.0"
+        },
+        "Kind": {
+          "since": "2.0.0"
+        },
+        "Link": {
+          "since": "2.0.0"
+        },
+        "attributes": {
+          "since": "2.0.0"
+        },
+        "bool": {
+          "since": "2.0.0"
+        },
+        "context": {
+          "since": "2.0.0"
+        },
+        "continue_from": {
+          "since": "2.0.0"
+        },
+        "event": {
+          "since": "2.0.0"
+        },
+        "float": {
+          "since": "2.0.0"
+        },
+        "inject": {
+          "since": "2.0.0"
+        },
+        "int": {
+          "since": "2.0.0"
+        },
+        "is_recording": {
+          "since": "2.0.0"
+        },
+        "kind": {
+          "since": "2.0.0"
+        },
+        "link": {
+          "since": "2.0.0"
+        },
+        "link_to": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "run": {
+          "since": "2.0.0"
+        },
+        "set_attributes": {
+          "since": "2.0.0"
+        },
+        "set_error": {
+          "since": "2.0.0"
+        },
+        "span": {
+          "since": "2.0.0"
+        },
+        "string": {
+          "since": "2.0.0"
+        },
+        "strings": {
+          "since": "2.0.0"
+        },
+        "trace_id": {
+          "since": "2.0.0"
+        },
+        "traceparent": {
+          "since": "2.0.0"
+        },
+        "within": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/validate": {
       "since": "2.0.0",
       "items": {
@@ -872,6 +958,9 @@
         "has_mail": {
           "since": "2.0.0"
         },
+        "has_telemetry": {
+          "since": "2.0.0"
+        },
         "mail": {
           "since": "2.0.0"
         },
@@ -894,6 +983,9 @@
           "since": "2.0.0"
         },
         "remove_notify_triggers": {
+          "since": "2.0.0"
+        },
+        "telemetry": {
           "since": "2.0.0"
         }
       }
@@ -1101,6 +1193,50 @@
           "since": "2.0.0"
         },
         "update": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/telemetry": {
+      "since": "2.0.0",
+      "items": {
+        "ListModel": {
+          "since": "2.0.0"
+        },
+        "ListMsg": {
+          "since": "2.0.0"
+        },
+        "LogsModel": {
+          "since": "2.0.0"
+        },
+        "LogsMsg": {
+          "since": "2.0.0"
+        },
+        "Show": {
+          "since": "2.0.0"
+        },
+        "Summary": {
+          "since": "2.0.0"
+        },
+        "controller": {
+          "since": "2.0.0"
+        },
+        "duration": {
+          "since": "2.0.0"
+        },
+        "repeated_queries": {
+          "since": "2.0.0"
+        },
+        "repeated_query_threshold": {
+          "since": "2.0.0"
+        },
+        "slow_query_us": {
+          "since": "2.0.0"
+        },
+        "summarise": {
+          "since": "2.0.0"
+        },
+        "tree": {
           "since": "2.0.0"
         }
       }
@@ -2865,6 +3001,9 @@
         "sqlite_defaults": {
           "since": "2.0.0"
         },
+        "traced": {
+          "since": "2.0.0"
+        },
         "transaction": {
           "since": "2.0.0"
         },
@@ -3485,6 +3624,102 @@
           "since": "2.0.0"
         },
         "to_service_error": {
+          "since": "2.0.0"
+        }
+      }
+    }
+  },
+  "howdy_telemetry": {
+    "howdy/telemetry": {
+      "since": "2.0.0",
+      "items": {
+        "Config": {
+          "since": "2.0.0"
+        },
+        "flush": {
+          "since": "2.0.0"
+        },
+        "from_env": {
+          "since": "2.0.0"
+        },
+        "json_logs": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "otlp": {
+          "since": "2.0.0"
+        },
+        "otlp_to": {
+          "since": "2.0.0"
+        },
+        "record": {
+          "since": "2.0.0"
+        },
+        "resource": {
+          "since": "2.0.0"
+        },
+        "sample": {
+          "since": "2.0.0"
+        },
+        "start": {
+          "since": "2.0.0"
+        },
+        "stop": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/telemetry/recorder": {
+      "since": "2.0.0",
+      "items": {
+        "Event": {
+          "since": "2.0.0"
+        },
+        "Log": {
+          "since": "2.0.0"
+        },
+        "Recorder": {
+          "since": "2.0.0"
+        },
+        "Span": {
+          "since": "2.0.0"
+        },
+        "Status": {
+          "since": "2.0.0"
+        },
+        "Trace": {
+          "since": "2.0.0"
+        },
+        "Value": {
+          "since": "2.0.0"
+        },
+        "attribute": {
+          "since": "2.0.0"
+        },
+        "clear": {
+          "since": "2.0.0"
+        },
+        "logs": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "recent_logs": {
+          "since": "2.0.0"
+        },
+        "trace": {
+          "since": "2.0.0"
+        },
+        "traces": {
+          "since": "2.0.0"
+        },
+        "value_to_string": {
+          "since": "2.0.0"
+        },
+        "version": {
           "since": "2.0.0"
         }
       }

@@ -38,9 +38,11 @@ import gleam/http/request
 import gleam/http/response.{type Response}
 import gleam/json.{type Json}
 import gleam/option.{None, Some}
+import gleam/result
 import howdy/context
 import howdy/controller.{type GuardedContext}
 import howdy/service
+import howdy/trace
 import howdy/websocket/origin
 
 /// A handle for one open connection. `msg` is the type of message other
@@ -104,6 +106,7 @@ pub opaque type Builder(state, msg) {
     on_close: fn(Socket(msg), state) -> Nil,
     origins: origin.Policy,
     origin_required: Bool,
+    traced: Bool,
   )
 }
 
@@ -119,7 +122,16 @@ pub fn new(on_open: fn(Socket(msg)) -> state) -> Builder(state, msg) {
     on_close: fn(_, _) { Nil },
     origins: origin.SameOrigin,
     origin_required: False,
+    traced: True,
   )
+}
+
+/// Do not open a span per frame. `howdy/ui/live` uses this: its frames are
+/// handed straight to a Lustre runtime, whose work happens in another
+/// process, so the spans would record nothing but noise.
+@internal
+pub fn untraced(builder: Builder(state, msg)) -> Builder(state, msg) {
+  Builder(..builder, traced: False)
 }
 
 /// Replace the default same-origin policy with an exact HTTP(S) allowlist.
@@ -248,7 +260,30 @@ fn upgrade_allowed(
       response.new(426)
       |> response.set_header("content-type", "text/plain; charset=utf-8")
       |> response.set_body(ewe.Text("upgrade required"))
-    Some(connection) ->
+    Some(connection) -> {
+      // Each frame is traced on its own, as a trace of its own that links
+      // back to the request that opened the socket.
+      let opened_by =
+        trace.traceparent()
+        |> option.to_result(Nil)
+        |> result.try(trace.link_to)
+      let path = ctx.request.path
+      let traced = fn(kind: String, run: fn() -> Next(state)) -> Next(state) {
+        case builder.traced {
+          False -> run()
+          True -> {
+            let span =
+              trace.new("websocket " <> kind)
+              |> trace.kind(trace.Server)
+              |> trace.attributes([trace.string("url.path", path)])
+            case opened_by {
+              Ok(link) -> trace.link(span, link)
+              Error(Nil) -> span
+            }
+            |> trace.run(run)
+          }
+        }
+      }
       ewe.websocket(
         request: request.set_body(ctx.request, connection),
         on_init: fn(conn, selector) {
@@ -260,8 +295,10 @@ fn upgrade_allowed(
         handler: fn(_conn, pair, message) {
           let #(socket, state) = pair
           let next = case message {
-            ewe.TextFrame(text) -> builder.on_text(socket, state, text)
-            ewe.BinaryFrame(data) -> builder.on_binary(socket, state, data)
+            ewe.TextFrame(text) ->
+              traced("text", fn() { builder.on_text(socket, state, text) })
+            ewe.BinaryFrame(data) ->
+              traced("binary", fn() { builder.on_binary(socket, state, data) })
             ewe.UserMessage(User(message)) ->
               builder.on_message(socket, state, message)
             ewe.UserMessage(Deliver(frame)) ->
@@ -277,6 +314,7 @@ fn upgrade_allowed(
         },
         on_close: fn(_conn, pair) { builder.on_close(pair.0, pair.1) },
       )
+    }
   }
 }
 

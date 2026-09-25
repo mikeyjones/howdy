@@ -1,9 +1,14 @@
 import ewe
 import gleam/erlang/process
 import gleam/int
+import gleam/list
+import gleam/option.{Some}
 import howdy
 import howdy/remote
 import howdy/service
+import howdy/telemetry
+import howdy/telemetry/recorder
+import howdy/trace
 import howdy_remote_fixtures.{User} as fixtures
 
 @external(erlang, "howdy_remote_test_ffi", "crash")
@@ -110,4 +115,39 @@ pub fn http_unreachable_test() {
       1,
       timeout: 2000,
     )
+}
+
+pub fn http_call_continues_the_trace_test() {
+  let target = remote.http(serve(token), token:)
+  let recorder = recorder.new(keep: 10)
+  let assert Ok(Nil) =
+    telemetry.new("howdy-remote-test")
+    |> telemetry.record(recorder)
+    |> telemetry.start
+  let trace_id = {
+    use <- trace.span("caller", [])
+    let assert Ok(_) =
+      remote.call(target, fixtures.get_user("http"), 1, timeout: 2000)
+    let assert Error(_) =
+      remote.call(target, fixtures.get_user("http"), 2, timeout: 2000)
+    let assert Some(id) = trace.trace_id()
+    id
+  }
+  telemetry.stop()
+
+  let assert Ok(spans) = recorder.trace(recorder, trace_id)
+  let find = fn(kind, name) {
+    list.filter(spans, fn(span) { span.kind == kind && span.name == name })
+  }
+  let assert [caller] = find(trace.Internal, "caller")
+  let assert [client, _] = find(trace.Client, "http.users.get")
+  assert client.parent_id == Some(caller.span_id)
+  // A NotFound answer is a result, not a failure.
+  assert list.all(find(trace.Client, "http.users.get"), fn(span) {
+    span.status == recorder.Unset
+  })
+  let assert [server, _] = find(trace.Server, "POST /rpc/:procedure")
+  assert server.parent_id == Some(client.span_id)
+  let assert [procedure, _] = find(trace.Internal, "http.users.get")
+  assert procedure.parent_id == Some(server.span_id)
 }

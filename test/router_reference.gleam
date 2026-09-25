@@ -40,13 +40,14 @@ pub fn match(
   case
     list.find(candidates, fn(candidate) { candidate.route.method == method })
   {
-    Ok(Candidate(route:, params:, ..)) -> Found(handler: route.handler, params:)
+    Ok(Candidate(route:, params:, ..)) ->
+      Found(handler: route.handler, params:, route: pattern(route))
     Error(Nil) ->
       case candidates, head_fallback(candidates, method) {
         [], _ -> NotFound
         _, Ok(Candidate(route:, params:, ..)) ->
-          Found(handler: route.handler, params:)
-        [Candidate(controller: ctrl, params:, ..), ..], Error(Nil) -> {
+          Found(handler: route.handler, params:, route: pattern(route))
+        [Candidate(controller: ctrl, params:, route:), ..], Error(Nil) -> {
           let allowed =
             candidates
             |> list.map(fn(candidate) { candidate.route.method })
@@ -54,7 +55,11 @@ pub fn match(
             |> with_head
           case method {
             http.Options ->
-              Found(handler: controller.options_handler(ctrl, allowed), params:)
+              Found(
+                handler: controller.options_handler(ctrl, allowed),
+                params:,
+                route: pattern(route),
+              )
             _ -> MethodNotAllowed(allowed:)
           }
         }
@@ -112,4 +117,8 @@ fn match_segments(
       match_segments(pattern, path, params)
     _, _ -> Error(Nil)
   }
+}
+
+fn pattern(route: controller.Route) -> String {
+  "/" <> string.join(route.segments, "/")
 }

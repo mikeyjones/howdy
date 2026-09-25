@@ -20,6 +20,7 @@ import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
 import howdy/mail/outbox.{type Outbox}
 import howdy/service
+import howdy/telemetry/recorder.{type Recorder}
 import howdy/ui
 import lustre/element.{type Element, text}
 
@@ -60,6 +61,14 @@ fn index(config: Config, ctx: Context) -> Response(ewe.Body) {
               "Not registered. Pass an outbox to admin.mail to read the mail your app sends, and previews to admin.mail_previews.",
             )
           box, _ -> mail_card(config, box)
+        },
+        case config.recorder {
+          Some(recorder) -> telemetry_card(config, recorder)
+          None ->
+            absent(
+              "howdy_telemetry",
+              "Not registered. Start telemetry with a recorder and pass it to admin.telemetry to see each request's queries, calls and logs.",
+            )
         },
       ]),
     ],
@@ -234,6 +243,30 @@ fn mail_card(config: Config, box: Option(Outbox)) -> Element(msg) {
             ui.link(config.path(config, "/mail/previews"), [text("Previews")])
           None -> element.none()
         },
+      ]),
+    ]),
+  ])
+}
+
+fn telemetry_card(config: Config, recorder: Recorder) -> Element(msg) {
+  let traces = recorder.traces(recorder, limit: 1000)
+  let failing = list.count(traces, fn(trace) { trace.failed > 0 })
+  ui.card([], [
+    ui.card_header([], [
+      ui.card_title([text("howdy_telemetry")]),
+      ui.card_description([
+        text(
+          accounts.describe(list.length(traces), "trace")
+          <> " recorded · "
+          <> int.to_string(failing)
+          <> " with failures",
+        ),
+      ]),
+    ]),
+    ui.card_footer([], [
+      ui.row([], [
+        ui.link(config.path(config, "/telemetry"), [text("Traces")]),
+        ui.link(config.path(config, "/telemetry/logs"), [text("Logs")]),
       ]),
     ]),
   ])

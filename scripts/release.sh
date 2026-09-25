@@ -43,6 +43,7 @@ packages=(
   "howdy_mail:mail"
   "howdy_admin:admin"
   "howdy_remote:remote"
+  "howdy_telemetry:telemetry"
 )
 for entry in "${packages[@]}"; do
   name="${entry%%:*}"

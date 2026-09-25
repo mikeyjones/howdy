@@ -8,6 +8,7 @@ import howdy/authorization.{type Authorization}
 import howdy/mail.{type Mailer}
 import howdy/mail/outbox.{type Outbox}
 import howdy/mail/preview.{type Preview}
+import howdy/telemetry/recorder.{type Recorder}
 
 pub type Config {
   Config(
@@ -22,6 +23,7 @@ pub type Config {
     /// Email previews, and the mailer that renders and sends them.
     previews: List(Preview),
     mailer: Option(Mailer),
+    recorder: Option(Recorder),
     /// Exact request hostnames the pages answer.
     hosts: List(String),
   )

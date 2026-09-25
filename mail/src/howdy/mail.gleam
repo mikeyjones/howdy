@@ -39,6 +39,7 @@ import gleam/result
 import gleam/string
 import gleam/time/timestamp.{type Timestamp}
 import howdy/service
+import howdy/trace
 import smail/email
 import smail/html
 
@@ -492,9 +493,39 @@ pub fn prepare(mailer: Mailer, message: Message) -> Result(Outgoing, Error) {
 
 /// Check the message, then give it to the mailer's adapter. Waits for the
 /// provider to accept or refuse it.
+///
+/// Sending is a `mail.send` span, with the adapter, the message id, its
+/// tags and how many recipients it has, but not their addresses or the
+/// subject.
 pub fn send(mailer: Mailer, message: Message) -> Result(Receipt, Error) {
-  use outgoing <- result.try(prepare(mailer, message))
-  mailer.adapter.send(outgoing)
+  use <- trace.run(
+    trace.new("mail.send")
+    |> trace.kind(trace.Client)
+    |> trace.attributes([
+      trace.string("mail.adapter", mailer.adapter.name),
+      trace.int("mail.recipients", list.length(recipients_of(message))),
+      trace.strings("mail.tags", message.tags),
+    ]),
+  )
+  let sent = {
+    use outgoing <- result.try(prepare(mailer, message))
+    trace.set_attributes([trace.string("mail.id", outgoing.id)])
+    mailer.adapter.send(outgoing)
+  }
+  case sent {
+    Ok(_) -> Nil
+    // The error's text can name an address, so only its kind is recorded.
+    Error(error) -> {
+      let kind = case error {
+        Invalid(_) -> "invalid"
+        Unavailable(_) -> "unavailable"
+        Refused(_) -> "refused"
+      }
+      trace.set_attributes([trace.string("error.type", kind)])
+      trace.set_error("mail " <> kind)
+    }
+  }
+  sent
 }
 
 fn recipients_of(message: Message) -> List(Address) {

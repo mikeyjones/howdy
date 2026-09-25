@@ -58,8 +58,9 @@ pub fn compiled_routes_preserve_reference_semantics_test() {
     router.MethodNotAllowed(a), router.MethodNotAllowed(b) -> {
       assert a == b
     }
-    router.Found(a, a_params), router.Found(b, b_params) -> {
+    router.Found(a, a_params, a_route), router.Found(b, b_params, b_route) -> {
       assert a_params == b_params
+      assert a_route == b_route
       let ctx =
         context.Context(
           request: testing.request(method, path),
@@ -128,8 +129,9 @@ pub fn indexed_routes_preserve_reference_semantics_test() {
     router.MethodNotAllowed(a), router.MethodNotAllowed(b) -> {
       assert a == b
     }
-    router.Found(a, a_params), router.Found(b, b_params) -> {
+    router.Found(a, a_params, a_route), router.Found(b, b_params, b_route) -> {
       assert a_params == b_params
+      assert a_route == b_route
       let ctx =
         context.Context(
           request: testing.request(method, path),

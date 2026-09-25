@@ -3,6 +3,10 @@
 //// `gleam dev` serves the same app with hot reload and the admin area at
 //// <http://localhost:8787/_howdy>.
 ////
+//// With `OTEL_EXPORTER_OTLP_ENDPOINT` set, such as `http://localhost:4318`,
+//// `gleam run` sends a trace of every request to that OpenTelemetry
+//// collector. Under `gleam dev` the admin shows them instead.
+////
 //// Auth emails go through `howdy/mail`: over SMTP when `SMTP_URL` is set,
 //// otherwise printed in the terminal **for this local demonstration
 //// only**. Under `gleam dev` they go to the outbox the admin shows.
@@ -37,12 +41,21 @@ import howdy/mail/preview
 import howdy/mail/smtp
 import howdy/migration
 import howdy/service
+import howdy/telemetry
 import smail/email as smail
 import smail/html
 
 pub const origin = "http://localhost:8787"
 
 pub fn main() {
+  // Telemetry is opt-in: without the variable nothing is recorded or sent.
+  case telemetry.from_env("notes") {
+    Ok(config) -> {
+      let assert Ok(Nil) = telemetry.start(config)
+      Nil
+    }
+    Error(Nil) -> Nil
+  }
   let db = open("admin_example.sqlite")
   let identity = identity(db, mailer())
   let assert Ok(_) =
@@ -66,7 +79,8 @@ pub fn open(path: String) -> Repo {
     Error(_) -> {
       let assert Ok(db) = sqlite.start(sqlite.file(path))
       let assert Ok(Nil) = database.sqlite_defaults(db)
-      db
+      // PostgreSQL Repos from howdy/database/postgres are traced already.
+      database.traced(db)
     }
   }
   let assert Ok(Nil) =

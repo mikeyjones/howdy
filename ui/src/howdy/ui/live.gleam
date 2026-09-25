@@ -200,6 +200,7 @@ pub fn socket(
     runtime
   })
   |> attach
+  |> websocket.untraced
   |> websocket.on_close(fn(_socket, runtime) {
     lustre.send(runtime, lustre.shutdown())
   })
@@ -235,6 +236,7 @@ pub fn socket_shared(
     runtime
   })
   |> attach
+  |> websocket.untraced
   |> websocket.on_close(fn(socket, runtime) {
     lustre.send(runtime, server_component.deregister_subject(inbox(socket)))
   })

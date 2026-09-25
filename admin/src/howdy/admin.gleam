@@ -32,6 +32,9 @@
 //// - `mail`: the messages a `howdy/mail/outbox` keeps, as they arrive.
 //// - `mail_previews`: your email templates rendered from sample data, and
 ////   sent on demand.
+//// - `telemetry`: the traces and log lines a `howdy/telemetry/recorder`
+////   holds, as they happen: each request as a timeline of its queries,
+////   remote calls and emails, with repeated and slow queries pointed out.
 ////
 //// ## Development only
 ////
@@ -57,6 +60,7 @@ import howdy/admin/internal/mail as mail_pages
 import howdy/admin/internal/notify
 import howdy/admin/internal/overview
 import howdy/admin/internal/roles
+import howdy/admin/internal/telemetry as telemetry_pages
 import howdy/auth.{type Auth}
 import howdy/authorization.{type Authorization}
 import howdy/controller.{type Controller}
@@ -64,6 +68,7 @@ import howdy/mail.{type Mailer}
 import howdy/mail/outbox.{type Outbox}
 import howdy/mail/preview.{type Preview}
 import howdy/service
+import howdy/telemetry/recorder.{type Recorder}
 
 /// An admin area under construction.
 pub opaque type Admin {
@@ -82,6 +87,7 @@ pub fn new() -> Admin {
       outbox: None,
       previews: [],
       mailer: None,
+      recorder: None,
       hosts: [
         "localhost",
         "127.0.0.1",
@@ -158,6 +164,19 @@ pub fn mail_previews(
   )
 }
 
+/// Show the traces and log lines `recorder` holds. Start telemetry with
+/// `telemetry.record(recorder)` so it has something to hold:
+///
+/// ```gleam
+/// let recorder = recorder.new(keep: 200)
+/// let assert Ok(Nil) =
+///   telemetry.new("my-app") |> telemetry.record(recorder) |> telemetry.start
+/// admin.new() |> admin.telemetry(recorder)
+/// ```
+pub fn telemetry(admin: Admin, recorder: Recorder) -> Admin {
+  Admin(Config(..admin.config, recorder: Some(recorder)))
+}
+
 /// Exact request hostnames (without port) the pages answer, replacing the
 /// loopback names. Anyone who can reach an allowed host owns your data.
 pub fn allow_hosts(admin: Admin, hosts: List(String)) -> Admin {
@@ -196,6 +215,10 @@ pub fn controllers(admin: Admin) -> List(Controller) {
     case config.outbox, config.mailer {
       None, None -> []
       _, _ -> [mail_pages.controller(config)]
+    },
+    case config.recorder {
+      Some(recorder) -> [telemetry_pages.controller(config, recorder)]
+      None -> []
     },
   ])
   |> list.map(controller.middleware(_, only_hosts(config)))
@@ -243,6 +266,11 @@ pub fn has_mail(admin: Admin) -> Bool {
 /// How many email previews were registered.
 pub fn preview_count(admin: Admin) -> Int {
   list.length(admin.config.previews)
+}
+
+/// Whether a telemetry recorder was registered.
+pub fn has_telemetry(admin: Admin) -> Bool {
+  option.is_some(admin.config.recorder)
 }
 
 /// Whether auth was registered.

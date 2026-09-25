@@ -62,6 +62,7 @@ import gleam/string
 import howdy/body
 import howdy/controller.{type Context, type Controller}
 import howdy/service
+import howdy/trace
 import logging
 
 // -- Procedures ----------------------------------------------------------------
@@ -212,8 +213,10 @@ pub opaque type Server {
 }
 
 /// A handler working on the wire: JSON in, `Ok(json)` or `Error(json)` out.
+/// Over distribution it also gets the caller's trace headers, to continue
+/// the caller's trace; over HTTP the request's own span already has.
 type Handler =
-  fn(String) -> Result(String, String)
+  fn(String, Option(List(#(String, String)))) -> Result(String, String)
 
 pub fn server() -> Server {
   Server(handlers: dict.new())
@@ -225,7 +228,8 @@ pub fn handle(
   procedure: Procedure(input, output),
   handler: fn(input) -> service.Result(output),
 ) -> Server {
-  let wire = fn(payload) {
+  let wire = fn(payload, trace_headers) {
+    use <- serving_span(procedure.name, trace_headers)
     case json.parse(payload, procedure.input.decoder) {
       Error(error) ->
         Error(
@@ -238,6 +242,7 @@ pub fn handle(
           Ok(output) -> Ok(json.to_string(procedure.output.encode(output)))
           Error(service.Internal(detail)) -> {
             logging.log(logging.Error, procedure.name <> ": " <> detail)
+            trace.set_error("handler returned an internal error")
             Error(encode_error(service.Internal(detail)))
           }
           Error(error) -> Error(encode_error(error))
@@ -245,6 +250,61 @@ pub fn handle(
     }
   }
   Server(handlers: dict.insert(server.handlers, procedure.name, wire))
+}
+
+/// Serving a call over distribution continues the caller's trace in a
+/// server span. Over HTTP the request is already a server span, so the
+/// procedure is a span inside it.
+fn serving_span(
+  name: String,
+  trace_headers: Option(List(#(String, String))),
+  run: fn() -> a,
+) -> a {
+  let span = trace.new(name) |> trace.attributes(rpc_attributes(name))
+  case trace_headers {
+    option.Some(headers) ->
+      span |> trace.kind(trace.Server) |> trace.continue_from(headers)
+    option.None -> span
+  }
+  |> trace.run(run)
+}
+
+fn rpc_attributes(name: String) -> List(trace.Attribute) {
+  [trace.string("rpc.system", "howdy_remote"), trace.string("rpc.method", name)]
+}
+
+/// Run a call in a client span. It fails when the call could not be made
+/// or the handler broke; a handler answering `NotFound` or `Invalid` is a
+/// result like any other.
+fn calling_span(
+  name: String,
+  kind: trace.Kind,
+  target: Target,
+  run: fn() -> Result(a, Error),
+) -> Result(a, Error) {
+  let target_name = case target {
+    Cluster -> "cluster"
+    OnNode(name:) -> name
+    Http(url:, ..) -> url
+  }
+  use <- trace.run(
+    trace.new(name)
+    |> trace.kind(kind)
+    |> trace.attributes([
+      trace.string("server.address", target_name),
+      ..rpc_attributes(name)
+    ]),
+  )
+  let outcome = run()
+  case outcome {
+    Ok(_) -> Nil
+    Error(Failed(service.Internal(_)) as error)
+    | Error(Failed(service.TooManyRequests(_)) as error) ->
+      trace.set_error(describe(error))
+    Error(Failed(_)) -> Nil
+    Error(error) -> trace.set_error(describe(error))
+  }
+  outcome
 }
 
 /// The names of the procedures a server handles, sorted.
@@ -498,6 +558,7 @@ pub fn http(url: String, token token: String) -> Target {
 fn call_cluster(
   name: String,
   payload: String,
+  trace_headers: List(#(String, String)),
   timeout: Int,
 ) -> Result(Result(String, String), Error)
 
@@ -506,6 +567,7 @@ fn call_node(
   node: String,
   name: String,
   payload: String,
+  trace_headers: List(#(String, String)),
   timeout: Int,
 ) -> Result(Result(String, String), Error)
 
@@ -517,11 +579,13 @@ pub fn call(
   timeout timeout: Int,
 ) -> Result(output, Error) {
   let payload = json.to_string(procedure.input.encode(input))
+  use <- calling_span(procedure.name, trace.Client, target)
+  let headers = trace.inject([])
   case target {
-    Cluster -> call_cluster(procedure.name, payload, timeout)
-    OnNode(name:) -> call_node(name, procedure.name, payload, timeout)
+    Cluster -> call_cluster(procedure.name, payload, headers, timeout)
+    OnNode(name:) -> call_node(name, procedure.name, payload, headers, timeout)
     Http(url:, token:) ->
-      call_http(url, token, procedure.name, payload, timeout)
+      call_http(url, token, procedure.name, payload, headers, timeout)
   }
   |> result.try(decode_reply(procedure, _))
 }
@@ -541,10 +605,19 @@ fn decode_reply(
 }
 
 @external(erlang, "howdy_remote_ffi", "cast_cluster")
-fn cast_cluster(name: String, payload: String) -> Nil
+fn cast_cluster(
+  name: String,
+  payload: String,
+  trace_headers: List(#(String, String)),
+) -> Nil
 
 @external(erlang, "howdy_remote_ffi", "cast_node")
-fn cast_node(node: String, name: String, payload: String) -> Nil
+fn cast_node(
+  node: String,
+  name: String,
+  payload: String,
+  trace_headers: List(#(String, String)),
+) -> Nil
 
 /// Call a procedure without waiting for, or learning about, the outcome.
 /// Over distribution nothing waits at all; over HTTP the request is made
@@ -555,22 +628,29 @@ pub fn cast(
   input: input,
 ) -> Nil {
   let payload = json.to_string(procedure.input.encode(input))
-  case target {
-    Cluster -> cast_cluster(procedure.name, payload)
-    OnNode(name:) -> cast_node(name, procedure.name, payload)
-    Http(url:, token:) -> {
-      process.spawn_unlinked(fn() {
-        call_http(url, token, procedure.name, payload, 30_000)
-      })
-      Nil
+  let _ = {
+    use <- calling_span(procedure.name, trace.Producer, target)
+    let headers = trace.inject([])
+    case target {
+      Cluster -> cast_cluster(procedure.name, payload, headers)
+      OnNode(name:) -> cast_node(name, procedure.name, payload, headers)
+      Http(url:, token:) -> {
+        process.spawn_unlinked(fn() {
+          call_http(url, token, procedure.name, payload, headers, 30_000)
+        })
+        Nil
+      }
     }
+    Ok(Nil)
   }
+  Nil
 }
 
 @external(erlang, "howdy_remote_ffi", "multicall")
 fn multicall_ffi(
   name: String,
   payload: String,
+  trace_headers: List(#(String, String)),
   timeout: Int,
 ) -> List(#(String, Result(Result(String, String), Error)))
 
@@ -584,7 +664,8 @@ pub fn multicall(
   timeout timeout: Int,
 ) -> List(#(String, Result(output, Error))) {
   let payload = json.to_string(procedure.input.encode(input))
-  multicall_ffi(procedure.name, payload, timeout)
+  use <- trace.span(procedure.name, rpc_attributes(procedure.name))
+  multicall_ffi(procedure.name, payload, trace.inject([]), timeout)
   |> list.map(fn(pair) {
     #(pair.0, result.try(pair.1, decode_reply(procedure, _)))
   })
@@ -682,6 +763,7 @@ fn call_http(
   token: String,
   name: String,
   payload: String,
+  trace_headers: List(#(String, String)),
   timeout: Int,
 ) -> Result(Result(String, String), Error) {
   use req <- result.try(
@@ -694,6 +776,10 @@ fn call_http(
     |> request.set_header("content-type", "application/json")
     |> request.set_header("authorization", "Bearer " <> token)
     |> request.set_body(payload)
+  let req =
+    list.fold(trace_headers, req, fn(req, header) {
+      request.set_header(req, header.0, header.1)
+    })
   case httpc.configure() |> httpc.timeout(timeout) |> httpc.dispatch(req) {
     Error(httpc.ResponseTimeout) -> Error(Timeout)
     Error(error) -> Error(Unavailable(describe_http_error(url, error)))

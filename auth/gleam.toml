@@ -25,3 +25,4 @@ glasslock = "== 1.0.0-rc1"
 
 [dev_dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
+howdy_telemetry = { path = "../telemetry" }

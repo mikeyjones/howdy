@@ -24,6 +24,7 @@ import howdy/context.{type Body, Context}
 import howdy/controller.{type Controller, type Middleware}
 import howdy/router
 import howdy/service
+import howdy/trace
 import howdy/version.{type Group}
 
 /// The howdy framework version. Keep in sync with `gleam.toml`.
@@ -200,12 +201,79 @@ pub fn serve(app: App) -> fn(Request(Body)) -> Response(ewe.Body) {
       #(group, table)
     })
   fn(request: Request(Body)) {
+    use <- traced(request)
     case router.match_table(routes, request.method, request.path), versions {
       router.NotFound, Some(#(group, table)) -> versioned(group, table, request)
-      match, _ -> respond(match, request, None)
+      match, _ -> respond(match, request, None, "")
     }
   }
 }
+
+/// Answer the request inside a server span that continues any trace the
+/// client started. The span is named after the method until a route
+/// matches, then after the method and route, as OpenTelemetry's HTTP
+/// conventions ask; the raw path would give every user id its own name.
+/// Query strings, headers and bodies are left out, as they can hold secrets.
+fn traced(
+  request: Request(Body),
+  respond: fn() -> Response(ewe.Body),
+) -> Response(ewe.Body) {
+  let method = http.method_to_string(request.method)
+  trace.new(method)
+  |> trace.kind(trace.Server)
+  |> trace.continue_from(request.headers)
+  |> trace.attributes(request_attributes(request, method))
+  |> trace.run(fn() {
+    let response = respond()
+    trace.set_attributes([
+      trace.int("http.response.status_code", response.status),
+    ])
+    case response.status >= 500 {
+      True -> {
+        trace.set_attributes([
+          trace.string("error.type", int.to_string(response.status)),
+        ])
+        trace.set_error("HTTP " <> int.to_string(response.status))
+      }
+      False -> Nil
+    }
+    response
+  })
+}
+
+fn request_attributes(
+  request: Request(Body),
+  method: String,
+) -> List(trace.Attribute) {
+  let optional = [
+    option.map(request.port, trace.int("server.port", _)),
+    option.map(context.client_ip(request), trace.string("client.address", _)),
+    request.get_header(request, "user-agent")
+      |> option.from_result
+      |> option.map(trace.string("user_agent.original", _)),
+  ]
+  [
+    trace.string("http.request.method", method),
+    trace.string("url.path", request.path),
+    trace.string("url.scheme", http.scheme_to_string(request.scheme)),
+    trace.string("server.address", request.host),
+    ..option.values(optional)
+  ]
+}
+
+/// Name the request's span after the route that answers it.
+fn traced_route(request: Request(Body), route: String) -> Nil {
+  case trace.is_recording() {
+    True -> {
+      rename_span(http.method_to_string(request.method) <> " " <> route)
+      trace.set_attributes([trace.string("http.route", route)])
+    }
+    False -> Nil
+  }
+}
+
+@external(erlang, "howdy_trace_ffi", "update_name")
+fn rename_span(name: String) -> Nil
 
 fn versioned(
   group: Group,
@@ -215,8 +283,14 @@ fn versioned(
   let response = case version.resolve(group, request) {
     version.Version(name:, path:) -> {
       let assert Ok(routes) = dict.get(table, name)
+      // Under the path strategy the version was the first segment; put it
+      // back so the traced route reads like the request.
+      let prefix = case path == request.path {
+        True -> ""
+        False -> "/" <> name
+      }
       router.match_table(routes, request.method, path)
-      |> respond(request, Some(name))
+      |> respond(request, Some(name), prefix)
     }
     version.Missing(message) ->
       service.error_response(
@@ -248,10 +322,13 @@ fn respond(
   match: router.Match,
   request: Request(Body),
   version: Option(String),
+  route_prefix: String,
 ) -> Response(ewe.Body) {
   case match {
-    router.Found(handler:, params:) ->
+    router.Found(handler:, params:, route:) -> {
+      traced_route(request, route_prefix <> route)
       handler(Context(request:, params:, guard: Nil, version:))
+    }
     router.NotFound -> not_found()
     router.MethodNotAllowed(allowed:) ->
       response.new(405)

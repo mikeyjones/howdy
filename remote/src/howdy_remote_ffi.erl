@@ -1,8 +1,8 @@
 -module(howdy_remote_ffi).
 -export([
-    start_directory/1, dispatch/3, dispatch_local/2, run/2,
-    call_cluster/3, call_node/4, cast_cluster/2, cast_node/3,
-    multicall/3, apply/5, providers/1, connect/1, self_node/0
+    start_directory/1, dispatch/4, dispatch_local/3, run/2,
+    call_cluster/4, call_node/5, cast_cluster/3, cast_node/4,
+    multicall/4, apply/5, providers/1, connect/1, self_node/0
 ]).
 
 %% Every started server is a small directory process. It joins one `pg`
@@ -57,14 +57,15 @@ directory_loop(Handlers) ->
     end.
 
 %% Run a call against the directory `Pid`, which lives on this node. The
-%% directory may have stopped since the caller looked it up.
-dispatch(Pid, Name, Payload) ->
+%% directory may have stopped since the caller looked it up. `Trace` holds
+%% the caller's trace headers, so the handler's span joins its trace.
+dispatch(Pid, Name, Payload, Trace) ->
     Ref = erlang:monitor(process, Pid),
     Pid ! {howdy_remote_lookup, self(), Ref, Name},
     receive
         {Ref, {ok, Handler}} ->
             erlang:demonitor(Ref, [flush]),
-            Handler(Payload);
+            Handler(Payload, {some, Trace});
         {Ref, error} ->
             erlang:demonitor(Ref, [flush]),
             error({howdy_remote, {no_handler, Name}});
@@ -73,17 +74,17 @@ dispatch(Pid, Name, Payload) ->
     end.
 
 %% Run a call against any directory on this node that serves `Name`.
-dispatch_local(Name, Payload) ->
+dispatch_local(Name, Payload, Trace) ->
     case pg:get_local_members(scope(), Name) of
         [] -> error({howdy_remote, {no_handler, Name}});
-        Members -> dispatch(pick(Members), Name, Payload)
+        Members -> dispatch(pick(Members), Name, Payload, Trace)
     end.
 
 %% Run a handler in the calling process, turning an exception into
 %% `{error, Message}`. Used by the HTTP transport, where no `erpc` process
 %% stands between the handler and the connection.
 run(Handler, Payload) ->
-    try Handler(Payload) of
+    try Handler(Payload, none) of
         Reply -> {ok, Reply}
     catch
         Class:Reason:Stack -> {error, format({Class, Reason, Stack})}
@@ -91,42 +92,42 @@ run(Handler, Payload) ->
 
 %% -- Calling ------------------------------------------------------------------
 
-call_cluster(Name, Payload, Timeout) ->
+call_cluster(Name, Payload, Trace, Timeout) ->
     case choose(Name, Timeout) of
         {ok, Pid} ->
             guard(fun() ->
-                erpc:call(node(Pid), ?MODULE, dispatch, [Pid, Name, Payload], Timeout)
+                erpc:call(node(Pid), ?MODULE, dispatch, [Pid, Name, Payload, Trace], Timeout)
             end);
         {error, Error} ->
             {error, Error}
     end.
 
-call_node(Node, Name, Payload, Timeout) ->
+call_node(Node, Name, Payload, Trace, Timeout) ->
     guard(fun() ->
-        erpc:call(to_node(Node), ?MODULE, dispatch_local, [Name, Payload], Timeout)
+        erpc:call(to_node(Node), ?MODULE, dispatch_local, [Name, Payload, Trace], Timeout)
     end).
 
-cast_cluster(Name, Payload) ->
+cast_cluster(Name, Payload, Trace) ->
     case choose(Name, 1000) of
-        {ok, Pid} -> safe_cast(node(Pid), dispatch, [Pid, Name, Payload]);
+        {ok, Pid} -> safe_cast(node(Pid), dispatch, [Pid, Name, Payload, Trace]);
         {error, _} -> ok
     end,
     nil.
 
-cast_node(Node, Name, Payload) ->
-    safe_cast(to_node(Node), dispatch_local, [Name, Payload]),
+cast_node(Node, Name, Payload, Trace) ->
+    safe_cast(to_node(Node), dispatch_local, [Name, Payload, Trace]),
     nil.
 
 %% Call every node that serves `Name`, in parallel. Returns `{Node, Result}`
 %% pairs ordered by node name.
-multicall(Name, Payload, Timeout) ->
+multicall(Name, Payload, Trace, Timeout) ->
     Scope = scope(),
     Members = case pg:get_members(Scope, Name) of
         [] -> connected_members(Scope, Name, Timeout);
         Known -> Known
     end,
     Nodes = lists:usort([node(Pid) || Pid <- Members]),
-    Results = erpc:multicall(Nodes, ?MODULE, dispatch_local, [Name, Payload], Timeout),
+    Results = erpc:multicall(Nodes, ?MODULE, dispatch_local, [Name, Payload, Trace], Timeout),
     lists:zipwith(
         fun(Node, Result) -> {atom_to_binary(Node), multicall_result(Result)} end,
         Nodes,

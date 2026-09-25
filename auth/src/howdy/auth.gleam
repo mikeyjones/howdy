@@ -46,6 +46,7 @@ import howdy/context.{type Context}
 import howdy/migration
 import howdy/rate_limit
 import howdy/service
+import howdy/trace
 
 pub type Intent {
   Login
@@ -584,6 +585,7 @@ pub fn register_password_from(
   password: String,
   client: String,
 ) -> service.Result(Nil) {
+  use <- traced("auth.register_password", [])
   use hasher <- result.try(passwords(auth))
   use _ <- result.try(validate_new_password(auth, password))
   request_challenge(
@@ -845,6 +847,7 @@ pub fn exchange_from(
   secret: String,
   client: String,
 ) -> service.Result(Session) {
+  use <- traced("auth.exchange", [])
   redeem(auth, secret, client) |> result.try(publish(auth, _))
 }
 
@@ -1203,6 +1206,7 @@ pub fn login_password_from(
   password: String,
   client: String,
 ) -> service.Result(Session) {
+  use <- traced("auth.login_password", [])
   verify_password(auth, email, password, client)
   |> result.try(publish(auth, _))
 }
@@ -1676,7 +1680,14 @@ pub fn authenticate_from(
   client: String,
 ) -> service.Result(Principal) {
   use _ <- result.try(valid_token(secret))
-  authenticate_digest(auth, token.digest(secret), client)
+  let authenticated = authenticate_digest(auth, token.digest(secret), client)
+  // Say whose request this is on the request's span.
+  case authenticated {
+    Ok(principal) ->
+      trace.set_attributes([trace.string("enduser.id", principal.user.id)])
+    Error(_) -> Nil
+  }
+  authenticated
 }
 
 fn authenticate_digest(
@@ -2093,6 +2104,28 @@ pub fn event(
   event_from(conn, user_id, action, actor, detail, user.actor_client(actor))
 }
 
+/// Run a sign-in step in a span. Refusing a sign-in is the step working, so
+/// the span only fails for an `Internal` error; any other error's status
+/// code is recorded as `auth.refused`. Emails, passwords and tokens are
+/// never recorded.
+fn traced(
+  name: String,
+  attributes: List(trace.Attribute),
+  run: fn() -> service.Result(a),
+) -> service.Result(a) {
+  use <- trace.span(name, attributes)
+  let outcome = run()
+  case outcome {
+    Ok(_) -> Nil
+    Error(service.Internal(_)) -> trace.set_error("internal error")
+    Error(error) ->
+      trace.set_attributes([
+        trace.int("auth.refused", service.status_code(error)),
+      ])
+  }
+  outcome
+}
+
 /// As `event`, for the self-service flows that know the request's client
 /// before there is a principal to carry it.
 @internal
@@ -2104,6 +2137,10 @@ pub fn event_from(
   detail: String,
   client: String,
 ) -> service.Result(Nil) {
+  trace.event(action, [
+    trace.string("enduser.id", user_id),
+    trace.string("auth.actor_id", user.actor_id(actor)),
+  ])
   store.insert_event(
     conn,
     user_id:,
@@ -2381,6 +2418,7 @@ pub fn finish_provider(
   code: Option(String),
   principal: Option(Principal),
 ) -> service.Result(ProviderOutcome) {
+  use <- traced("auth.finish_provider", [trace.string("auth.provider", id)])
   use provider <- result.try(configured_provider(auth, id))
   use attempt <- result.try(consume_attempt(
     auth,
@@ -2785,6 +2823,9 @@ pub fn finish_sso(
   code: Option(String),
   principal: Option(Principal),
 ) -> service.Result(ProviderOutcome) {
+  use <- traced("auth.finish_sso", [
+    trace.string("auth.connection", connection_id),
+  ])
   let id = connection.identity_issuer(connection_id)
   use attempt <- result.try(consume_attempt(
     auth,

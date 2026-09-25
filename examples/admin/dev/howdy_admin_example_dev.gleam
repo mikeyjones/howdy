@@ -7,6 +7,9 @@
 ////
 //// Mail goes to an outbox that writes each message to `tmp/mail`, instead
 //// of SMTP or the terminal, and the admin shows it as it arrives.
+////
+//// Telemetry records into memory, and the admin shows every request as a
+//// timeline of its queries, emails and logs under **Telemetry**.
 
 import gleam/erlang/process
 import howdy
@@ -14,9 +17,14 @@ import howdy/admin
 import howdy/dev
 import howdy/mail
 import howdy/mail/outbox
+import howdy/telemetry
+import howdy/telemetry/recorder
 import howdy_admin_example as example
 
 pub fn main() -> Nil {
+  let recorder = recorder.new(keep: 200)
+  let assert Ok(Nil) =
+    telemetry.new("notes") |> telemetry.record(recorder) |> telemetry.start
   let db = example.open("admin_example.sqlite")
   let assert Ok(box) = outbox.start_in("tmp/mail")
   let mailer =
@@ -30,6 +38,7 @@ pub fn main() -> Nil {
     |> admin.authorization(permissions)
     |> admin.mail(box)
     |> admin.mail_previews(example.previews(mailer), send_with: mailer)
+    |> admin.telemetry(recorder)
 
   let assert Ok(_) =
     dev.start(fn() {

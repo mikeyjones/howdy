@@ -10,8 +10,10 @@ import gleam/string
 import gloo/error
 import gloo/query.{type Query}
 import gloo/repo.{type Repo}
+import gloo/telemetry
 import gloo/value.{type GlooValue}
 import howdy/service
+import howdy/trace
 
 /// Run with the fair, reentrant lock for `key` held. Waiters are served in
 /// arrival order and the lock is released if its holder dies.
@@ -32,6 +34,41 @@ pub fn backend(repo: Repo) -> service.Result(Backend) {
     _ -> Error(service.Internal("unsupported Gloo database adapter"))
   }
 }
+
+/// The Repo, reporting each query it runs as an OpenTelemetry span, named
+/// after the operation and table, such as `SELECT app_notes`, with the SQL
+/// text but never the parameter values. Queries only get a span inside a
+/// span that is being recorded, such as a request's, so background polling
+/// does not fill your traces. Without `howdy_telemetry` started this costs
+/// next to nothing. `howdy/database/postgres` traces the Repos it opens;
+/// call this on a SQLite Repo after opening it.
+pub fn traced(repo: Repo) -> Repo {
+  let system = case backend(repo) {
+    Ok(Postgres) -> "postgresql"
+    Ok(Sqlite) -> "sqlite"
+    Error(_) -> repo.adapter_name(repo)
+  }
+  repo.with_telemetry(
+    repo,
+    telemetry.with_handler(fn(event) {
+      case event {
+        telemetry.QueryStart(..) -> query_started()
+        telemetry.QueryEnd(sql:, rows:, ..) ->
+          query_ended(system, sql, Ok(rows))
+        telemetry.QueryError(sql:, ..) -> query_ended(system, sql, Error(Nil))
+        telemetry.TransactionStart
+        | telemetry.TransactionCommit
+        | telemetry.TransactionRollback -> Nil
+      }
+    }),
+  )
+}
+
+@external(erlang, "howdy_database_trace_ffi", "query_start")
+fn query_started() -> Nil
+
+@external(erlang, "howdy_database_trace_ffi", "query_end")
+fn query_ended(system: String, sql: String, outcome: Result(Int, Nil)) -> Nil
 
 /// The settings a SQLite Repo needs for the rest of this module to behave:
 /// foreign keys enforced, which SQLite leaves off, and a five second wait for
@@ -71,10 +108,12 @@ pub fn connect(
 }
 
 /// Commit when `run` returns `Ok`; roll back and return its error otherwise.
+/// The transaction is a `transaction` span, with its queries inside.
 pub fn transaction(
   repo: Repo,
   run: fn(Repo) -> service.Result(a),
 ) -> service.Result(a) {
+  use <- trace.span("transaction", [])
   use repo <- connect(repo)
   // Gloo 1.x stringifies callback errors during rollback. Keep the original
   // typed domain error in this call's private mailbox rather than parsing it.
@@ -91,11 +130,13 @@ pub fn transaction(
     })
   case answer {
     Ok(value) -> Ok(value)
-    Error(_) ->
+    Error(_) -> {
+      trace.set_attributes([trace.bool("db.transaction.rolled_back", True)])
       case process.receive(failures, 0) {
         Ok(failure) -> Error(failure)
         Error(Nil) -> Error(service.Internal("database transaction failed"))
       }
+    }
   }
 }
 

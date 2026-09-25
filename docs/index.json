@@ -275,6 +275,11 @@
           "slug": "users",
           "title": "Users and roles",
           "description": "Create, suspend and delete users, revoke their sessions, manage groups and roles, and sign in to your app as any user."
+        },
+        {
+          "slug": "telemetry",
+          "title": "Telemetry",
+          "description": "See each request as a timeline of its queries, calls, emails and logs, with repeated and slow queries pointed out."
         }
       ]
     },
@@ -291,6 +296,27 @@
           "slug": "clusters",
           "title": "Clusters and security",
           "description": "Run services as an Erlang cluster, call across a trust boundary over HTTP, and call plain Erlang and Elixir nodes."
+        }
+      ]
+    },
+    {
+      "slug": "telemetry",
+      "title": "Telemetry",
+      "docs": [
+        {
+          "slug": "overview",
+          "title": "Telemetry",
+          "description": "Switch on OpenTelemetry: send traces to a collector in production, or record them for the admin in development."
+        },
+        {
+          "slug": "tracing",
+          "title": "Tracing",
+          "description": "The spans Howdy opens for requests, queries, remote calls, email and sign-in, and how to add your own."
+        },
+        {
+          "slug": "logs",
+          "title": "Logs",
+          "description": "Tie log lines to their traces, record crashes, and write logs as JSON with trace ids."
         }
       ]
     },
