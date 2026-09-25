@@ -66,6 +66,18 @@ registry of the Repo or `auth.Auth` the app built, so the app hands them over:
   with its permissions one per line, replace the list later, assign and revoke
   it from the role's page or from a user's page, and delete it, which drops
   its assignments. Needs `auth` too.
+- `admin.mail(box)`: the messages a `howdy/mail/outbox` keeps, listed as
+  they arrive. Each message shows its envelope, its HTML in a sandboxed frame
+  at desktop or mobile width (no scripts, links open in a new tab, inline
+  `cid:` images shown), its text with links you can follow, its raw source
+  (downloadable as `.eml`), and its attachments. See
+  [`howdy_mail`](../mail/README.md).
+- `admin.mail_previews(previews, send_with: mailer)`: your templates built
+  from sample data, grouped, each rendered as it would be sent, with a button
+  that sends it through `mailer`. Point that mailer at the outbox or a local
+  SMTP server, never production. A template that crashes on its sample, or a
+  message the mailer would refuse, shows why. Calls add up, so the app's
+  previews and `howdy/auth/emails.previews` can be registered separately.
 - `admin.at("/somewhere")` moves the pages, and `admin.named` sets the sidebar
   title.
 
@@ -136,4 +148,7 @@ SQLite database, or against PostgreSQL when `HOWDY_ADMIN_TEST_POSTGRES_URL`
 names a server whose database the tests may empty, which also covers the
 notifications. `node browser_test/live_grid.mjs` opens the grid in headless
 Chromium against a running `examples/admin`, changes the table with `sqlite3`,
-and checks the grid follows.
+and checks the grid follows. `node browser_test/mail.mjs` registers an
+address against the running example and checks the registration email
+appears in the outbox without a reload, renders in its sandboxed frame with
+its sign-in link, and that a preview can be sent.

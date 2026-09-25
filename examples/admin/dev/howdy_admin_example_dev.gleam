@@ -4,22 +4,32 @@
 //// The database and auth are opened once here and handed to both the app
 //// and the admin, which is how the admin knows what to show: there is no
 //// package detection in Gleam, so registration is explicit.
+////
+//// Mail goes to an outbox that writes each message to `tmp/mail`, instead
+//// of SMTP or the terminal, and the admin shows it as it arrives.
 
 import gleam/erlang/process
 import howdy
 import howdy/admin
 import howdy/dev
+import howdy/mail
+import howdy/mail/outbox
 import howdy_admin_example as example
 
 pub fn main() -> Nil {
   let db = example.open("admin_example.sqlite")
-  let identity = example.identity(db)
+  let assert Ok(box) = outbox.start_in("tmp/mail")
+  let mailer =
+    mail.mailer(outbox.adapter(box)) |> mail.default_from(example.sender)
+  let identity = example.identity(db, mailer)
   let permissions = example.permissions(db)
   let dashboard =
     admin.new()
     |> admin.named("Notes admin")
     |> admin.auth(identity)
     |> admin.authorization(permissions)
+    |> admin.mail(box)
+    |> admin.mail_previews(example.previews(mailer), send_with: mailer)
 
   let assert Ok(_) =
     dev.start(fn() {

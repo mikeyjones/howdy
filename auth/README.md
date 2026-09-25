@@ -402,6 +402,36 @@ error invalidates the challenge. An exchange spends the token even when it then
 fails (user suspended, method disabled). Registration is disabled until explicitly
 enabled and creates the user only after email verification.
 
+### Ready-made emails
+
+`howdy/auth/emails` writes these emails for you with
+[`howdy_mail`](../mail/README.md), one for each purpose and one for MFA codes:
+
+```gleam
+import howdy/auth/emails
+import howdy/mail
+import howdy/mail/smtp
+
+let assert Ok(smtp_config) = smtp.from_env()
+let mailer =
+  mail.mailer(smtp.adapter(smtp_config))
+  |> mail.default_from(mail.named("Acme", "hello@acme.test"))
+let auth_emails = emails.new(mailer, app_name: "Acme")
+
+let assert Ok(identity) =
+  auth.new(repo: db, origin:, deliver: emails.deliver(auth_emails))
+let mfa_config = mfa.with_delivery(mfa_config, emails.deliver_mfa(auth_emails))
+```
+
+Each message goes to `delivery.email`, tagged `auth.<purpose>` (such as
+`auth.sign_in`), with the link, code or token the delivery carries, and a
+plain-text part with the link on a line of its own. Replace one with
+`emails.with_template(auth_emails, for: auth.SignIn, build: fn(delivery) {
+...})`, which sets the subject and body; the recipient and tag are added.
+A failed send is logged without the token, and the flow reports the
+failure as it would for your own `deliver`. `emails.previews(auth_emails)`
+gives the admin a preview of every email.
+
 ### Links and codes in the email
 
 Pasting a 43-character token is the fallback, not the experience to aim for.

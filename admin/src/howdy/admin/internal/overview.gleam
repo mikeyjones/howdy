@@ -5,7 +5,7 @@ import gleam/dynamic/decode
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
-import gleam/option.{None, Some}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gloo/repo.{type Repo}
@@ -18,6 +18,7 @@ import howdy/auth/group
 import howdy/authorization
 import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
+import howdy/mail/outbox.{type Outbox}
 import howdy/service
 import howdy/ui
 import lustre/element.{type Element, text}
@@ -51,6 +52,14 @@ fn index(config: Config, ctx: Context) -> Response(ewe.Body) {
               "howdy_auth",
               "Not registered. Pass your auth.Auth to admin.auth to manage users and groups.",
             )
+        },
+        case config.outbox, config.mailer {
+          None, None ->
+            absent(
+              "howdy_mail",
+              "Not registered. Pass an outbox to admin.mail to read the mail your app sends, and previews to admin.mail_previews.",
+            )
+          box, _ -> mail_card(config, box)
         },
       ]),
     ],
@@ -196,6 +205,38 @@ fn auth_card(config: Config, identity: Auth) -> Element(msg) {
       ])
     }
   }
+}
+
+fn mail_card(config: Config, box: Option(Outbox)) -> Element(msg) {
+  ui.card([], [
+    ui.card_header([], [
+      ui.card_title([text("howdy_mail")]),
+      ui.card_description([
+        text(case box {
+          Some(box) ->
+            accounts.describe(list.length(outbox.messages(box)), "message")
+            <> " in the outbox"
+          None -> "No outbox registered"
+        }),
+        text(
+          " · " <> accounts.describe(list.length(config.previews), "preview"),
+        ),
+      ]),
+    ]),
+    ui.card_footer([], [
+      ui.row([], [
+        case box {
+          Some(_) -> ui.link(config.path(config, "/mail"), [text("Outbox")])
+          None -> element.none()
+        },
+        case config.mailer {
+          Some(_) ->
+            ui.link(config.path(config, "/mail/previews"), [text("Previews")])
+          None -> element.none()
+        },
+      ]),
+    ]),
+  ])
 }
 
 fn absent(name: String, why: String) -> Element(msg) {

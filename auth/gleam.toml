@@ -14,6 +14,9 @@ gleam_crypto = ">= 1.5.0 and < 2.0.0"
 ewe = ">= 7.0.0 and < 8.0.0"
 howdy = { path = ".." }
 howdy_database = { path = "../database" }
+howdy_mail = { path = "../mail" }
+smail = ">= 2.0.1 and < 3.0.0"
+logging = ">= 1.3.0 and < 2.0.0"
 gloo = ">= 1.0.2 and < 2.0.0"
 jargon = { path = "vendor/jargon" }
 argus = ">= 2.0.0 and < 3.0.0"

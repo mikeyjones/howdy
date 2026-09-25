@@ -71,6 +71,24 @@ fn navigation(config: Config) -> List(app_shell.Group) {
       ]
       None -> []
     },
+    case config.outbox, config.mailer {
+      None, None -> []
+      outbox, mailer -> [
+        Group(
+          "Mail",
+          list.flatten([
+            case outbox {
+              Some(_) -> [Link(at("/mail"), "Outbox")]
+              None -> []
+            },
+            case mailer {
+              Some(_) -> [Link(at("/mail/previews"), "Previews")]
+              None -> []
+            },
+          ]),
+        ),
+      ]
+    },
   ])
 }
 

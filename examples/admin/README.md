@@ -19,6 +19,14 @@ in as them, and `GET /notes/all` answers; without it the route is `403`.
 Deleting a user from their page removes their notes too: the example's
 deletion callback does that in the same transaction.
 
+Registering at `/auth/register` sends the confirmation email to the outbox
+under **Mail**, where its button signs you in. The outbox also writes each
+message to `tmp/mail` as an `.eml` file. **Previews** shows every email the
+app sends (its own weekly digest and all of auth's) from sample data, and
+sends one to the outbox on request. `gleam run` sends through `SMTP_URL`
+instead, such as `smtp://localhost:1025` for Mailpit, or prints to the
+terminal when it is unset.
+
 With `DATABASE_URL` set to a PostgreSQL server, the app and the admin use it
 instead of the SQLite file, and the grid follows changes through `NOTIFY`
 rather than polling.

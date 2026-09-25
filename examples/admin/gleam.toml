@@ -13,6 +13,8 @@ gloo = ">= 1.0.2 and < 2.0.0"
 howdy = { path = "../.." }
 howdy_auth = { path = "../../auth" }
 howdy_database = { path = "../../database" }
+howdy_mail = { path = "../../mail" }
+smail = ">= 2.0.1 and < 3.0.0"
 
 [dev_dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

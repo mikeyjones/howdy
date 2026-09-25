@@ -3,23 +3,28 @@
 //// `gleam dev` serves the same app with hot reload and the admin area at
 //// <http://localhost:8787/_howdy>.
 ////
-//// Email delivery prints tokens in the terminal **for this local
-//// demonstration only**; a real application delivers them privately.
+//// Auth emails go through `howdy/mail`: over SMTP when `SMTP_URL` is set,
+//// otherwise printed in the terminal **for this local demonstration
+//// only**. Under `gleam dev` they go to the outbox the admin shows.
 
 import gleam/dynamic/decode
 import gleam/erlang/process
+import gleam/int
 import gleam/io
 import gleam/json
+import gleam/list
+import gleam/option
 import gleam/result
+import gleam/string
 import gloo/adapter/sqlite
 import gloo/migration as gloo_migration
 import gloo/repo.{type Repo}
 import gloo/sql
 import howdy
 import howdy/auth
+import howdy/auth/emails
 import howdy/auth/pages
 import howdy/auth/routes
-import howdy/auth/secret
 import howdy/auth/user.{type User}
 import howdy/authorization as access
 import howdy/body
@@ -27,14 +32,19 @@ import howdy/controller
 import howdy/database
 import howdy/database/postgres
 import howdy/guard
+import howdy/mail
+import howdy/mail/preview
+import howdy/mail/smtp
 import howdy/migration
 import howdy/service
+import smail/email as smail
+import smail/html
 
 pub const origin = "http://localhost:8787"
 
 pub fn main() {
   let db = open("admin_example.sqlite")
-  let identity = identity(db)
+  let identity = identity(db, mailer())
   let assert Ok(_) =
     app(db, identity, permissions(db))
     |> howdy.bind(to: "127.0.0.1")
@@ -80,17 +90,75 @@ pub fn permissions(db: Repo) -> access.Authorization {
   permissions
 }
 
-pub fn identity(db: Repo) -> auth.Auth {
-  let assert Ok(identity) =
-    auth.new(repo: db, origin:, deliver: fn(delivery) {
-      io.println(
-        "LOCAL DEMO email to "
-        <> delivery.email
-        <> ": "
-        <> secret.reveal(delivery.token),
-      )
-      Ok(Nil)
+/// SMTP from `SMTP_URL`, such as `smtp://localhost:1025` for Mailpit, or
+/// else the terminal.
+pub fn mailer() -> mail.Mailer {
+  let adapter = case smtp.from_env() {
+    Ok(config) -> smtp.adapter(config)
+    Error(_) ->
+      mail.adapter(named: "terminal", send: fn(outgoing: mail.Outgoing) {
+        io.println(
+          "LOCAL DEMO email to "
+          <> string.join(list.map(outgoing.to, mail.address_to_string), ", ")
+          <> ": "
+          <> outgoing.subject
+          <> "\n"
+          <> option.unwrap(outgoing.text, ""),
+        )
+        Ok(mail.Receipt(outgoing.id, option.None))
+      })
+  }
+  mail.mailer(adapter) |> mail.default_from(sender)
+}
+
+pub const sender = mail.Address(option.Some("Notes"), "notes@localhost")
+
+pub fn emails(mailer: mail.Mailer) -> emails.Emails {
+  emails.new(mailer, app_name: "Notes")
+}
+
+/// The app's own email, beside the ones auth sends.
+pub fn digest(to email: String, notes notes: List(Note)) -> mail.Message {
+  mail.message()
+  |> mail.to([mail.address(email)])
+  |> mail.subject("Your notes this week")
+  |> mail.tag("notes.digest")
+  |> mail.template(
+    smail.html([], [
+      smail.head([], []),
+      smail.body([], [
+        smail.preview(int.to_string(list.length(notes)) <> " notes"),
+        smail.container([], [
+          smail.h2([], [html.text("Your notes this week")]),
+          ..list.map(notes, fn(note) {
+            smail.paragraph([], [
+              html.text(note.title <> " · " <> int.to_string(note.stars) <> "★"),
+            ])
+          })
+        ]),
+      ]),
+    ]),
+  )
+}
+
+/// Every email the app sends, for the admin's previews.
+pub fn previews(mailer: mail.Mailer) -> List(preview.Preview) {
+  [
+    preview.new("Weekly digest", fn() {
+      digest(to: "someone@example.com", notes: [
+        Note(id: 1, title: "Buy milk", stars: 2),
+        Note(id: 2, title: "Call the plumber", stars: 5),
+      ])
     })
+      |> preview.in_group("Notes"),
+    ..emails.previews(emails(mailer))
+  ]
+}
+
+pub fn identity(db: Repo, mailer: mail.Mailer) -> auth.Auth {
+  let assert Ok(identity) =
+    auth.new(repo: db, origin:, deliver: emails.deliver(emails(mailer)))
+  let assert Ok(identity) = auth.with_email_links(identity, at: "/auth")
   identity
   |> auth.allow_registration
   // Deleting an account removes its notes in the same transaction.

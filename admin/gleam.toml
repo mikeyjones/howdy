@@ -17,6 +17,7 @@ howdy = { path = ".." }
 howdy_database = { path = "../database" }
 howdy_auth = { path = "../auth" }
 howdy_ui = { path = "../ui" }
+howdy_mail = { path = "../mail" }
 
 [dev_dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

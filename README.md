@@ -617,6 +617,28 @@ dev.start(fn() {
 
 See `examples/admin` for a working app.
 
+## Email
+
+[`howdy_mail`](mail/README.md) writes email with
+[smail](https://hexdocs.pm/smail) templates and sends it over SMTP, Resend,
+SendGrid or an adapter of your own. In development an outbox keeps the mail
+instead, and the admin shows it as it arrives, along with previews of every
+template rendered from sample data:
+
+```gleam
+let mailer =
+  mail.mailer(smtp.adapter(smtp_config))
+  |> mail.default_from(mail.named("Acme", "hello@acme.test"))
+
+mail.message()
+|> mail.to([mail.address(user.email)])
+|> mail.subject("Welcome to Acme")
+|> mail.template(welcome_email(user))
+|> mail.send(mailer, _)
+```
+
+`howdy/auth/emails` gives `howdy_auth` a ready-made email for every purpose.
+
 ## Testing
 
 `howdy/testing` runs requests through an app without starting a server. The
@@ -691,7 +713,8 @@ The core package reserves `howdy/auth`, every `howdy/auth/*` module and
 `howdy/authorization` for the optional `howdy_auth` package, and
 `howdy/database` and `howdy/migration` for `howdy_database`,
 `howdy/remote` and every `howdy/remote/*` module for `howdy_remote`, and
-`howdy/admin` and every `howdy/admin/*` module for `howdy_admin`. Core must not
+`howdy/admin` and every `howdy/admin/*` module for `howdy_admin`, and
+`howdy/mail` and every `howdy/mail/*` module for `howdy_mail`. Core must not
 define these modules: Gleam/BEAM module names are
 global across dependencies. CI runs `scripts/check-auth-namespace.sh` to
 reject collisions. Applications should put their own modules in their own

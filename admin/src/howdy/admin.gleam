@@ -29,6 +29,9 @@
 ////   auth registers its database too.
 //// - `authorization`: roles and their permissions, and which users hold
 ////   them, in every scope.
+//// - `mail`: the messages a `howdy/mail/outbox` keeps, as they arrive.
+//// - `mail_previews`: your email templates rendered from sample data, and
+////   sent on demand.
 ////
 //// ## Development only
 ////
@@ -50,12 +53,16 @@ import howdy.{type App}
 import howdy/admin/internal/accounts
 import howdy/admin/internal/config.{type Config, Config}
 import howdy/admin/internal/data
+import howdy/admin/internal/mail as mail_pages
 import howdy/admin/internal/notify
 import howdy/admin/internal/overview
 import howdy/admin/internal/roles
 import howdy/auth.{type Auth}
 import howdy/authorization.{type Authorization}
 import howdy/controller.{type Controller}
+import howdy/mail.{type Mailer}
+import howdy/mail/outbox.{type Outbox}
+import howdy/mail/preview.{type Preview}
 import howdy/service
 
 /// An admin area under construction.
@@ -72,6 +79,9 @@ pub fn new() -> Admin {
       database: None,
       identity: None,
       authorization: None,
+      outbox: None,
+      previews: [],
+      mailer: None,
       hosts: [
         "localhost",
         "127.0.0.1",
@@ -121,6 +131,33 @@ pub fn authorization(admin: Admin, access: Authorization) -> Admin {
   Admin(Config(..admin.config, authorization: Some(access)))
 }
 
+/// Show the messages this outbox keeps, as they arrive: the rendered HTML,
+/// the text, the headers and the raw source, with links that open.
+pub fn mail(admin: Admin, box: Outbox) -> Admin {
+  Admin(Config(..admin.config, outbox: Some(box)))
+}
+
+/// Render these email previews, each built from its sample data every time
+/// it is shown, and send one on demand through `mailer`. Previews from
+/// several calls are shown together; the last mailer given is used.
+///
+/// The mailer's default sender applies, and its adapter really sends:
+/// point it at the outbox, or at a local SMTP server such as Mailpit, not
+/// at production.
+pub fn mail_previews(
+  admin: Admin,
+  previews: List(Preview),
+  send_with mailer: Mailer,
+) -> Admin {
+  Admin(
+    Config(
+      ..admin.config,
+      previews: list.append(admin.config.previews, previews),
+      mailer: Some(mailer),
+    ),
+  )
+}
+
 /// Exact request hostnames (without port) the pages answer, replacing the
 /// loopback names. Anyone who can reach an allowed host owns your data.
 pub fn allow_hosts(admin: Admin, hosts: List(String)) -> Admin {
@@ -155,6 +192,10 @@ pub fn controllers(admin: Admin) -> List(Controller) {
         roles.controller(config, identity, access),
       ]
       _, _ -> []
+    },
+    case config.outbox, config.mailer {
+      None, None -> []
+      _, _ -> [mail_pages.controller(config)]
     },
   ])
   |> list.map(controller.middleware(_, only_hosts(config)))
@@ -192,6 +233,16 @@ pub fn has_database(admin: Admin) -> Bool {
 /// Whether authorization was registered.
 pub fn has_authorization(admin: Admin) -> Bool {
   option.is_some(admin.config.authorization)
+}
+
+/// Whether an outbox was registered.
+pub fn has_mail(admin: Admin) -> Bool {
+  option.is_some(admin.config.outbox)
+}
+
+/// How many email previews were registered.
+pub fn preview_count(admin: Admin) -> Int {
+  list.length(admin.config.previews)
 }
 
 /// Whether auth was registered.

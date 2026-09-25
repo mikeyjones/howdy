@@ -5,6 +5,9 @@ import gleam/option.{type Option}
 import gloo/repo.{type Repo}
 import howdy/auth.{type Auth}
 import howdy/authorization.{type Authorization}
+import howdy/mail.{type Mailer}
+import howdy/mail/outbox.{type Outbox}
+import howdy/mail/preview.{type Preview}
 
 pub type Config {
   Config(
@@ -15,6 +18,10 @@ pub type Config {
     database: Option(Repo),
     identity: Option(Auth),
     authorization: Option(Authorization),
+    outbox: Option(Outbox),
+    /// Email previews, and the mailer that renders and sends them.
+    previews: List(Preview),
+    mailer: Option(Mailer),
     /// Exact request hostnames the pages answer.
     hosts: List(String),
   )
