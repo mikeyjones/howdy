@@ -12,8 +12,10 @@ tag.
 - Link to other docs as `/docs/<group>/<doc>`, and to the component gallery
   as `/components/<name>`. When the website shows an older release, it
   points these at that release.
-- Install instructions give `ref = "v<version>"`. `scripts/release.sh`
-  updates them to each new tag, so write the current one.
+- Install instructions give `ref = "v<version>"`, and links to code on
+  GitHub use `/tree/v2/` or `/blob/v2/`. `scripts/release.sh` points both at
+  each new tag, so readers see the code of the release they are reading.
+- The site renders Djot with `jot`, which has no tables: use a list.
 
 ## Marking what is new
 

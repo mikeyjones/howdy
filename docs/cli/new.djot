@@ -71,7 +71,6 @@ later:
 howdy new my_app --skip-deps
 ```
 
-{since="2.1"}
 ## Which Howdy release
 
 Every Howdy package in a new project comes from the same release tag, such

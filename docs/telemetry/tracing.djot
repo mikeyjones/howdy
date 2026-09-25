@@ -4,15 +4,28 @@
 
 Once telemetry is started, these become spans without any code of yours:
 
-| Where | Span | Notes |
-|---|---|---|
-| Every request | `GET /users/:id` | A server span named after the route, not the path, with the method, path, status and client address. `5xx` answers fail the span. A `traceparent` header from the caller is continued. |
-| `howdy/database` | `SELECT app_notes` | One client span per query, with the SQL but never its parameter values, and the rows returned. Only inside a span that is being recorded, so background polling does not fill your traces. |
-| `database.transaction` | `transaction` | With its queries inside, and `db.transaction.rolled_back` when it rolls back. |
-| `howdy/remote` | the procedure name | A client span around each call, a server span for it on the other node, and the trace carried across, over HTTP and over Erlang distribution. |
-| `howdy/mail` | `mail.send` | The adapter, the message id, tags and number of recipients. Never addresses or the subject. |
-| `howdy_auth` | `auth.login_password` and others | One span per sign-in step, with `auth.refused` holding the status of a refusal. The request's span gets `enduser.id`. Audit events, such as `sessions.revoked`, become span events. Never emails, passwords or tokens. |
-| Websockets | `websocket text` | One span per frame from the client, as a trace of its own linked to the request that opened the socket. |
+- *Every request*, as a server span named after the route, not the path,
+  such as `GET /users/:id`. It has the method, path, status and client
+  address. `5xx` answers fail the span, and a `traceparent` header from the
+  caller is continued.
+- *`howdy/database`*: one client span per query, such as
+  `SELECT app_notes`, with the SQL but never its parameter values, and the
+  rows returned. Only inside a span that is being recorded, so background
+  polling does not fill your traces.
+- *`database.transaction`*: a `transaction` span with its queries inside,
+  and `db.transaction.rolled_back` when it rolls back.
+- *`howdy/remote`*: a client span named after the procedure around each
+  call, a server span for it on the other node, and the trace carried
+  across, over HTTP and over Erlang distribution.
+- *`howdy/mail`*: a `mail.send` span with the adapter, the message id,
+  tags and number of recipients. Never addresses or the subject.
+- *`howdy_auth`*: one span per sign-in step, such as
+  `auth.login_password`, with `auth.refused` holding the status of a
+  refusal. The request's span gets `enduser.id`, and audit events, such as
+  `sessions.revoked`, become span events. Never emails, passwords or
+  tokens.
+- *Websockets*: a `websocket text` span per frame from the client, as a
+  trace of its own linked to the request that opened the socket.
 
 Query strings, headers other than the user agent, and request bodies are
 never recorded, since they can hold secrets.

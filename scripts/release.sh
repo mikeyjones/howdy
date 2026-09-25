@@ -55,9 +55,10 @@ done
 echo "== Recording the release"
 gleam run -m howdy_release -- record "$version" "$(date +%F)" "$interfaces"
 
-echo "== Pointing the docs' install instructions at v$version"
+echo "== Pointing the docs' install instructions and code links at v$version"
 find docs -name '*.djot' -print0 | xargs -0 sed -i -E \
-  "s#(github\.com/mikeyjones/howdy\.git\", ref = \")v[^\"]*\"#\1v$version\"#g"
+  -e "s#(github\.com/mikeyjones/howdy\.git\", ref = \")v[^\"]*\"#\1v$version\"#g" \
+  -e "s#(github\.com/mikeyjones/howdy/(tree|blob)/)[^/)\" ]+#\1v$version#g"
 
 if [[ "$tag_it" == false ]]; then
   echo

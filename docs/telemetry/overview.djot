@@ -40,13 +40,15 @@ pub fn main() {
 `otlp` sends spans over OTLP/HTTP in batches, configured by the standard
 environment variables, so endpoints and keys stay out of the code:
 
-| Variable | What it sets |
-|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Where to send, such as `https://api.honeycomb.io`. Defaults to `http://localhost:4318`. |
-| `OTEL_EXPORTER_OTLP_HEADERS` | Headers for every export, such as `x-honeycomb-team=KEY`. |
-| `OTEL_SERVICE_NAME` | Overrides the service name given to `new`. |
-| `OTEL_RESOURCE_ATTRIBUTES` | More resource attributes, such as `deployment.environment.name=staging`. |
-| `OTEL_SDK_DISABLED` | `true` turns everything off again, even after `start`. |
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: where to send, such as
+  `https://api.honeycomb.io`. Defaults to `http://localhost:4318`.
+- `OTEL_EXPORTER_OTLP_HEADERS`: headers for every export, such as
+  `x-honeycomb-team=KEY`.
+- `OTEL_SERVICE_NAME`: overrides the service name given to `new`.
+- `OTEL_RESOURCE_ATTRIBUTES`: more resource attributes, such as
+  `deployment.environment.name=staging`.
+- `OTEL_SDK_DISABLED`: `true` turns everything off again, even after
+  `start`.
 
 To send only where a collector is configured, and stay silent everywhere
 else, use `from_env`. It gives a configuration only when
