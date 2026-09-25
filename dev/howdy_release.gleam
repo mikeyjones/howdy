@@ -140,15 +140,25 @@ fn releases_to_json(releases: List(Release)) -> Json {
           #(
             "packages",
             json.object(
-              list.map(release.packages, fn(pair) {
-                #(pair.0, json.string(pair.1))
-              }),
+              release.packages
+              |> list.sort(fn(a, b) {
+                int.compare(package_position(a.0), package_position(b.0))
+              })
+              |> list.map(fn(pair) { #(pair.0, json.string(pair.1)) }),
             ),
           ),
         ])
       }),
     ),
   ])
+}
+
+/// Where a package comes in `packages`, so files list them in that order.
+fn package_position(name: String) -> Int {
+  packages
+  |> list.index_map(fn(package, index) { #(package.0, index) })
+  |> list.key_find(name)
+  |> result.unwrap(list.length(packages))
 }
 
 /// The version each package's `gleam.toml` declares.
