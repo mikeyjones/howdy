@@ -1,0 +1,86 @@
+# Creating a project
+
+```sh
+howdy new my_app
+```
+
+`howdy new` creates a Howdy project in a new folder. The project is a Gleam
+application with:
+
+- a themed home page built from [Howdy UI](/docs/ui/pages)
+- static assets served from `priv/public`
+- hot reload for development
+- a test suite
+
+By default it also has a SQLite database with an example todo list: a
+migration, a `todos` slice with its record, database operations and a JSON
+API at `/api/todos`, and a live todo list on the home page, rendered as a
+[live component](/docs/ui/live-components).
+
+## Project names
+
+The name must be a valid Gleam project name: lowercase letters, digits and
+underscores, starting with a letter.
+
+You can give a path instead, and the last segment becomes the project name:
+
+```sh
+howdy new apps/my_app
+```
+
+## Choosing a database
+
+`--database` picks the database, and `sqlite` is the default. SQLite needs no
+setup: the database is a file, created and migrated the first time the app
+starts.
+
+```sh
+howdy new my_app --database postgres
+```
+
+`--database postgres` builds the same project on PostgreSQL. The app
+connects through a connection pool configured from `DATABASE_URL`, and the
+project gets a `docker-compose.yml` that starts PostgreSQL with a development
+database and a test database.
+
+```sh
+howdy new my_app --no-database
+```
+
+`--no-database` leaves out the database and the todo list, which gives you a
+page-only project. The [`howdy create`](/docs/cli/create) commands need a
+database, so they do not work in a project made this way.
+
+`--database` and `--no-database` cannot be used together.
+
+## What happens
+
+`howdy new` works through these steps, and shows its progress as it goes:
+
+1. It checks that `gleam` is installed, and warns you if `erl` is missing.
+2. It writes the project files.
+3. It formats them with `gleam format`.
+4. It downloads the dependencies with `gleam deps download`.
+5. It prints what to do next.
+
+Downloading the dependencies needs a network connection and Git. Pass
+`--skip-deps` to leave that step out, and run `gleam deps download` yourself
+later:
+
+```sh
+howdy new my_app --skip-deps
+```
+
+## Flags
+
+- `--database sqlite` or `--database postgres`: the database to use.
+  Defaults to `sqlite`.
+- `--no-database`: leave out the database and the todo list example.
+- `--skip-deps`: do not run `gleam deps download` after creating the files.
+- `--plain`: print progress as plain lines instead of animating.
+
+## Next
+
+Move into the project and start it with `howdy dev`. If you chose
+PostgreSQL, start the database first with `docker compose up -d`.
+[Getting started](/docs/guides/getting-started) walks through the first run.
