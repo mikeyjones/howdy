@@ -101,6 +101,23 @@ try {
   await until('deleting from the grid removes the row', `!gridText().includes('inserted ${stamp}')`, 4000);
   await until('the row count follows', `gridText().includes((${before} - 1) + ' rows')`, 4000);
 
+  // Searching narrows the grid to the matching row; sorting by title puts
+  // it first or last; clearing restores everything.
+  sql(`INSERT INTO notes_notes (user_id, title) SELECT id, 'zz ${stamp}' FROM howdy_auth_users LIMIT 1`);
+  await until('a second row for the search check appears', `gridText().includes('zz ${stamp}')`, 4000);
+  await evaluate(`(() => { const i = grid().querySelector('input[name=q]'); i.value = 'zz ${stamp}'; i.form.requestSubmit(); })()`);
+  await until('searching shows only the matching row', `gridText().includes('1 matching rows') && !gridText().includes('renamed ${stamp}')`, 4000);
+  await evaluate(`[...grid().querySelectorAll('button')].find(b => b.textContent.trim() === 'Clear').click()`);
+  await until('clearing the search brings the rest back', `gridText().includes('renamed ${stamp}')`, 4000);
+  await evaluate(`[...grid().querySelectorAll('th button')].find(b => b.textContent.trim() === 'title').click()`);
+  await until('sorting by title descending puts zz first', `gridText().includes('title ▲') || gridText().includes('title ▼')`, 4000);
+  await evaluate(`[...grid().querySelectorAll('th button')].find(b => b.textContent.trim().startsWith('title')).click()`);
+  await until('the second click sorts descending', `gridText().includes('title ▼') && [...grid().querySelectorAll('tbody tr')][0].textContent.includes('zz ${stamp}')`, 4000);
+  await evaluate(`(() => { const f = grid().querySelector('select[name=column]').form; f.querySelector('select[name=column]').value = 'stars'; f.querySelector('select[name=operator]').value = 'gt'; f.querySelector('input[name=value]').value = '5'; f.requestSubmit(); })()`);
+  await until('a filter narrows to rows with more than five stars', `gridText().includes('stars > 5') && gridText().includes('renamed ${stamp}') && !gridText().includes('zz ${stamp}')`, 4000);
+  await evaluate(`grid().querySelector('button[aria-label="Remove filter"]').click()`);
+  await until('removing the filter widens again', `gridText().includes('zz ${stamp}')`, 4000);
+
   sql(`DELETE FROM notes_notes WHERE title LIKE '%${stamp}'`);
   if (SHOT) {
     const { data } = await send('Page.captureScreenshot', { format: 'png' });

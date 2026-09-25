@@ -8,7 +8,7 @@ import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/int
 import gleam/list
-import gleam/option.{type Option}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gloo/error
@@ -116,12 +116,87 @@ pub fn key_names(table: Table) -> List(String) {
   }
 }
 
-pub fn count(repo: Repo, table: Table) -> service.Result(Int) {
+// -- Queries -----------------------------------------------------------------
+
+pub type Direction {
+  Ascending
+  Descending
+}
+
+pub type Operator {
+  Equals
+  NotEquals
+  Contains
+  Greater
+  Less
+  IsNull
+  NotNull
+}
+
+/// One condition on one column. `value` is ignored by `IsNull` and
+/// `NotNull`.
+pub type Filter {
+  Filter(column: String, operator: Operator, value: String)
+}
+
+/// What to show of a table: a page of the rows matching a search across
+/// every column and a list of filters, in a chosen order.
+pub type Query {
+  Query(
+    search: String,
+    filters: List(Filter),
+    sort: Option(#(String, Direction)),
+    limit: Int,
+    offset: Int,
+  )
+}
+
+/// Everything, in key order, fifty at a time.
+pub fn query() -> Query {
+  Query(search: "", filters: [], sort: None, limit: 50, offset: 0)
+}
+
+pub fn operators() -> List(Operator) {
+  [Equals, NotEquals, Contains, Greater, Less, IsNull, NotNull]
+}
+
+/// The operator's form value and label.
+pub fn operator_name(operator: Operator) -> String {
+  case operator {
+    Equals -> "eq"
+    NotEquals -> "ne"
+    Contains -> "contains"
+    Greater -> "gt"
+    Less -> "lt"
+    IsNull -> "null"
+    NotNull -> "not_null"
+  }
+}
+
+pub fn operator_label(operator: Operator) -> String {
+  case operator {
+    Equals -> "="
+    NotEquals -> "≠"
+    Contains -> "contains"
+    Greater -> ">"
+    Less -> "<"
+    IsNull -> "is null"
+    NotNull -> "is not null"
+  }
+}
+
+pub fn operator_from(name: String) -> Result(Operator, Nil) {
+  list.find(operators(), fn(operator) { operator_name(operator) == name })
+}
+
+/// How many rows match the query's search and filters.
+pub fn count(repo: Repo, table: Table, query: Query) -> service.Result(Int) {
   use conn <- database.connect(repo)
+  let #(where, parameters) = conditions(table, query, from: 1)
   use counts <- result.try(all(
     conn,
-    "SELECT COUNT(*) FROM " <> quote(table.name),
-    [],
+    "SELECT COUNT(*) FROM " <> quote(table.name) <> where,
+    parameters,
     decode.field(0, decode.int, decode.success),
   ))
   case counts {
@@ -130,23 +205,159 @@ pub fn count(repo: Repo, table: Table) -> service.Result(Int) {
   }
 }
 
-/// A page of rows in key order.
+/// The query's page of rows.
 pub fn rows(
   repo: Repo,
   table: Table,
-  limit limit: Int,
-  offset offset: Int,
+  query: Query,
 ) -> service.Result(List(Row)) {
   use conn <- database.connect(repo)
+  let #(where, parameters) = conditions(table, query, from: 1)
+  let next = list.length(parameters) + 1
   all(
     conn,
     select(table)
+      <> where
       <> " ORDER BY "
-      <> string.join(order(table), ", ")
-      <> " LIMIT $1 OFFSET $2",
-    [sql.int(limit), sql.int(offset)],
+      <> string.join(order(table, query), ", ")
+      <> " LIMIT $"
+      <> int.to_string(next)
+      <> " OFFSET $"
+      <> int.to_string(next + 1),
+    list.append(parameters, [sql.int(query.limit), sql.int(query.offset)]),
     row_decoder(table),
   )
+}
+
+/// A `WHERE` clause for the search and every filter naming a real column,
+/// numbering placeholders from `from`. Empty when there is nothing to
+/// match, so it can be appended as is.
+fn conditions(
+  table: Table,
+  query: Query,
+  from from: Int,
+) -> #(String, List(GlooValue)) {
+  let search = case string.trim(query.search) {
+    "" -> []
+    term -> {
+      let pattern = sql.string("%" <> escape_like(term) <> "%")
+      [
+        list.map(table.columns, fn(column) {
+          #(contains(table, column, "$"), pattern)
+        }),
+      ]
+    }
+  }
+  let filters =
+    list.filter_map(query.filters, fn(filter) {
+      use column <- result.try(
+        list.find(table.columns, fn(column) { column.name == filter.column }),
+      )
+      Ok([
+        case filter.operator {
+          Equals -> #(quote(column.name) <> " = $", sql.string(filter.value))
+          NotEquals -> #(
+            quote(column.name) <> " <> $",
+            sql.string(filter.value),
+          )
+          Greater -> #(quote(column.name) <> " > $", sql.string(filter.value))
+          Less -> #(quote(column.name) <> " < $", sql.string(filter.value))
+          Contains -> #(
+            contains(table, column, "$"),
+            sql.string("%" <> escape_like(filter.value) <> "%"),
+          )
+          IsNull -> #(quote(column.name) <> " IS NULL", value.GNull)
+          NotNull -> #(quote(column.name) <> " IS NOT NULL", value.GNull)
+        }
+        |> fn(pair) {
+          case filter.operator {
+            Equals | NotEquals | Greater | Less -> #(
+              string.replace(pair.0, " $", " " <> typed(table, column, "$")),
+              pair.1,
+            )
+            _ -> pair
+          }
+        },
+      ])
+    })
+  // Each group is OR-ed within and AND-ed with the others.
+  let groups = list.append(search, filters)
+  let #(clauses, parameters, _) =
+    list.fold(groups, #([], [], from), fn(state, group) {
+      let #(clauses, parameters, next) = state
+      let #(parts, parameters, next) =
+        list.fold(group, #([], parameters, next), fn(state, part) {
+          let #(parts, parameters, next) = state
+          let #(text, parameter) = part
+          case parameter {
+            value.GNull -> #([text, ..parts], parameters, next)
+            _ -> #(
+              [string.replace(text, "$", "$" <> int.to_string(next)), ..parts],
+              [parameter, ..parameters],
+              next + 1,
+            )
+          }
+        })
+      #(
+        ["(" <> string.join(list.reverse(parts), " OR ") <> ")", ..clauses],
+        parameters,
+        next,
+      )
+    })
+  case clauses {
+    [] -> #("", [])
+    _ -> #(
+      " WHERE " <> string.join(list.reverse(clauses), " AND "),
+      list.reverse(parameters),
+    )
+  }
+}
+
+/// A case-insensitive substring match on the column read as text.
+fn contains(table: Table, column: Column, placeholder: String) -> String {
+  case table.backend {
+    Postgres ->
+      "CAST(" <> quote(column.name) <> " AS text) ILIKE " <> placeholder
+    Sqlite -> "CAST(" <> quote(column.name) <> " AS text) LIKE " <> placeholder
+  }
+}
+
+/// A placeholder cast to the column's type, for comparisons. See `bind`.
+fn typed(table: Table, column: Column, placeholder: String) -> String {
+  case table.backend {
+    Postgres ->
+      "CAST(CAST(" <> placeholder <> " AS text) AS " <> column.kind <> ")"
+    Sqlite -> placeholder
+  }
+}
+
+fn escape_like(term: String) -> String {
+  term
+  |> string.replace("%", "\\%")
+  |> string.replace("_", "\\_")
+}
+
+fn order(table: Table, query: Query) -> List(String) {
+  let key = case table.key {
+    Columns(columns) -> list.map(columns, fn(column) { quote(column.name) })
+    RowId -> ["rowid"]
+    Ctid -> ["ctid"]
+  }
+  case query.sort {
+    Some(#(name, direction)) ->
+      case list.find(table.columns, fn(column) { column.name == name }) {
+        Ok(column) -> [
+          quote(column.name)
+            <> case direction {
+            Ascending -> " ASC"
+            Descending -> " DESC"
+          },
+          ..key
+        ]
+        Error(Nil) -> key
+      }
+    None -> key
+  }
 }
 
 /// One row by key, or `NotFound`.
@@ -271,14 +482,6 @@ fn select(table: Table) -> String {
   <> string.join(list.append(key, columns), ", ")
   <> " FROM "
   <> quote(table.name)
-}
-
-fn order(table: Table) -> List(String) {
-  case table.key {
-    Columns(columns) -> list.map(columns, fn(column) { quote(column.name) })
-    RowId -> ["rowid"]
-    Ctid -> ["ctid"]
-  }
 }
 
 fn row_decoder(table: Table) -> decode.Decoder(Row) {

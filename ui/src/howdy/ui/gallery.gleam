@@ -115,7 +115,7 @@ fn shell(
     sidebar.link(
       base <> "/" <> name <> "?theme=" <> preset,
       active: name == current,
-      attributes: [],
+      attributes: [class(nav_link_class())],
       children: [text(label)],
     )
   }
@@ -210,7 +210,9 @@ fn index(ctx: Context, base: String) {
                 attribute.href(base <> "/" <> entry.name <> "?theme=" <> preset),
               ],
               [
-                html.strong([], [text(title_case(entry.name))]),
+                html.strong([class(tile_title_class())], [
+                  text(title_case(entry.name)),
+                ]),
                 html.span([class(muted_class())], [
                   text(registry.summary(describe(entry))),
                 ]),
@@ -405,6 +407,7 @@ fn strip_slash(path: String) -> String {
 pub fn classes() -> List(Class) {
   [
     home_class(),
+    nav_link_class(),
     bar_class(),
     group_class(),
     heading_class(),
@@ -412,6 +415,7 @@ pub fn classes() -> List(Class) {
     section_class(),
     grid_class(),
     tile_class(),
+    tile_title_class(),
     muted_class(),
     theme_select_class(),
     example_class(),
@@ -424,8 +428,24 @@ pub fn classes() -> List(Class) {
   ]
 }
 
+// Most presets differ from each other only in their primary colour, so the
+// gallery's own chrome carries it: otherwise switching preset on a page
+// without buttons or links would appear to do nothing.
+
 pub fn home_class() -> Class {
-  css.class([css.color(tokens.text), css.text_decoration("none")])
+  css.class([
+    css.color(tokens.primary),
+    css.font_weight("600"),
+    css.text_decoration("none"),
+  ])
+}
+
+pub fn nav_link_class() -> Class {
+  css.class([
+    css.selector("[aria-current=\"page\"]", [
+      css.property("box-shadow", "inset 3px 0 0 " <> tokens.primary),
+    ]),
+  ])
 }
 
 pub fn bar_class() -> Class {
@@ -496,6 +516,10 @@ pub fn tile_class() -> Class {
       css.property("outline-offset", "2px"),
     ]),
   ])
+}
+
+pub fn tile_title_class() -> Class {
+  css.class([css.color(tokens.primary)])
 }
 
 pub fn muted_class() -> Class {

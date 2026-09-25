@@ -66,10 +66,12 @@ pub fn group_class(orientation: Orientation) -> Class {
       ..square(joined_start)
     ]),
     css.selector(" > :not(:last-child)", square(joined_end)),
-    // The focused button draws its ring above its neighbours.
+    // Borders overlap, so a hovered button draws its highlighted border,
+    // and a focused one its ring, above its neighbours.
+    css.selector(" > :hover", [css.position("relative"), css.z_index(1)]),
     css.selector(" > :focus-visible", [
       css.position("relative"),
-      css.z_index(1),
+      css.z_index(2),
     ]),
   ])
 }

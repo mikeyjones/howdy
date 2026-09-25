@@ -26,14 +26,13 @@ import howdy/ui
 import howdy/ui/badge
 import howdy/ui/button
 import howdy/ui/live
+import howdy/ui/pagination
 import lustre
 import lustre/attribute
 import lustre/effect.{type Effect}
 import lustre/element.{type Element, text}
 import lustre/element/html
 import lustre/event
-
-const per_page = 50
 
 /// How often the grid checks the table for changes, in milliseconds.
 const refresh_ms = 1000
@@ -85,7 +84,7 @@ fn index(config: Config, repo: Repo, ctx: Context) -> Response(ewe.Body) {
     use counted <- result.try(
       list.try_map(names, fn(name) {
         use table <- result.try(schema.table(repo, name))
-        use count <- result.try(schema.count(repo, table))
+        use count <- result.try(schema.count(repo, table, schema.query()))
         Ok(#(table, count))
       }),
     )
@@ -517,7 +516,7 @@ pub type Model {
     config: Config,
     repo: Repo,
     table: Table,
-    page: Int,
+    query: schema.Query,
     total: Int,
     rows: List(Row),
     /// Keys of rows that changed recently, with when, in milliseconds.
@@ -538,6 +537,12 @@ pub type Msg {
   /// Time to drop old change marks.
   Expire
   Go(Int)
+  PerPage(String)
+  Search(List(#(String, String)))
+  ClearSearch
+  SortBy(String)
+  AddFilter(List(#(String, String)))
+  RemoveFilter(Int)
   Delete(List(String))
 }
 
@@ -551,7 +556,7 @@ fn init(args: Args) -> #(Model, Effect(Msg)) {
       config: args.config,
       repo: args.repo,
       table: args.table,
-      page: 1,
+      query: schema.query(),
       total: 0,
       rows: [],
       changed: dict.new(),
@@ -570,11 +575,82 @@ fn init(args: Args) -> #(Model, Effect(Msg)) {
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
+  let query = model.query
   case msg {
     Tick -> #(load(model), schedule(model))
     Changed -> #(load(model), after(highlight_ms + 500, Expire))
     Expire -> #(prune(model), effect.none())
-    Go(page) -> #(load(Model(..model, page: page)), effect.none())
+    Go(page) -> #(
+      load(requery(
+        model,
+        schema.Query(..query, offset: { page - 1 } * query.limit),
+      )),
+      effect.none(),
+    )
+    PerPage(size) -> {
+      let limit =
+        int.parse(size) |> result.unwrap(query.limit) |> int.clamp(10, 500)
+      #(
+        load(requery(model, schema.Query(..query, limit:, offset: 0))),
+        effect.none(),
+      )
+    }
+    Search(fields) -> {
+      let term = list.key_find(fields, "q") |> result.unwrap("")
+      #(
+        load(requery(model, schema.Query(..query, search: term, offset: 0))),
+        effect.none(),
+      )
+    }
+    ClearSearch -> #(
+      load(requery(model, schema.Query(..query, search: "", offset: 0))),
+      effect.none(),
+    )
+    SortBy(column) -> {
+      let sort = case query.sort {
+        Some(#(current, schema.Ascending)) if current == column ->
+          Some(#(column, schema.Descending))
+        Some(#(current, schema.Descending)) if current == column -> None
+        _ -> Some(#(column, schema.Ascending))
+      }
+      #(load(requery(model, schema.Query(..query, sort:))), effect.none())
+    }
+    AddFilter(fields) -> {
+      let filter = {
+        let field = fn(name) {
+          list.key_find(fields, name) |> result.unwrap("")
+        }
+        use operator <- result.try(schema.operator_from(field("operator")))
+        use _ <- result.try(
+          list.find(model.table.columns, fn(c) { c.name == field("column") }),
+        )
+        Ok(schema.Filter(field("column"), operator, field("value")))
+      }
+      case filter {
+        Ok(filter) -> #(
+          load(requery(
+            model,
+            schema.Query(
+              ..query,
+              filters: list.append(query.filters, [filter]),
+              offset: 0,
+            ),
+          )),
+          effect.none(),
+        )
+        Error(Nil) -> #(model, effect.none())
+      }
+    }
+    RemoveFilter(index) -> {
+      let filters =
+        list.index_map(query.filters, fn(filter, at) { #(at, filter) })
+        |> list.filter(fn(pair) { pair.0 != index })
+        |> list.map(fn(pair) { pair.1 })
+      #(
+        load(requery(model, schema.Query(..query, filters:, offset: 0))),
+        effect.none(),
+      )
+    }
     Delete(key) -> {
       let model = case schema.delete(model.repo, model.table, key) {
         Ok(Nil) -> model
@@ -583,6 +659,11 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
       #(load(model), effect.none())
     }
   }
+}
+
+/// A new query is a new view: nothing in it counts as changed.
+fn requery(model: Model, query: schema.Query) -> Model {
+  Model(..model, query:, loaded: False, changed: dict.new())
 }
 
 fn schedule(model: Model) -> Effect(Msg) {
@@ -638,21 +719,19 @@ fn prune(model: Model) -> Model {
 
 /// Read the current page again and note which rows differ from last time.
 fn load(model: Model) -> Model {
-  let pages = pages(model.total)
-  let page = int.clamp(model.page, 1, pages)
   let loaded = {
-    use total <- result.try(schema.count(model.repo, model.table))
-    use rows <- result.try(schema.rows(
-      model.repo,
-      model.table,
-      limit: per_page,
-      offset: { page - 1 } * per_page,
-    ))
-    Ok(#(total, rows))
+    use total <- result.try(schema.count(model.repo, model.table, model.query))
+    // A page past the end, after deletions or a narrower query, becomes the
+    // last page.
+    let pages = pages(total, model.query.limit)
+    let offset = int.min(model.query.offset, { pages - 1 } * model.query.limit)
+    let query = schema.Query(..model.query, offset:)
+    use rows <- result.try(schema.rows(model.repo, model.table, query))
+    Ok(#(total, rows, query))
   }
   case loaded {
     Error(error) -> Model(..model, error: Some(error))
-    Ok(#(total, rows)) -> {
+    Ok(#(total, rows, query)) -> {
       let now = now()
       let changed = prune(model).changed
       let changed = case model.loaded {
@@ -665,28 +744,37 @@ fn load(model: Model) -> Model {
             }
           })
       }
-      Model(..model, page:, total:, rows:, changed:, loaded: True, error: None)
+      Model(..model, query:, total:, rows:, changed:, loaded: True, error: None)
     }
   }
 }
 
-fn pages(total: Int) -> Int {
-  int.max(1, { total + per_page - 1 } / per_page)
+fn pages(total: Int, per: Int) -> Int {
+  int.max(1, { total + per - 1 } / per)
+}
+
+fn page(model: Model) -> Int {
+  model.query.offset / model.query.limit + 1
 }
 
 fn view(model: Model) -> Element(Msg) {
   let table = model.table
-  let pages = pages(model.total)
+  let pages = pages(model.total, model.query.limit)
   ui.stack([], [
     case model.error {
       Some(error) -> layout.problem(error)
       None -> element.none()
     },
+    toolbar(model),
     ui.row([], [
       ui.muted(
         int.to_string(model.total)
-        <> " rows · page "
-        <> int.to_string(model.page)
+        <> case model.query.search, model.query.filters {
+          "", [] -> " rows"
+          _, _ -> " matching rows"
+        }
+        <> " · page "
+        <> int.to_string(page(model))
         <> " of "
         <> int.to_string(pages)
         <> case model.notified {
@@ -694,31 +782,20 @@ fn view(model: Model) -> Element(Msg) {
           False -> " · refreshes every second"
         },
       ),
-      ui.sized_button(
-        button.Outline,
-        button.Small,
-        [
-          event.on_click(Go(model.page - 1)),
-          attribute.disabled(model.page <= 1),
-        ],
-        [text("Previous")],
-      ),
-      ui.sized_button(
-        button.Outline,
-        button.Small,
-        [
-          event.on_click(Go(model.page + 1)),
-          attribute.disabled(model.page >= pages),
-        ],
-        [text("Next")],
-      ),
     ]),
     case model.rows {
       [] ->
         ui.empty(
           icon: text("∅"),
-          title: "No rows",
-          description: "This table is empty. Insert a row, or watch here as your application writes one.",
+          title: case model.query.search, model.query.filters {
+            "", [] -> "No rows"
+            _, _ -> "Nothing matches"
+          },
+          description: case model.query.search, model.query.filters {
+            "", [] ->
+              "This table is empty. Insert a row, or watch here as your application writes one."
+            _, _ -> "Clear the search or a filter to see more."
+          },
           actions: [],
         )
       rows ->
@@ -728,7 +805,7 @@ fn view(model: Model) -> Element(Msg) {
               [],
               list.append(
                 list.map(table.columns, fn(column) {
-                  ui.table_head([], [text(column.name)])
+                  ui.table_head([], [sort_button(model, column.name)])
                 }),
                 [ui.table_head([], [text("")])],
               ),
@@ -737,7 +814,134 @@ fn view(model: Model) -> Element(Msg) {
           ui.table_body([], list.map(rows, row_view(model, _))),
         ])
     },
+    case pages > 1 {
+      True ->
+        pagination.live_pagination(
+          current: page(model),
+          total: pages,
+          attributes: fn(page) {
+            [
+              event.on_click(Go(page)) |> event.prevent_default,
+              attribute.href("#"),
+            ]
+          },
+        )
+      False -> element.none()
+    },
   ])
+}
+
+/// Search, filters and page size.
+fn toolbar(model: Model) -> Element(Msg) {
+  let query = model.query
+  ui.stack([], [
+    ui.row([], [
+      html.form([event.on_submit(Search)], [
+        ui.row([], [
+          ui.input([
+            attribute.type_("search"),
+            attribute.name("q"),
+            attribute.value(query.search),
+            attribute.placeholder("search every column"),
+            attribute.style("width", "20rem"),
+          ]),
+          ui.submit_button(button.Secondary, [], [text("Search")]),
+          case query.search {
+            "" -> element.none()
+            _ ->
+              ui.sized_button(
+                button.Ghost,
+                button.Small,
+                [event.on_click(ClearSearch)],
+                [text("Clear")],
+              )
+          },
+        ]),
+      ]),
+      ui.native_select(
+        [attribute.name("per"), live.on_value("per", PerPage)],
+        list.map([10, 25, 50, 100, 250], fn(size) {
+          html.option(
+            [
+              attribute.value(int.to_string(size)),
+              attribute.selected(size == query.limit),
+            ],
+            int.to_string(size) <> " per page",
+          )
+        }),
+      ),
+    ]),
+    html.form([event.on_submit(AddFilter)], [
+      ui.row([], [
+        ui.native_select(
+          [attribute.name("column")],
+          list.map(model.table.columns, fn(column) {
+            html.option([attribute.value(column.name)], column.name)
+          }),
+        ),
+        ui.native_select(
+          [attribute.name("operator")],
+          list.map(schema.operators(), fn(operator) {
+            html.option(
+              [attribute.value(schema.operator_name(operator))],
+              schema.operator_label(operator),
+            )
+          }),
+        ),
+        ui.input([
+          attribute.name("value"),
+          attribute.placeholder("value"),
+          attribute.style("width", "14rem"),
+        ]),
+        ui.submit_button(button.Outline, [], [text("Add filter")]),
+      ]),
+    ]),
+    case query.filters {
+      [] -> element.none()
+      filters ->
+        ui.row(
+          [],
+          list.index_map(filters, fn(filter, index) {
+            ui.badge(badge.Secondary, [], [
+              text(
+                filter.column
+                <> " "
+                <> schema.operator_label(filter.operator)
+                <> case filter.operator {
+                  schema.IsNull | schema.NotNull -> ""
+                  _ -> " " <> filter.value
+                },
+              ),
+              text(" "),
+              html.button(
+                [
+                  attribute.type_("button"),
+                  attribute.aria_label("Remove filter"),
+                  event.on_click(RemoveFilter(index)),
+                ],
+                [text("×")],
+              ),
+            ])
+          }),
+        )
+    },
+  ])
+}
+
+/// A column heading that sorts by the column: ascending, then descending,
+/// then back to key order.
+fn sort_button(model: Model, column: String) -> Element(Msg) {
+  let indicator = case model.query.sort {
+    Some(#(current, schema.Ascending)) if current == column -> " ▲"
+    Some(#(current, schema.Descending)) if current == column -> " ▼"
+    _ -> ""
+  }
+  ui.sized_button(
+    button.Ghost,
+    button.ExtraSmall,
+    [event.on_click(SortBy(column))],
+    [text(column <> indicator)],
+  )
 }
 
 fn row_view(model: Model, row: Row) -> Element(Msg) {

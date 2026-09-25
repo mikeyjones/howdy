@@ -6,6 +6,7 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http/request
 import gleam/list
+import gleam/option.{Some}
 import gleam/result
 import gleam/string
 import gleam/uri
@@ -746,4 +747,125 @@ pub fn deletes_an_account_after_confirmation_test() {
   assert count(db, "SELECT COUNT(*) FROM howdy_auth_users") == 0
   assert count(db, "SELECT COUNT(*) FROM notes_notes") == 0
   assert string.contains(get(after, "/_howdy/users"), "No users yet")
+}
+
+// -- Queries -----------------------------------------------------------------
+
+fn seed_notes(db: Repo) -> Nil {
+  list.each(
+    [
+      #("Apple pie", "sweet", 5),
+      #("Banana bread", "sweet", 3),
+      #("Chili", "hot", 4),
+      #("Dal", "", 1),
+    ],
+    fn(note) {
+      let assert Ok(_) =
+        repo.execute(
+          db,
+          "INSERT INTO notes_notes (title, body, stars) VALUES ($1, $2, $3)",
+          [sql.string(note.0), sql.string(note.1), sql.int(note.2)],
+        )
+      Nil
+    },
+  )
+  let assert Ok(_) =
+    repo.execute(
+      db,
+      "INSERT INTO notes_notes (title, stars) VALUES ('Eggs', 2)",
+      [],
+    )
+  Nil
+}
+
+fn titles_of(rows: List(schema.Row)) -> List(String) {
+  list.map(rows, fn(row) {
+    let assert [_, Some(title), ..] = row.cells
+    title
+  })
+}
+
+pub fn searches_filters_sorts_and_pages_test() {
+  use db <- with_database
+  seed_notes(db)
+  let assert Ok(table) = schema.table(db, "notes_notes")
+  let base = schema.query()
+  assert schema.count(db, table, base) == Ok(5)
+
+  // Search is a case-insensitive substring match over every column, and
+  // LIKE wildcards in the term are literal.
+  let search = schema.Query(..base, search: "  AN  ")
+  assert schema.count(db, table, search) == Ok(1)
+  let assert Ok(rows) = schema.rows(db, table, search)
+  assert titles_of(rows) == ["Banana bread"]
+  assert schema.count(db, table, schema.Query(..base, search: "sweet")) == Ok(2)
+  assert schema.count(db, table, schema.Query(..base, search: "%")) == Ok(0)
+
+  // Filters combine with AND; comparisons respect the column's type.
+  let hot =
+    schema.Query(..base, filters: [schema.Filter("body", schema.Equals, "hot")])
+  assert schema.count(db, table, hot) == Ok(1)
+  let starry =
+    schema.Query(..base, filters: [schema.Filter("stars", schema.Greater, "3")])
+  let assert Ok(rows) = schema.rows(db, table, starry)
+  assert titles_of(rows) == ["Apple pie", "Chili"]
+  let both =
+    schema.Query(..base, filters: [
+      schema.Filter("stars", schema.Greater, "3"),
+      schema.Filter("title", schema.Contains, "chi"),
+    ])
+  let assert Ok(rows) = schema.rows(db, table, both)
+  assert titles_of(rows) == ["Chili"]
+  let empty =
+    schema.Query(..base, filters: [schema.Filter("body", schema.IsNull, "")])
+  let assert Ok(rows) = schema.rows(db, table, empty)
+  assert titles_of(rows) == ["Eggs"]
+  let assert Ok(rows) =
+    schema.rows(
+      db,
+      table,
+      schema.Query(..base, filters: [
+        schema.Filter("body", schema.NotNull, ""),
+        schema.Filter("stars", schema.NotEquals, "5"),
+        schema.Filter("stars", schema.Less, "4"),
+      ]),
+    )
+  assert titles_of(rows) == ["Banana bread", "Dal"]
+  // A filter on a column the table does not have is ignored, never
+  // interpolated.
+  let bogus =
+    schema.Query(..base, filters: [
+      schema.Filter("\" OR 1=1 --", schema.Equals, "x"),
+    ])
+  assert schema.count(db, table, bogus) == Ok(5)
+
+  // Sorting, with the key as a tie-break, and an unknown column ignored.
+  let assert Ok(rows) =
+    schema.rows(
+      db,
+      table,
+      schema.Query(..base, sort: Some(#("stars", schema.Descending))),
+    )
+  assert titles_of(rows)
+    == ["Apple pie", "Chili", "Banana bread", "Eggs", "Dal"]
+  let assert Ok(rows) =
+    schema.rows(
+      db,
+      table,
+      schema.Query(..base, sort: Some(#("nope", schema.Ascending))),
+    )
+  assert titles_of(rows)
+    == ["Apple pie", "Banana bread", "Chili", "Dal", "Eggs"]
+
+  // Pages.
+  let assert Ok(rows) =
+    schema.rows(db, table, schema.Query(..base, limit: 2, offset: 2))
+  assert titles_of(rows) == ["Chili", "Dal"]
+  let assert Ok(rows) =
+    schema.rows(
+      db,
+      table,
+      schema.Query(..base, search: "e", limit: 2, offset: 2),
+    )
+  assert list.length(rows) == 1
 }

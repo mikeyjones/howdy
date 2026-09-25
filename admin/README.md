@@ -44,11 +44,14 @@ registry of the Repo or `auth.Auth` the app built, so the app hands them over:
 
 - `admin.database(repo)`: the tables of a Gloo Repo, on PostgreSQL or SQLite.
   The overview names the backend and the packages `howdy/migration` has
-  applied. Each table has a grid of its rows that refreshes every second, so a
+  applied. Each table has a grid of its rows that follows the database, so a
   row your app or another client writes appears on its own and is marked
-  `changed` for a few seconds. Rows can be inserted, edited and deleted. A
-  row is addressed by its primary key, or by `rowid` (SQLite) or `ctid`
-  (PostgreSQL) when the table has none.
+  `changed` for a few seconds. The grid searches every column at once,
+  filters by column with equals, not equals, contains, greater, less, null
+  and not null, sorts by any column, and pages at a chosen size. All of that
+  runs in the database, so a large table is fine. Rows can be inserted,
+  edited and deleted. A row is addressed by its primary key, or by `rowid`
+  (SQLite) or `ctid` (PostgreSQL) when the table has none.
 - `admin.auth(identity)`: users and groups. Create a user (provisioned without
   a credential), suspend and resume them, see their live sessions (method,
   when they signed in, last seen, expiry and client) and revoke any one of

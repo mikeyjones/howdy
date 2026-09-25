@@ -69,6 +69,19 @@ pub fn input_otp(
   attributes: List(Attribute(msg)),
 ) -> Element(msg) {
   let length = int.max(length, 1)
+  // The frame is as wide as the boxes and hides the rest of the input: the
+  // input must be wider, to hold the letter spacing after the last
+  // character without scrolling.
+  html.span(
+    [
+      class(frame_class()),
+      attribute.style("--howdy-otp-length", int.to_string(length)),
+    ],
+    [input(length, attributes)],
+  )
+}
+
+fn input(length: Int, attributes: List(Attribute(msg))) -> Element(msg) {
   html.input([
     class(otp_class()),
     attribute.type_("text"),
@@ -79,27 +92,51 @@ pub fn input_otp(
     attribute.attribute("spellcheck", "false"),
     // The behaviour script keeps anything but digits out, typed or pasted.
     attribute.data("howdy-otp", ""),
-    // Each box is `--cell` wide; the input is exactly as wide as the boxes.
-    attribute.style("--howdy-otp-length", int.to_string(length)),
     ..attributes
   ])
 }
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
-  [otp_class()]
+  [frame_class(), otp_class()]
+}
+
+// Each box and the gap after it is `--cell` wide.
+const cell = "2.75rem"
+
+const gap = "0.5rem"
+
+// The frame draws the focus ring around the boxes, not the whole input.
+pub fn frame_class() -> Class {
+  css.class([
+    css.display("inline-flex"),
+    css.vertical_align("middle"),
+    css.property("--cell", cell),
+    css.property(
+      "width",
+      "calc(var(--cell) * var(--howdy-otp-length) - " <> gap <> ")",
+    ),
+    // Clip rather than hide: a hidden overflow can still be scrolled, and
+    // focusing the input would scroll the digits out of their boxes.
+    css.overflow("clip"),
+    css.property("border-radius", tokens.radius_small),
+    css.selector(":has(> :focus-visible)", [
+      css.property("box-shadow", "0 0 0 2px " <> tokens.focus),
+    ]),
+    css.selector(":has(> [aria-invalid=\"true\"])", [
+      css.property("box-shadow", "0 0 0 2px " <> tokens.danger),
+    ]),
+  ])
 }
 
 // The boxes are a repeating background, one per character; letter spacing
 // puts each monospaced character in the middle of its box.
 pub fn otp_class() -> Class {
-  let cell = "2.75rem"
-  let gap = "0.5rem"
   css.class([
     // Codes read left to right in any language.
     css.property("direction", "ltr"),
-    css.property("--cell", cell),
     css.property("box-sizing", "content-box"),
+    css.property("flex", "none"),
     // The text, trailing letter spacing included, is exactly this wide, so
     // a full code never scrolls.
     css.property("width", "calc(var(--cell) * var(--howdy-otp-length))"),
@@ -133,12 +170,6 @@ pub fn otp_class() -> Class {
       "calc(var(--cell) * var(--howdy-otp-length)) 100%",
     ),
     css.outline("none"),
-    css.focus_visible([
-      css.property("box-shadow", "0 0 0 2px " <> tokens.focus),
-    ]),
-    css.selector("[aria-invalid=\"true\"]", [
-      css.property("box-shadow", "0 0 0 2px " <> tokens.danger),
-    ]),
     css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
   ])
 }
