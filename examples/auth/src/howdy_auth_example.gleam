@@ -13,6 +13,7 @@ import howdy/auth/routes
 import howdy/auth/user
 import howdy/authorization as access
 import howdy/body
+import howdy/console
 import howdy/controller
 import howdy/guard
 import howdy/migration
@@ -60,6 +61,16 @@ pub fn app(db: Repo, identity: auth.Auth, permissions: access.Authorization) {
   |> howdy.controller(account)
 }
 
+/// What `main` builds and a console needs: see `src/console.gleam`.
+pub type Services {
+  Services(db: Repo, identity: auth.Auth, permissions: access.Authorization)
+}
+
+/// Where `main` exposes the running server's `Services` to a console.
+pub fn services_key() -> console.Key(Services) {
+  console.key("howdy_auth_example")
+}
+
 pub fn main() {
   let db = database.connect()
   // Refuse to start against a schema `gleam run -m migrate` has not caught up.
@@ -97,6 +108,7 @@ pub fn main() {
       ["reports.read"],
       by: user.System,
     )
+  console.expose(services_key(), Services(db:, identity:, permissions:))
   app(db, identity, permissions) |> demo.serve
 }
 

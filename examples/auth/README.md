@@ -43,8 +43,8 @@ gleam run
 
 Open <http://localhost:8787/auth/register>, enter an email address, then paste
 the token printed in the terminal. Visit `/account/me` to see the authenticated
-user. `/account/reports` returns 403 until trusted administration code assigns
-the existing `reader` role to that user. There is deliberately no public role
+user. `/account/reports` returns 403 until trusted administration code, such as
+the console below, assigns the existing `reader` role to that user. There is deliberately no public role
 assignment endpoint or automatic first-user administrator.
 
 Password registration is at `/auth/password/register`; verify the email using
@@ -106,3 +106,53 @@ Do not generate a replacement on each startup. Run the migration command before
 using an existing database. Enroll from `/auth/account`, copy the manual key into
 your authenticator and verify its code. Save the recovery codes, then sign in
 again and complete MFA. The demo does not configure delivered-code fallback.
+
+## A console on the running server
+
+[GSH](https://hexdocs.pm/gsh/) is a Gleam REPL that can attach to a running
+server and run what you type inside it, like `rails console`, but in the live
+process rather than a copy. Start the full tour as a named Erlang node, then
+attach from a second terminal:
+
+```sh
+# Terminal 1: the server, reachable by Erlang distribution on loopback only
+ERL_EPMD_ADDRESS=127.0.0.1 \
+ERL_FLAGS="-sname howdy_auth@localhost -setcookie dev -kernel inet_dist_use_interface {127,0,0,1}" \
+gleam run
+
+# Terminal 2: the console
+ERL_FLAGS="-kernel inet_dist_use_interface {127,0,0,1}" \
+gleam run -m gsh -- --remsh howdy_auth@localhost --cookie dev
+```
+
+`ERL_EPMD_ADDRESS` only applies when it starts the Erlang port mapper; one
+already running from another node keeps listening where it was started.
+
+`main` exposes the database, auth and roles it configured through
+`howdy/console`, and `src/console.gleam` wraps the common operations:
+
+```gleam
+gsh(1)> console.users()
+gsh(2)> console.grant("ada@example.com", "reader")
+Ok(Nil) : Result(Nil, Error)
+gsh(3)> console.sessions("ada@example.com")
+gsh(4)> console.sign_out("ada@example.com")
+```
+
+The grant takes effect at once: Ada's next request to `/account/reports`
+succeeds. Every operation is recorded in the audit trail with the client
+`console`. `console.services()` returns the server's own `Repo`, `Auth` and
+`Authorization` for anything the shortcuts do not cover.
+
+To run the server and the console in one terminal instead, let GSH start it:
+
+```sh
+gleam run -m gsh -- howdy_auth_example
+```
+
+The console runs privileged operations with no authorization of its own.
+Anyone who can connect to the node can run any code in it, which is why the
+commands above keep distribution on loopback. See the
+[console guide](../../docs/guides/console.djot) before attaching to a server on
+another machine.
+

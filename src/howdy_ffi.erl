@@ -4,6 +4,7 @@
 -export([fixed_window_cleanup/2, token_bucket_cleanup/4]).
 -export([channel_join/2, channel_leave/2, channel_members/1, channel_broadcast/3, tuple_second/1]).
 -export([parse_query/1]).
+-export([console_put/2, console_get/1]).
 
 %% -- Query strings ---------------------------------------------------------------
 %%
@@ -327,3 +328,16 @@ channel_broadcast(Topic, Tag, Message) ->
 
 tuple_second(Tuple) ->
     element(2, Tuple).
+
+%% -- Console ---------------------------------------------------------------------
+
+console_put(Name, Value) ->
+    persistent_term:put({howdy_console, Name}, Value),
+    nil.
+
+console_get(Name) ->
+    Missing = make_ref(),
+    case persistent_term:get({howdy_console, Name}, Missing) of
+        Missing -> {error, nil};
+        Value -> {ok, Value}
+    end.

@@ -64,6 +64,23 @@
         }
       }
     },
+    "howdy/console": {
+      "since": "2.0.0",
+      "items": {
+        "Key": {
+          "since": "2.0.0"
+        },
+        "expose": {
+          "since": "2.0.0"
+        },
+        "get": {
+          "since": "2.0.0"
+        },
+        "key": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/context": {
       "since": "2.0.0",
       "items": {
