@@ -4,6 +4,8 @@
 //// The database and auth are opened once here and handed to both the app
 //// and the admin, which is how the admin knows what to show: there is no
 //// package detection in Gleam, so registration is explicit.
+//// The one thing it finds for itself is the OpenAPI document the app
+//// serves, under **API**, where each endpoint can be called as any user.
 ////
 //// Mail goes to an outbox that writes each message to `tmp/mail`, instead
 //// of SMTP or the terminal, and the admin shows it as it arrives.

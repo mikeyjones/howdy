@@ -15,6 +15,7 @@ howdy_auth = { path = "../../auth" }
 howdy_database = { path = "../../database" }
 howdy_mail = { path = "../../mail" }
 howdy_telemetry = { path = "../../telemetry" }
+howdy_openapi = { path = "../../openapi" }
 smail = ">= 2.0.1 and < 3.0.0"
 
 [dev_dependencies]

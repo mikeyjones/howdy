@@ -22,6 +22,7 @@
 //// them. An app with a `howdy/version` group gets a document per version;
 //// see `version_document`.
 
+import gleam/dynamic.{type Dynamic}
 import gleam/http/response
 import gleam/json.{type Json}
 import gleam/list
@@ -343,26 +344,69 @@ fn add_operation(
 /// The documents are built once, here, from the controllers already
 /// mounted.
 pub fn serve(app: howdy.App, spec: Spec, at path: String) -> howdy.App {
+  let main =
+    Served(
+      path:,
+      version: option.map(howdy.version_group(app), main_version),
+      main: True,
+      document: json.to_string(document(spec, app)),
+    )
   let versions =
     list.map(versions(app), fn(name) {
       let assert Ok(document) = version_document(spec, app, name)
-      #(version_path(path, name), document)
+      Served(
+        path: version_path(path, name),
+        version: Some(name),
+        main: False,
+        document: json.to_string(document),
+      )
     })
-  [#(path, document(spec, app)), ..versions]
-  |> list.fold(app, fn(app, entry) {
-    let #(path, document) = entry
-    howdy.controller(app, json_controller(path, json.to_string(document)))
+  list.fold([main, ..versions], app, fn(app, served) {
+    howdy.controller(app, json_controller(served))
   })
 }
 
-fn json_controller(path: String, body: String) -> controller.Controller {
-  controller.new(path)
+/// A document `serve` serves. Tools such as `howdy_admin` find them with
+/// `served`.
+pub type Served {
+  Served(
+    /// Where the document is served.
+    path: String,
+    /// The version it describes, if the app has a version group.
+    version: Option(String),
+    /// Whether it is the document at the path given to `serve`, rather than
+    /// one of the per-version documents beside it.
+    main: Bool,
+    /// The document, as JSON text.
+    document: String,
+  )
+}
+
+const served_key = "howdy_openapi_document"
+
+fn json_controller(served: Served) -> controller.Controller {
+  let body = served.document
+  controller.new(served.path)
   |> controller.get("/", fn(_ctx) {
     response.new(200)
     |> response.set_header("content-type", "application/json; charset=utf-8")
     |> response.set_body(content.Text(body))
   })
+  |> controller.annotate(served_key, to_dynamic(served))
 }
+
+/// The documents `serve` added to `app`, in the order they were added.
+pub fn served(app: howdy.App) -> List(Served) {
+  list.filter_map(howdy.routes(app), fn(route) {
+    controller.annotation(route, served_key) |> result.map(from_dynamic)
+  })
+}
+
+@external(erlang, "howdy_openapi_ffi", "identity")
+fn to_dynamic(value: a) -> Dynamic
+
+@external(erlang, "howdy_openapi_ffi", "identity")
+fn from_dynamic(value: Dynamic) -> a
 
 /// Where `serve` puts a version's document, next to the main one at `path`.
 fn version_path(path: String, name: String) -> String {

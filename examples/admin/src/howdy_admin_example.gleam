@@ -15,7 +15,6 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
 import gleam/io
-import gleam/json
 import gleam/list
 import gleam/option
 import gleam/result
@@ -29,10 +28,9 @@ import howdy/auth
 import howdy/auth/emails
 import howdy/auth/pages
 import howdy/auth/routes
-import howdy/auth/user.{type User}
+import howdy/auth/user.{type Principal, type User}
 import howdy/authorization as access
-import howdy/body
-import howdy/controller
+import howdy/controller.{type GuardedContext}
 import howdy/database
 import howdy/database/postgres
 import howdy/guard
@@ -40,8 +38,12 @@ import howdy/mail
 import howdy/mail/preview
 import howdy/mail/smtp
 import howdy/migration
+import howdy/openapi
+import howdy/openapi/endpoint
+import howdy/openapi/schema.{type Schema}
 import howdy/service
 import howdy/telemetry
+import howdy/validate
 import smail/email as smail
 import smail/html
 
@@ -188,27 +190,58 @@ pub fn app(
   identity: auth.Auth,
   permissions: access.Authorization,
 ) -> howdy.App {
+  // Documented with howdy/openapi, so the admin can list and call them,
+  // signed in as any user.
   let notes =
     controller.guarded("/notes", auth.required(identity))
-    |> controller.get("/", fn(ctx) {
+    |> endpoint.get("/", {
+      use <- endpoint.describe([
+        endpoint.summary("Your notes"),
+        endpoint.security("session"),
+        endpoint.response(200, "Your notes", schema.list(note())),
+        endpoint.error(401, "Not signed in"),
+      ])
+      use ctx: GuardedContext(Principal) <- endpoint.handle
       list(db, ctx.guard.user)
-      |> service.respond(ctx, json.array(_, note_to_json))
+      |> service.respond(ctx, schema.to_json(_, schema.list(note())))
     })
     // Everyone's notes, for a user holding the global `reader` role.
-    |> controller.get("/all", fn(ctx) {
+    |> endpoint.get("/all", {
+      use <- endpoint.describe([
+        endpoint.summary("Everyone's notes"),
+        endpoint.description("Needs the global reader role."),
+        endpoint.security("session"),
+        endpoint.response(200, "Every note", schema.list(note())),
+        endpoint.error(401, "Not signed in"),
+        endpoint.error(403, "Without the reader role"),
+      ])
+      use ctx: GuardedContext(Principal) <- endpoint.handle
       use _ <- guard.require(
         ctx,
         access.require_permission(permissions, "notes.read_all", access.Global),
       )
       list_all(db)
-      |> service.respond(ctx, json.array(_, note_to_json))
+      |> service.respond(ctx, schema.to_json(_, schema.list(note())))
     })
-    |> controller.post("/", fn(ctx) {
-      use title <- body.json(ctx, decode.at(["title"], decode.string))
-      create(db, ctx.guard.user, title)
-      |> service.created(ctx, note_to_json)
+    |> endpoint.post("/", {
+      use <- endpoint.describe([
+        endpoint.summary("Write a note"),
+        endpoint.security("session"),
+        endpoint.response(201, "The new note", note()),
+        endpoint.error(401, "Not signed in"),
+      ])
+      use input <- endpoint.body(new_note())
+      use ctx: GuardedContext(Principal) <- endpoint.handle
+      create(db, ctx.guard.user, input)
+      |> service.created(ctx, schema.to_json(_, note()))
     })
     |> controller.build
+  let spec =
+    openapi.new(title: "Notes", version: "1.0.0")
+    |> openapi.description(
+      "Sign in at /auth/register, or call as any user from the admin.",
+    )
+    |> openapi.bearer_auth("session")
   howdy.new()
   |> howdy.controller(routes.api(identity, at: "/api/auth"))
   |> howdy.controller(pages.routes(identity, at: "/auth", api_at: "/api/auth"))
@@ -218,10 +251,11 @@ pub fn app(
     |> controller.get("/", fn(ctx) {
       controller.text(
         ctx,
-        "Register at /auth/register, then GET and POST /notes. /notes/all needs the reader role. In development the admin is at /_howdy.",
+        "Register at /auth/register, then GET and POST /notes. /notes/all needs the reader role. The API is described at /openapi.json. In development the admin is at /_howdy.",
       )
     }),
   )
+  |> openapi.serve(spec, at: "/openapi.json")
 }
 
 // -- Notes -------------------------------------------------------------------
@@ -288,10 +322,32 @@ fn note_row() -> decode.Decoder(Note) {
   decode.success(Note(id:, title:, stars:))
 }
 
-pub fn note_to_json(note: Note) -> json.Json {
-  json.object([
-    #("id", json.int(note.id)),
-    #("title", json.string(note.title)),
-    #("stars", json.int(note.stars)),
-  ])
+pub fn note() -> Schema(Note) {
+  {
+    use id <- schema.field("id", schema.int(), fn(note: Note) { note.id })
+    use title <- schema.field("title", schema.string(), fn(note: Note) {
+      note.title
+    })
+    use stars <- schema.field("stars", schema.int(), fn(note: Note) {
+      note.stars
+    })
+    schema.success(Note(id:, title:, stars:))
+  }
+  |> schema.named("Note")
+}
+
+/// The title of a new note, the only thing a client sends.
+fn new_note() -> Schema(String) {
+  {
+    use title <- schema.field(
+      "title",
+      schema.string()
+        |> schema.rule(validate.trim())
+        |> schema.not_empty
+        |> schema.max_length(200),
+      fn(title: String) { title },
+    )
+    schema.success(title)
+  }
+  |> schema.named("NewNote")
 }

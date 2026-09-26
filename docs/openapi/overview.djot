@@ -85,7 +85,18 @@ between the inputs, and documenting an endpoint will never run it.
 
 Controller guards and middleware work as they do for any route. An endpoint
 on a guarded controller is an `Endpoint(guard)`, and its handler sees
-`ctx.guard`. `endpoint.wrap` runs middleware around one endpoint.
+`ctx.guard`. Gleam cannot tell the guard's type inside the handler, so name
+it when you use `ctx.guard`:
+
+```gleam
+fn mine() -> Endpoint(Principal) {
+  use <- endpoint.describe([endpoint.security("session")])
+  use ctx: GuardedContext(Principal) <- endpoint.handle
+  controller.text(ctx, ctx.guard.user.email)
+}
+```
+
+`endpoint.wrap` runs middleware around one endpoint.
 
 ## Describing an endpoint
 
@@ -134,6 +145,9 @@ ordinary controller routes stay out, so you choose what you publish.
 `openapi.reference` serves an interactive API reference, drawn by
 [Scalar](https://scalar.com). The page loads Scalar from the jsDelivr CDN,
 so a browser viewing it needs to reach `cdn.jsdelivr.net`.
+
+With [Howdy Admin](/docs/admin/api) mounted, the admin finds the document
+too, and lets you call each endpoint, signed in as any user.
 
 `openapi.document(spec, app)` gives the document as JSON, to write to a file
 for a client generator or check in a test.

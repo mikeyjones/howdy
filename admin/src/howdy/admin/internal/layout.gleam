@@ -89,6 +89,10 @@ fn navigation(config: Config) -> List(app_shell.Group) {
         ),
       ]
     },
+    case config.api {
+      Some(_) -> [Group("API", [Link(at("/api"), "Endpoints")])]
+      None -> []
+    },
     case config.recorder {
       Some(_) -> [
         Group("Telemetry", [

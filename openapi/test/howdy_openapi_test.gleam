@@ -647,3 +647,24 @@ pub fn main_document_is_the_newest_without_a_default_test() {
   let text = json.to_string(openapi.document(spec(), app))
   assert string.contains(text, "\"version\":\"v2\"")
 }
+
+pub fn served_lists_the_documents_test() {
+  assert openapi.served(app()) == []
+  let single = app() |> openapi.serve(spec(), at: "/openapi.json")
+  let assert [
+    openapi.Served(path: "/openapi.json", version: None, main: True, document:),
+  ] = openapi.served(single)
+  assert string.contains(document, "\"openapi\":\"3.1.0\"")
+
+  let versioned =
+    versioned_app(version.path()) |> openapi.serve(spec(), at: "/openapi.json")
+  let found =
+    openapi.served(versioned)
+    |> list.map(fn(served) { #(served.path, served.version, served.main) })
+  assert found
+    == [
+      #("/openapi.json", Some("v1"), True),
+      #("/openapi/v1.json", Some("v1"), False),
+      #("/openapi/v2.json", Some("v2"), False),
+    ]
+}

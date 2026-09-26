@@ -36,6 +36,13 @@
 ////   holds, as they happen: each request as a timeline of its queries,
 ////   remote calls and emails, with repeated and slow queries pointed out.
 ////
+//// Some things need no registering, because `mount` can see them in the
+//// app:
+////
+//// - The OpenAPI documents `howdy/openapi` serves: every endpoint, with a
+////   form to call it and see the response. Calls go straight through the
+////   app, anonymously or as any user when `auth` is registered.
+////
 //// ## Development only
 ////
 //// There is no login: anyone who can reach the pages can read and change
@@ -54,6 +61,7 @@ import gleam/string
 import gloo/repo.{type Repo}
 import howdy.{type App}
 import howdy/admin/internal/accounts
+import howdy/admin/internal/api as api_pages
 import howdy/admin/internal/config.{type Config, Config}
 import howdy/admin/internal/data
 import howdy/admin/internal/mail as mail_pages
@@ -67,6 +75,7 @@ import howdy/controller.{type Controller}
 import howdy/mail.{type Mailer}
 import howdy/mail/outbox.{type Outbox}
 import howdy/mail/preview.{type Preview}
+import howdy/openapi
 import howdy/service
 import howdy/telemetry/recorder.{type Recorder}
 
@@ -88,6 +97,7 @@ pub fn new() -> Admin {
       previews: [],
       mailer: None,
       recorder: None,
+      api: None,
       hosts: [
         "localhost",
         "127.0.0.1",
@@ -188,12 +198,25 @@ pub fn allow_hosts(admin: Admin, hosts: List(String)) -> Admin {
   Admin(Config(..admin.config, hosts:))
 }
 
-/// Add the admin's routes to an app.
+/// Add the admin's routes to an app. Mount it last: the admin looks at the
+/// app as it is here. If the app serves OpenAPI documents with
+/// `howdy/openapi`, the admin finds them and adds pages to read them and
+/// call the endpoints.
 pub fn mount(app: App, admin: Admin) -> App {
-  list.fold(controllers(admin), app, howdy.controller)
+  list.fold(controllers(detect(admin, app)), app, howdy.controller)
 }
 
-/// The admin's controllers, for mounting them yourself.
+/// Find what the admin can see in the app itself, without being told.
+fn detect(admin: Admin, app: App) -> Admin {
+  case openapi.served(app) {
+    [] -> admin
+    documents ->
+      Admin(Config(..admin.config, api: Some(config.Api(app:, documents:))))
+  }
+}
+
+/// The admin's controllers, for mounting them yourself. The API pages need
+/// the app, so only `mount` adds them.
 pub fn controllers(admin: Admin) -> List(Controller) {
   let config = admin.config
   list.flatten([
@@ -218,6 +241,10 @@ pub fn controllers(admin: Admin) -> List(Controller) {
     },
     case config.recorder {
       Some(recorder) -> [telemetry_pages.controller(config, recorder)]
+      None -> []
+    },
+    case config.api {
+      Some(api) -> [api_pages.controller(config, api)]
       None -> []
     },
   ])

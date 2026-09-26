@@ -9,6 +9,7 @@ import gleam/result
 import gleam/string
 import gloo/repo.{type Repo}
 import howdy/admin/internal/accounts
+import howdy/admin/internal/api_spec
 import howdy/admin/internal/config.{type Config}
 import howdy/admin/internal/layout
 import howdy/admin/internal/schema
@@ -68,6 +69,14 @@ fn index(config: Config, ctx: Context) -> Response(Content) {
             absent(
               "howdy_telemetry",
               "Not registered. Start telemetry with a recorder and pass it to admin.telemetry to see each request's queries, calls and logs.",
+            )
+        },
+        case config.api {
+          Some(api) -> api_card(config, api)
+          None ->
+            absent(
+              "howdy_openapi",
+              "No OpenAPI document found. Serve one with openapi.serve before admin.mount to browse and call your endpoints here.",
             )
         },
       ]),
@@ -268,6 +277,39 @@ fn telemetry_card(config: Config, recorder: Recorder) -> Element(msg) {
         ui.link(config.path(config, "/telemetry"), [text("Traces")]),
         ui.link(config.path(config, "/telemetry/logs"), [text("Logs")]),
       ]),
+    ]),
+  ])
+}
+
+fn api_card(config: Config, api: config.Api) -> Element(msg) {
+  let served =
+    list.find(api.documents, fn(served) { served.main })
+    |> result.lazy_or(fn() { list.first(api.documents) })
+  let endpoints = case served {
+    Ok(served) ->
+      case api_spec.parse(served.document) {
+        Ok(document) -> list.length(document.operations)
+        Error(_) -> 0
+      }
+    Error(Nil) -> 0
+  }
+  let versions = list.count(api.documents, fn(served) { !served.main })
+  ui.card([], [
+    ui.card_header([], [
+      ui.card_title([text("howdy_openapi")]),
+      ui.card_description([
+        text(
+          "Found in the app · "
+          <> accounts.describe(endpoints, "endpoint")
+          <> case versions {
+            0 -> ""
+            count -> " · " <> accounts.describe(count, "version")
+          },
+        ),
+      ]),
+    ]),
+    ui.card_footer([], [
+      ui.link(config.path(config, "/api"), [text("Endpoints")]),
     ]),
   ])
 }

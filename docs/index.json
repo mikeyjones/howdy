@@ -280,6 +280,11 @@
           "slug": "telemetry",
           "title": "Telemetry",
           "description": "See each request as a timeline of its queries, calls, emails and logs, with repeated and slow queries pointed out."
+        },
+        {
+          "slug": "api",
+          "title": "Calling your API",
+          "description": "Browse the endpoints of your OpenAPI document and call them from the admin, anonymously or signed in as any user."
         }
       ]
     },

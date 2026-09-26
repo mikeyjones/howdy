@@ -3,11 +3,13 @@
 
 import gleam/option.{type Option}
 import gloo/repo.{type Repo}
+import howdy.{type App}
 import howdy/auth.{type Auth}
 import howdy/authorization.{type Authorization}
 import howdy/mail.{type Mailer}
 import howdy/mail/outbox.{type Outbox}
 import howdy/mail/preview.{type Preview}
+import howdy/openapi
 import howdy/telemetry/recorder.{type Recorder}
 
 pub type Config {
@@ -24,6 +26,8 @@ pub type Config {
     previews: List(Preview),
     mailer: Option(Mailer),
     recorder: Option(Recorder),
+    /// The app's OpenAPI documents, found when the admin is mounted.
+    api: Option(Api),
     /// Exact request hostnames the pages answer.
     hosts: List(String),
   )
@@ -33,4 +37,10 @@ pub type Config {
 /// the mount point itself.
 pub fn path(config: Config, rest: String) -> String {
   config.prefix <> rest
+}
+
+/// An app that serves OpenAPI documents: the app itself, to send it
+/// requests, and the documents `howdy/openapi` serves from it.
+pub type Api {
+  Api(app: App, documents: List(openapi.Served))
 }

@@ -41,6 +41,7 @@ packages = [
   { name = "howdy_auth", version = "0.1.0", build_tools = ["gleam"], requirements = ["argus", "glasslock", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_httpc", "gleam_json", "gleam_stdlib", "gleam_time", "gloo", "howdy", "howdy_database", "howdy_mail", "jargon", "logging", "smail"], source = "local", path = "../auth" },
   { name = "howdy_database", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_crypto", "gleam_erlang", "gleam_json", "gleam_otp", "gleam_stdlib", "gloo", "howdy", "opentelemetry_api", "pog"], source = "local", path = "../database" },
   { name = "howdy_mail", version = "0.1.0", build_tools = ["gleam"], requirements = ["gen_smtp", "gleam_crypto", "gleam_erlang", "gleam_http", "gleam_httpc", "gleam_json", "gleam_otp", "gleam_stdlib", "gleam_time", "howdy", "simplifile", "smail"], source = "local", path = "../mail" },
+  { name = "howdy_openapi", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_http", "gleam_json", "gleam_stdlib", "howdy"], source = "local", path = "../openapi" },
   { name = "howdy_telemetry", version = "0.1.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib", "howdy", "opentelemetry", "opentelemetry_api", "opentelemetry_exporter"], source = "local", path = "../telemetry" },
   { name = "howdy_ui", version = "0.1.0", build_tools = ["gleam"], requirements = ["argv", "gleam_erlang", "gleam_http", "gleam_json", "gleam_stdlib", "howdy", "lustre", "simplifile", "sketch"], source = "local", path = "../ui" },
   { name = "hpack_erl", version = "0.3.0", build_tools = ["rebar3"], requirements = [], otp_app = "hpack", source = "hex", outer_checksum = "D6137D7079169D8C485C6962DFE261AF5B9EF60FBC557344511C1E65E3D95FB0" },
@@ -83,6 +84,7 @@ howdy = { path = ".." }
 howdy_auth = { path = "../auth" }
 howdy_database = { path = "../database" }
 howdy_mail = { path = "../mail" }
+howdy_openapi = { path = "../openapi" }
 howdy_telemetry = { path = "../telemetry" }
 howdy_ui = { path = "../ui" }
 lustre = { version = ">= 5.7.0 and < 6.0.0" }

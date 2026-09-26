@@ -1,5 +1,5 @@
 -module(howdy_admin_ffi).
--export([cells/1, postgres_pool/1, listen/4]).
+-export([cells/1, postgres_pool/1, listen/4, cached_token/1, cache_token/2]).
 
 %% A database row as it came from the driver, as a list of optional strings.
 %% pog rows are tuples and sqlight rows are lists; every value becomes text
@@ -138,3 +138,16 @@ listener_loop(Listener, Monitor, Notify) ->
         _ ->
             listener_loop(Listener, Monitor, Notify)
     end.
+
+%% Session tokens the API pages hold for the users they call as, so each
+%% call does not open a new session. Development only, and rarely written,
+%% which is what persistent_term suits.
+cached_token(UserId) ->
+    case persistent_term:get({howdy_admin_api_token, UserId}, undefined) of
+        undefined -> {error, nil};
+        Token -> {ok, Token}
+    end.
+
+cache_token(UserId, Token) ->
+    persistent_term:put({howdy_admin_api_token, UserId}, Token),
+    nil.
