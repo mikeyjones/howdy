@@ -1,3 +1,4 @@
+import gleam/http
 import gleam/http/response
 import howdy
 import howdy/controller.{type Context}
@@ -115,4 +116,59 @@ pub fn app_middleware_does_not_run_for_unmatched_routes_test() {
   let res = get(app, "/nope")
   assert res.status == 404
   assert response.get_header(res, "x-trail") == Error(Nil)
+}
+
+fn missing(ctx: Context) {
+  service.error_response(ctx, service.NotFound("no such page"))
+}
+
+pub fn not_found_answers_unmatched_routes_test() {
+  let app =
+    howdy.new()
+    |> howdy.controller(controller.new("t") |> controller.get("/", handler))
+    |> howdy.not_found(missing)
+
+  let res = get(app, "/nope")
+  assert res.status == 404
+  assert testing.error(res) == Ok("no such page")
+  // Any method, not only GET.
+  let res = testing.request(http.Post, "/nope") |> testing.send(app)
+  assert testing.error(res) == Ok("no such page")
+  // Matched routes are unaffected.
+  assert testing.text(get(app, "/t")) == "handler"
+}
+
+pub fn not_found_runs_inside_app_middleware_test() {
+  let app =
+    howdy.new()
+    |> howdy.middleware(tag("outer"))
+    |> howdy.middleware(tag("inner"))
+    |> howdy.not_found(missing)
+
+  let res = get(app, "/nope")
+  assert res.status == 404
+  assert response.get_header(res, "x-trail") == Ok("inner,outer")
+}
+
+pub fn not_found_leaves_method_not_allowed_test() {
+  let app =
+    howdy.new()
+    |> howdy.controller(controller.new("t") |> controller.get("/", handler))
+    |> howdy.not_found(missing)
+
+  let res = testing.request(http.Delete, "/t") |> testing.send(app)
+  assert res.status == 405
+}
+
+pub fn not_found_gets_no_path_parameters_test() {
+  let app =
+    howdy.new()
+    |> howdy.not_found(fn(ctx: Context) {
+      controller.text(ctx, ctx.request.path)
+      |> controller.with_status(404)
+    })
+
+  let res = get(app, "/some/where")
+  assert res.status == 404
+  assert testing.text(res) == "/some/where"
 }

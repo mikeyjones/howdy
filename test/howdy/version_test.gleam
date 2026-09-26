@@ -319,3 +319,28 @@ pub fn second_group_panics_test() {
 fn ok(ctx: Context) -> Response(Content) {
   controller.text(ctx, "ok")
 }
+
+pub fn not_found_answers_for_version_groups_test() {
+  let app =
+    app(group(version.path()))
+    |> howdy.not_found(fn(ctx: Context) {
+      let asked = case ctx.version {
+        Some(version) -> version
+        None -> "none"
+      }
+      controller.text(ctx, "missing in " <> asked)
+      |> controller.with_status(404)
+    })
+
+  // Not a versioned path at all.
+  let res = get(app, "/users", [])
+  assert res.status == 404
+  assert testing.text(res) == "missing in none"
+  // A version that has no such route.
+  let res = get(app, "/v1/reports", [])
+  assert res.status == 404
+  assert testing.text(res) == "missing in v1"
+  // Routes still answer, and a wrong method is still 405.
+  assert get(app, "/v2/users", []).status == 200
+  assert send(app, http.Delete, "/v2/users", []).status == 405
+}

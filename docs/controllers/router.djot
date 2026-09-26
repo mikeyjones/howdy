@@ -168,7 +168,7 @@ The router gives one of three results, and Howdy turns each into a response:
   response is `405` with an `allow` header listing the methods that do.
   `HEAD` is listed alongside `GET`, since every `GET` route answers both.
 - `NotFound`: no route matches the path. The response is `404` with an empty
-  body.
+  body, unless the app has a [`not_found` handler](#Your-own-404).
 
 So with the user controller from the top of this page, `PUT /users/42`
 answers `405` with `allow: GET, HEAD, DELETE`, and `GET /orders` answers `404`.
@@ -178,9 +178,32 @@ path, the wildcards are not tried, even when the exact route has the wrong
 method. With `POST /files/upload` and `GET /files/*path` both declared,
 `GET /files/upload` answers `405`, not the wildcard.
 
-Middleware is part of the matched handler, so it does not run for `404` and
-`405` responses. If you need to log or decorate those, do it outside Howdy's
-handler.
+Middleware is part of the matched handler, so it does not run for `405`
+responses, nor for `404` ones unless the app has a `not_found` handler.
+
+### Your own 404
+
+`howdy.not_found` answers every request that no route matches, whatever its
+method:
+
+```gleam
+howdy.new()
+|> howdy.controller(user_controller())
+|> howdy.not_found(fn(ctx) {
+  service.error_response(ctx, service.NotFound("no such page"))
+})
+```
+
+The handler runs inside the app's middleware like any route, so request
+logging, CORS and your own middleware see these requests too. It gets the
+request with no path parameters; with a [version group](/docs/middleware/versioning),
+`ctx.version` is the version the request named, if any. A path that routes
+match with another method still answers `405`.
+
+A catch-all route matches before it: an app that mounts
+`static.serve("/", from: "priv/public")` sends every unmatched `GET` to the
+file server, whose own `404` is the controller's, and reaches `not_found` only
+with other methods.
 
 ### OPTIONS requests
 

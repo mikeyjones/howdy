@@ -21,7 +21,7 @@ import gleam/result
 import gleam/string
 import howdy/content.{type Content}
 import howdy/context.{type Body, Context}
-import howdy/controller.{type Controller, type Middleware}
+import howdy/controller.{type Controller, type Handler, type Middleware}
 import howdy/router
 import howdy/service
 import howdy/trace
@@ -35,6 +35,7 @@ pub opaque type App {
     controllers: List(Controller),
     middleware: List(Middleware),
     versions: Option(Group),
+    not_found: Option(Handler),
     bind_address: String,
     port: Int,
     tls: Option(Tls),
@@ -57,6 +58,7 @@ pub fn new() -> App {
     controllers: [],
     middleware: [],
     versions: None,
+    not_found: None,
     bind_address: "0.0.0.0",
     port: 8787,
     tls: None,
@@ -198,6 +200,27 @@ pub fn versions(app: App, group: Group) -> App {
   }
 }
 
+/// Answer requests that no route matches with `handler`, wrapped in the
+/// app's middleware like any route, so logging, CORS and the like see them
+/// too. It gets the request with no path parameters, and with a version
+/// group, the version the request asked for if it named one.
+///
+/// Without it such a request gets an empty 404 that no middleware sees. A
+/// path some route matches with another method still gets its 405, and a
+/// catch-all route such as `static.serve("/", ...)` matches first, so its
+/// own 404s are the controller's and pass through middleware as usual.
+///
+/// ```gleam
+/// howdy.new()
+/// |> howdy.controller(pages())
+/// |> howdy.not_found(fn(ctx) {
+///   service.error_response(ctx, service.NotFound("no such page"))
+/// })
+/// ```
+pub fn not_found(app: App, handler: Handler) -> App {
+  App(..app, not_found: Some(handler))
+}
+
 /// Compile routes and middleware into a reusable ewe request handler, for
 /// running the app under ewe directly with options `start` does not offer.
 /// Pass the result to `ewe.new`; construct it once and reuse it for every
@@ -223,6 +246,7 @@ fn to_ewe(
 pub fn serve(app: App) -> fn(Request(Body)) -> Response(Content) {
   let middleware = list.reverse(app.middleware)
   let routes = router.compile(app.controllers, middleware)
+  let unmatched = option.map(app.not_found, controller.wrap_all(_, middleware))
   let versions =
     option.map(app.versions, fn(group) {
       let table =
@@ -235,8 +259,9 @@ pub fn serve(app: App) -> fn(Request(Body)) -> Response(Content) {
   fn(request: Request(Body)) {
     use <- traced(request)
     case router.match_table(routes, request.method, request.path), versions {
-      router.NotFound, Some(#(group, table)) -> versioned(group, table, request)
-      match, _ -> respond(match, request, None, "")
+      router.NotFound, Some(#(group, table)) ->
+        versioned(group, table, unmatched, request)
+      match, _ -> respond(match, request, unmatched, None, "")
     }
   }
 }
@@ -310,6 +335,7 @@ fn rename_span(name: String) -> Nil
 fn versioned(
   group: Group,
   table: dict.Dict(String, router.Table),
+  unmatched: Option(Handler),
   request: Request(Body),
 ) -> Response(Content) {
   let response = case version.resolve(group, request) {
@@ -322,14 +348,14 @@ fn versioned(
         False -> "/" <> name
       }
       router.match_table(routes, request.method, path)
-      |> respond(request, Some(name), prefix)
+      |> respond(request, unmatched, Some(name), prefix)
     }
     version.Missing(message) ->
       service.error_response(
         Context(request:, params: dict.new(), guard: Nil, version: None),
         service.Invalid(message),
       )
-    version.NotVersioned -> not_found()
+    version.NotVersioned -> not_found_response(request, unmatched, None)
   }
   case version.vary_header(group) {
     Some(header) -> add_vary(response, header)
@@ -350,6 +376,7 @@ fn add_vary(response: Response(Content), header: String) -> Response(Content) {
 fn respond(
   match: router.Match,
   request: Request(Body),
+  unmatched: Option(Handler),
   version: Option(String),
   route_prefix: String,
 ) -> Response(Content) {
@@ -358,7 +385,7 @@ fn respond(
       traced_route(request, route_prefix <> route)
       handler(Context(request:, params:, guard: Nil, version:))
     }
-    router.NotFound -> not_found()
+    router.NotFound -> not_found_response(request, unmatched, version)
     router.MethodNotAllowed(allowed:) ->
       response.new(405)
       |> response.set_header(
@@ -369,7 +396,18 @@ fn respond(
   }
 }
 
-fn not_found() -> Response(Content) {
-  response.new(404)
-  |> response.set_body(content.Empty)
+/// The app's `not_found` handler for a request no route matched, or an
+/// empty 404 when it has none.
+fn not_found_response(
+  request: Request(Body),
+  unmatched: Option(Handler),
+  version: Option(String),
+) -> Response(Content) {
+  case unmatched {
+    Some(handler) ->
+      handler(Context(request:, params: dict.new(), guard: Nil, version:))
+    None ->
+      response.new(404)
+      |> response.set_body(content.Empty)
+  }
 }
