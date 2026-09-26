@@ -1,0 +1,173 @@
+# Generating code
+
+The `howdy create` commands add a database table to the project you are in,
+with as much code around it as you ask for:
+
+- `howdy create controller` writes the table, a record, its database
+  operations and a JSON API.
+- `howdy create pages` writes the same with HTML pages in place of the JSON
+  API: a table of records, and forms to add, edit and delete them.
+- `howdy create repo` writes the table, the record and its database
+  operations, with no routes.
+- `howdy create migration` writes only the table.
+
+Run them from inside a project made with [`howdy new`](/docs/cli/new). The
+project must have a database, so they do not work in one created with
+`--no-database`. Whether it is SQLite or PostgreSQL is detected from
+`gleam.toml`, and the generated column types follow it.
+
+## A controller
+
+```sh
+howdy create controller users user name:string age:int
+```
+
+The first argument is the plural. It names the folder, the table, the routes
+and the module of database operations. The second is the singular, which
+names the record module and its type. The rest are the fields, described
+below.
+
+This creates the slice `src/<project>/users/`:
+
+- `user.gleam` holds the `User` record, input validation, JSON codecs and
+  the database table.
+- `users.gleam` holds the database operations: `all`, `find`, `create`,
+  `update` and `delete`.
+- `users_controller.gleam` holds the routes.
+
+The routes are:
+
+- `GET /api/users` returns every user.
+- `GET /api/users/:id` returns one user.
+- `POST /api/users` creates a user and answers 201.
+- `PUT /api/users/:id` replaces every field and answers 200.
+- `DELETE /api/users/:id` deletes a user and answers 204.
+
+The command also writes:
+
+- `migrations/create_users.gleam`, a migration that creates the `users`
+  table, numbered one above the highest migration in the project
+- `test/<project>/users/users_test.gleam`, tests for the database operations
+- `test/<project>/users/users_controller_test.gleam`, tests for the routes
+
+Then it registers the controller in `src/<project>.gleam` and the migration
+in `platform/database.gleam`, and runs `gleam format`. The migration runs the
+next time the app starts, or when you run `gleam run -m tasks/migrate`.
+
+Names of more than one word use underscores:
+
+```sh
+howdy create controller blog_posts blog_post title body:string published:bool
+```
+
+## Pages
+
+For pages that people use rather than a JSON API:
+
+```sh
+howdy create pages users user name:string age:int
+```
+
+`howdy create pages` takes the same arguments and writes the same files,
+with `users_pages.gleam` and its test in place of the controller and its
+test. The pages are:
+
+- `GET /users` shows every user, in a table.
+- `GET /users/new` shows the form for a new user.
+- `POST /users` creates a user, then shows it.
+- `GET /users/:id` shows one user.
+- `GET /users/:id/edit` shows the form to change it.
+- `POST /users/:id` updates the user, then shows it.
+- `POST /users/:id/delete` deletes the user, then goes back to the table.
+
+The pages are built from [Howdy UI](/docs/ui/components) and rendered on the
+server as plain links and forms, so they work without JavaScript. That is
+why update and delete are `POST` routes: an HTML form cannot send `PUT` or
+`DELETE`. A form that fails validation comes back with the values still
+filled in and an error under each field that needs fixing.
+
+The first time you run it, the command also writes two files that every set
+of pages shares:
+
+- `src/<project>/platform/pages.gleam` holds the layout, form reading and
+  redirects.
+- `priv/public/assets/pages.css` holds the styles.
+
+Both are written once and never touched again, so they are yours to edit.
+Change the layout there and every set of pages follows.
+
+The pages are registered in `src/<project>.gleam`, and the migration in
+`platform/database.gleam`, just as for a controller.
+
+Pass `--api` to get the JSON controller from `howdy create controller` as
+well, with the pages at `/users` and the API at `/api/users`:
+
+```sh
+howdy create pages blog_posts blog_post title body published:bool --api
+```
+
+## A repo
+
+For data without any routes, reached from your own pages or from other
+slices:
+
+```sh
+howdy create repo users user name:string email:string age:int
+```
+
+`howdy create repo` takes the same arguments and writes the same files,
+except `users_controller.gleam` and its test. It registers the migration
+only.
+
+## A migration
+
+For only the table:
+
+```sh
+howdy create migration users name:string email:string age:int
+```
+
+This writes `migrations/create_users.gleam`, adds it to the list in
+`platform/database.gleam`, and nothing else.
+
+It takes the table name alone, without a singular, so every field needs its
+type here. A bare `name` would be mistaken for the singular, and the command
+tells you so.
+
+## Fields
+
+Fields are `name:type` pairs. The types are `string`, `int`, `float` and
+`bool`. For `create controller`, `create pages` and `create repo` a bare
+name is a string, so `title` means `title:string`.
+
+Every record also gets an integer `id`, so do not list one. Give at least
+one field, and give each field once.
+
+## Names
+
+The plural, the singular and the field names follow the same rule as project
+names: lowercase letters, digits and underscores, starting with a letter.
+
+The plural and the singular must differ, because they name two modules in
+one folder. Names that would not compile or would break the generated SQL
+are refused with a message saying why: Gleam keywords, SQL keywords, names
+of modules the generated code imports, and singulars that would shadow a
+built-in Gleam type, such as `list`.
+
+## Your code is safe
+
+Existing files are never overwritten. If any file the command would write
+already exists, it stops and writes nothing. The two files shared by every
+set of pages are the exception: when they exist they are kept as they are,
+and the rest is written.
+
+Registering a controller, pages or a migration means editing
+`src/<project>.gleam` and `platform/database.gleam`. If either no longer has
+the shape `howdy new` gave it, it is left alone, and the command prints what
+to add by hand.
+
+## Flags
+
+- `--api`, for `create pages` only: also create the JSON controller under
+  `/api/<plural>`.
+- `--plain`: print progress as plain lines instead of animating.

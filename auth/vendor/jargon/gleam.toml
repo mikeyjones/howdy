@@ -1,0 +1,4 @@
+name = "jargon"
+version = "1.1.0"
+licences = ["MIT", "Apache-2.0"]
+target = "erlang"

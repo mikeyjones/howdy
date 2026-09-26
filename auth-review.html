@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>howdy_auth — code review</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --panel: #ffffff; --ink: #1d1c1a; --muted: #6b6860; --line: #e4e1d8;
+    --accent: #2f5d8a; --good: #2e7d4f; --warn: #a86a00; --bad: #b3382c; --code: #f1efe8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --panel: #1f1f1c; --ink: #eceae3; --muted: #9c998f; --line: #33322d;
+      --accent: #7fb0e0; --good: #6cc48f; --warn: #e0a94a; --bad: #ee7b6e; --code: #2a2925;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 48px 24px 96px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 1.4rem; margin: 56px 0 8px; padding-top: 16px; border-top: 1px solid var(--line); letter-spacing: -0.01em; }
+  h3 { font-size: 1.05rem; margin: 28px 0 8px; }
+  p { margin: 8px 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; font: 0.86em ui-monospace, "JetBrains Mono", Menlo, monospace; }
+  pre { background: var(--code); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font: 0.84em/1.5 ui-monospace, Menlo, monospace; }
+  a { color: var(--accent); }
+  .scores { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin: 24px 0; }
+  .score { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  .score .label { color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  .score .num { font-size: 2.4rem; font-weight: 650; letter-spacing: -0.03em; line-height: 1.2; }
+  .score .num small { font-size: 1rem; color: var(--muted); font-weight: 400; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 8px 0 10px; }
+  .bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .score p { font-size: 0.9rem; color: var(--muted); margin: 0; line-height: 1.45; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 14px 0; }
+  .finding { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 10px; padding: 14px 18px; margin: 12px 0; }
+  .finding.high { border-left-color: var(--bad); }
+  .finding.med { border-left-color: var(--warn); }
+  .finding.low { border-left-color: var(--accent); }
+  .finding h4 { margin: 0 0 6px; font-size: 1rem; }
+  .finding p { margin: 6px 0; font-size: 0.95rem; }
+  .finding .fix { border-top: 1px dashed var(--line); padding-top: 8px; margin-top: 10px; }
+  .tag { display: inline-block; font-size: 0.7rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 999px; margin-right: 8px; vertical-align: 2px; border: 1px solid currentColor; }
+  .tag.good { color: var(--good); } .tag.high { color: var(--bad); } .tag.med { color: var(--warn); } .tag.low { color: var(--accent); }
+  .loc { color: var(--muted); font-size: 0.85rem; }
+  ul.good { list-style: none; padding: 0; margin: 8px 0; }
+  ul.good li { padding: 5px 0 5px 26px; position: relative; font-size: 0.95rem; }
+  ul.good li::before { content: "✓"; position: absolute; left: 4px; color: var(--good); font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; margin: 12px 0; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  nav { font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; }
+  nav a { margin-right: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>howdy_auth — code review</h1>
+  <p class="sub">Reviewed 17 Sept 2026 · branch <code>v2</code> (uncommitted <code>auth/</code> + <code>examples/auth/</code>) · ~1,730 lines of Gleam/Erlang source, 1,040 lines of tests · 36/36 tests pass on SQLite, <code>gleam format --check</code> clean. The Postgres suite was not run locally.</p>
+
+  <div class="panel"><strong>Current state, 17 Sept 2026 22:15: 30 of 36 findings fixed, 3 partly, 2 open by decision, 1 needing no change</strong> — see <a href="#scoreboard">the fixed / not fixed table</a> below. 89/89 tests pass on SQLite and PostgreSQL 17 with both Argon2 builds. Scores: security 9.5, maintainability 9, performance 9, overall 9. Everything after that table is history: the original review, then earlier verification passes.</div>
+
+  <nav><a href="#scoreboard">Fixed / not fixed</a><a href="#summary">Summary</a><a href="#security">Security</a><a href="#maintainability">Maintainability</a><a href="#performance">Performance</a><a href="#plan">Action plan</a><a href="#verify">Verification 1</a><a href="#verify2">Verification 2</a><a href="#verify3">Latest corrections</a><a href="#status">Status</a></nav>
+
+  <h2 id="scoreboard">Every finding: fixed or not — rechecked 17 Sept 2026, 22:15</h2>
+  <p>Fourth pass, after a round of fixes aimed at everything still open. <strong>30 fixed · 3 partly · 2 open by decision · 1 needed no change.</strong> Ten findings moved this pass, including the last one that started life as High. Nothing above Low remains open except the vendored Argon2 copy, which is waiting on upstream.</p>
+  <table>
+    <tr><th>Check run for this pass</th><th>Result</th></tr>
+    <tr><td><code>gleam test</code> — reference Argon2, SQLite / PostgreSQL 17</td><td><strong>89 passed</strong> / <strong>89 passed</strong></td></tr>
+    <tr><td><code>gleam test</code> — SIMD Argon2, SQLite / PostgreSQL 17</td><td><strong>89 passed</strong> / <strong>89 passed</strong></td></tr>
+    <tr><td>JavaScript page tests · vendor provenance · namespace · formatting · example <code>gleam check</code> · build warnings</td><td>3 passed · pass · pass · clean · clean · 0</td></tr>
+    <tr><td>Live example app over HTTP, fresh database</td><td>Three register requests → one email, all 202 · exchange 200 · register once signed up → “You already have an account” · <code>/sessions</code> shows the client · <code>client.js</code> 200 then 304 on revalidation · weak password refused, good one 204</td></tr>
+    <tr><td>Not run</td><td>The GitHub Actions workflow itself; load testing over HTTP; a line-by-line audit of the vendored Argon2 C</td></tr>
+  </table>
+  <h3>Security</h3>
+  <table>
+    <tr><th>Severity</th><th>Finding</th><th>Was</th><th>Now</th><th>Evidence</th></tr>
+    <tr><td>High</td><td>Anyone can lock a victim out of email-token login</td><td class="loc">Partly</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> Token requests are now bounded by coalescing rather than refusal: while a usable token is waiting, further requests send nothing and still return success. Every request therefore leaves the owner holding exactly one live token, and no request is refused, so a third party can neither flood the inbox nor deny its owner. The claim is one statement under the address's lock row, so concurrent requests cannot both send. Tested with eight distinct clients.<br><span class="loc">auth.gleam:request_challenge, store.claim_challenge</span></td></tr>
+    <tr><td>High</td><td>Rate limiting keyed on socket IP, not configurable</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td><code>routes.api_limited_by</code>; separate credential and signed-in budgets. That same key now also drives throttling and audit.</td></tr>
+    <tr><td>Medium</td><td>No password change, reset or add-to-account</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td><code>auth.set_password</code> behind a fresh email-token session.</td></tr>
+    <tr><td>Medium</td><td>Password throttle enables lock-out and never escalates</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Per address+client back-off with an address ceiling.</td></tr>
+    <tr><td>Medium</td><td>Audit trail too thin to investigate an incident</td><td class="loc">Partly</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> Events carry the requesting client, sessions record where they were created, and a token request against an existing account is recorded as <code>token.requested</code> with its purpose — so “why did I get this email” is now answerable. <code>required</code> reads the socket address, <code>required_from</code> a trusted proxy header. User agent is still not captured separately.<br><span class="loc">migration 6, auth.event_from</span></td></tr>
+    <tr><td>Medium</td><td>Sessions fixed at 24 h with no management</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Configurable lifetime and idle timeout, list and revoke.</td></tr>
+    <tr><td>Low</td><td>Failed exchange does not burn the token</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Consumed in its own committed transaction.</td></tr>
+    <tr><td>Low</td><td>Origin validation accepts values a browser never sends</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Canonicalised at construction; now in <code>internal/address</code>.</td></tr>
+    <tr><td>Low</td><td>Tokens in public record fields can be logged by accident</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td><code>secret.Secret</code> with explicit reveal.</td></tr>
+    <tr><td>Low</td><td>No Unicode normalisation of passwords</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>NFC, with migration 5 labelling which stored hashes are normalised.</td></tr>
+    <tr><td>Low</td><td>No breached or common-password check</td><td class="loc">Partly</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> The built-in check was eight strings; it now rejects the shapes a 15-character minimum lets through — a common word however decorated, one unit repeated, a keyboard or alphabet run, four or fewer distinct characters. A breach corpus remains the application's to supply, which is inherent: it cannot ship in the package.<br><span class="loc">password.common_check</span></td></tr>
+    <tr><td>Low</td><td>No rehash-on-login</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Upgrades under the row lock, never lowering a cost.</td></tr>
+    <tr><td>Low</td><td>Throttle keys are unsalted SHA-256 of the email</td><td class="loc">Open</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> Keyed with a random secret created in the database on first use, so a throttle row can no longer be matched against a guessed address. Session and challenge digests stay unkeyed: those values are already random secrets.<br><span class="loc">token.keyed_digest, howdy_auth_keys</span></td></tr>
+    <tr><td>Low</td><td>Registering an existing address sends a token that then fails</td><td class="loc">Open</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> New <code>Delivery.purpose</code>: <code>SignIn</code>, <code>Registration</code>, <code>AlreadyRegistered</code>. That last sends the existing account a sign-in token and keeps no password from the request, so it is also strictly safer than storing a stranger's hash against the address. The HTTP reply is unchanged, so nothing is disclosed to whoever asked.<br><span class="loc">auth.Purpose</span></td></tr>
+    <tr><td>Low</td><td>Email stored twice and read from two places</td><td class="loc">Open</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> <code>howdy_auth_users.email</code> is the only address sign-in reads; the identity row records that it was verified, and a test proves a stale one is not a second way in.<br><span class="loc">store.active_user_by_email</span></td></tr>
+  </table>
+  <h3>Maintainability</h3>
+  <table>
+    <tr><th>Severity</th><th>Finding</th><th>Was</th><th>Now</th><th>Evidence</th></tr>
+    <tr><td>High</td><td>Vendored, patched Argon2 C sources</td><td class="loc">Partly</td><td class="n"><span class="tag med">Partly</span></td><td>Everything in your control is done: issue filed and linked, patch, checksum, CI verification. It cannot close until upstream publishes a fix.</td></tr>
+    <tr><td>Medium</td><td>All policy hard-coded</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td><code>policy.Policy</code>, now including the coalescing window.</td></tr>
+    <tr><td>Medium</td><td>Schema fingerprint brittle, no escape hatch</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td><code>migration.rebaseline</code>; proven on PostgreSQL 17.</td></tr>
+    <tr><td>Medium</td><td>Stringly-typed and boolean-flag code</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Typed intents, backends, grants and pages.</td></tr>
+    <tr><td>Low</td><td>SQL inline in <code>auth.gleam</code></td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>All of it in <code>internal/store</code>.</td></tr>
+    <tr><td>Low</td><td>One 1,038-line test file with multi-behaviour tests</td><td class="loc">Partly</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> Split by theme into core, HTTP, migration, password and RBAC suites; the shared application builder moved to <code>support</code>. Largest file is now 478 lines, and 89 tests still pass unchanged.</td></tr>
+    <tr><td>Low</td><td>HTML built by string concatenation with no escaping helper</td><td class="loc">Open</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> An <code>escape</code> helper is applied to the mount paths, the only values these pages take from the application. Belt and braces today, since <code>safe_path</code> already rejects HTML metacharacters, but it makes that a property of the code rather than of every future edit.</td></tr>
+    <tr><td>Low</td><td>Admin operations succeed silently for unknown ids</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td><code>NotFound</code>, inside the transaction.</td></tr>
+    <tr><td>Low</td><td><code>auth.gleam</code> too large</td><td class="loc">Open</td><td class="n"><span class="tag med">Partly</span></td><td>1,025 → 938 lines: address canonicalisation moved to <code>internal/address</code>. Splitting further means either exposing the opaque <code>Auth</code>'s fields or threading four of them through every call, and moving public functions to new modules would break the API for a line count. Left deliberately; see the note below.</td></tr>
+    <tr><td>Low</td><td>Package lives in core's <code>howdy/</code> namespace</td><td class="loc">Partly</td><td class="n"><span class="tag med">Partly</span></td><td>Reserved, CI-guarded; the shared namespace is a decision, not an oversight.</td></tr>
+    <tr><td>Low</td><td>Generic migration runner owned by the auth package</td><td class="loc">Open</td><td class="n"><span class="tag high">Open</span></td><td>Unchanged. It is a packaging decision, and splitting it into its own package is only worth doing when a second package needs it.</td></tr>
+  </table>
+  <h3>Performance</h3>
+  <table>
+    <tr><th>Severity</th><th>Finding</th><th>Was</th><th>Now</th><th>Evidence</th></tr>
+    <tr><td>High</td><td>SQLite path serialised behind <code>global:trans</code></td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>FIFO lock server; worst wait 2,903 ms → 17 ms.</td></tr>
+    <tr><td>Medium</td><td>No caching on the per-request path</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Optional <code>access.with_cache</code>, invalidated only by grant and suspension changes.</td></tr>
+    <tr><td>Medium</td><td>Missing indexes and scan-prone cleanup</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Migrations 3 and 6; the challenge lookup index is now composite.</td></tr>
+    <tr><td>Low</td><td>Portable Argon2 build instead of SIMD</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td><code>opt</code> by default on x86-64; measured gain about 7%.</td></tr>
+    <tr><td>Low</td><td>A wrong non-NFC password costs two Argon2 checks</td><td class="loc">Fixed</td><td class="n"><span class="tag good">Fixed</span></td><td>Confined to hashes not yet labelled normalised.</td></tr>
+    <tr><td>Low</td><td>Expired-session sweep runs inside the login transaction</td><td class="loc">Open</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> Bounded to 100 rows per login, with <code>prune_expired</code> to clear a backlog. Tested with 150 expired sessions: a login clears a slice, not the lot.<br><span class="loc">store.insert_session</span></td></tr>
+    <tr><td>Low</td><td><code>define_role</code> inserts permissions one at a time</td><td class="loc">Open</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass,</strong> and it turned up a library constraint worth knowing: Gloo rewrites <code>$N</code> for SQLite by replacing <code>$1</code> then <code>$2</code> and so on, which turns <code>$10</code> into <code>?0</code>. Any statement binding more than nine values is therefore corrupted on that adapter. Batches are sized per adapter (100 rows on PostgreSQL, 3 on SQLite) and the limit is documented where the next person will meet it.<br><span class="loc">store.insert_permissions</span></td></tr>
+    <tr><td>Low</td><td><code>client.js</code> served <code>no-store</code></td><td class="loc">Open</td><td class="n"><span class="tag good">Fixed</span></td><td><strong>Closed this pass.</strong> Served with an ETag over its own content and <code>no-cache</code>, so a browser revalidates and gets an empty 304 instead of the whole script. Not <code>max-age</code>: an upgraded package must never be served an older script. Pages themselves are still <code>no-store</code>.</td></tr>
+    <tr><td>Low</td><td>No cap on concurrent Argon2 jobs</td><td class="loc">Open</td><td class="n"><span class="tag good">No change needed</span></td><td><strong>Measured rather than changed.</strong> The premise was wrong: Argon2 runs on the BEAM's dirty CPU schedulers, so the runtime already bounds how many hashes are in flight. 200 concurrent logins on a six-core machine peaked at 191 MiB RSS against a 71 MiB baseline — about 120 MiB of hashing memory, i.e. six schedulers' worth, not the 3,800 MiB the finding implied. A semaphore would only change queueing latency, which the route limiter already bounds.</td></tr>
+    <tr><td>Low</td><td>43-character random text primary keys</td><td class="loc">Open</td><td class="n"><span class="tag high">Open</span></td><td>Unchanged, deliberately: changing the key format is a breaking migration of every table and index for a benefit that does not show at this scale.</td></tr>
+  </table>
+
+  <h3>Two notes on what was not changed</h3>
+  <p><strong>The module size.</strong> <code>auth.gleam</code> is 938 lines and I stopped short of breaking it up. The operations that remain there all read the fields of the opaque <code>Auth</code>, so moving them means either giving those fields up or passing four of them into every call, and moving public functions into new modules would change the API for the sake of a line count. What could move cleanly — origin and address canonicalisation, which depend on nothing — has moved. I would rather leave this one visible than spend the package's API on it.</p>
+  <p><strong>The concurrency cap.</strong> I went to measure this before implementing it and found the finding's premise was wrong, so there is nothing to fix; the measurement is in the table above. That also means the route limiter is doing the load-shedding work here, so it stays worth configuring for a real deployment.</p>
+
+  <h2 id="summary" style="border-top:0;margin-top:16px">Summary</h2>
+  <p>This is a careful, security-literate module — noticeably better than most hand-rolled auth. The fundamentals are right: 256-bit random tokens stored only as digests, atomic single-use challenge exchange, Argon2id with a dummy-hash path for unknown users, <code>__Host-</code> HttpOnly cookies, exact Origin checks on cookie writes, and rejection of ambiguous credentials. The weaknesses are not broken crypto; they are <strong>abuse/denial-of-service edges in the throttling design</strong>, <strong>missing account lifecycle features</strong> (no password change/reset), <strong>a contention problem in the SQLite lock</strong>, and <strong>operational rigidity</strong> (nothing is configurable; the schema fingerprint has no escape hatch; a vendored C crypto dependency blocks publishing).</p>
+
+  <div class="scores">
+    <div class="score"><div class="label">Security</div><div class="num">7.5<small> / 10</small></div><div class="bar"><i style="width:75%"></i></div><p>Strong primitives and CSRF/session handling. Loses points for victim lock-out via throttles, proxy-blind IP limiting, thin audit trail and no password lifecycle.</p></div>
+    <div class="score"><div class="label">Maintainability</div><div class="num">7<small> / 10</small></div><div class="bar"><i style="width:70%"></i></div><p>Clean layering, excellent comments and tests on two real databases. Held back by hard-coded policy, stringly-typed spots, inline SQL, and the vendored Argon2 fork.</p></div>
+    <div class="score"><div class="label">Performance</div><div class="num">6.5<small> / 10</small></div><div class="bar"><i style="width:65%"></i></div><p>Postgres hot path is lean (one PK lookup per request). SQLite path serialises everything behind <code>global:trans</code>, which showed multi-second tail latency under contention.</p></div>
+    <div class="score"><div class="label">Overall</div><div class="num">7<small> / 10</small></div><div class="bar"><i style="width:70%"></i></div><p>A solid prototype. Fix the three "high" items below and it is a credible 8+.</p></div>
+  </div>
+
+  <!-- ================= SECURITY ================= -->
+  <h2 id="security">Security — 7.5 / 10</h2>
+
+  <h3>What is done well</h3>
+  <div class="panel"><ul class="good">
+    <li>Tokens are 32 bytes from <code>crypto.strong_random_bytes</code>; only SHA-256 digests are stored for challenges and sessions, so a database leak does not yield usable sessions. A test asserts raw tokens are never persisted.</li>
+    <li>Challenge exchange is a single <code>DELETE … RETURNING</code> inside a transaction — a token can mint at most one session even under concurrency (and there is a test for exactly that).</li>
+    <li>Password login performs the same Argon2 work for unknown, email-only and suspended accounts via a startup dummy hash; hashing runs outside the DB transaction; the credential is re-checked and the row locked afterwards so suspension or a concurrent change cannot issue a stale session.</li>
+    <li>Argon2id parameters are pinned explicitly (19 MiB, t=2, p=1 — the OWASP baseline), the encoded prefix is verified, and a known-answer test guards the vendored fix. Catching the upstream <code>ARGON2_VERSION 13</code> vs <code>0x13</code> bug is impressive diligence.</li>
+    <li>Cookies: <code>__Host-</code> prefix, Secure, HttpOnly, SameSite=Lax, Path=/. HTTPS is enforced except on loopback. The origin is never inferred from <code>Host</code> or forwarded headers.</li>
+    <li>CSRF: cookie-authenticated non-GET requests require an exact single <code>Origin</code>; JSON endpoints require <code>application/json</code>; requests carrying both a cookie and a bearer header are rejected; duplicate cookies/headers are rejected.</li>
+    <li>Registration is off by default, re-checked at exchange time, and never attaches credentials to an existing account on email equality alone.</li>
+    <li>Uniform responses for known/unknown emails (always 202), driver errors are never surfaced, starter pages ship a tight CSP, <code>no-store</code>, <code>nosniff</code>, and validate mount paths before interpolating them into HTML.</li>
+    <li>Authorization reads live grants every time (no stale roles in sessions), has no implicit admin/wildcard, scopes are exact, DB errors never become a grant, and suspended users are denied.</li>
+  </ul></div>
+
+  <h3>Findings</h3>
+
+  <div class="finding high">
+    <h4><span class="tag high">High</span>Anyone can lock a victim out of email-token login with one request per minute</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:181-221 (<code>request_challenge</code>)</p>
+    <p>Each token request (a) takes the 60-second per-email cooldown and (b) <em>deletes every pending challenge for that email</em> (<code>DELETE … WHERE expires_at &lt;= $1 OR email = $2</code>). An attacker who POSTs <code>/login</code> with the victim's address once a minute permanently holds the cooldown, so the victim's own requests get 429, and any token the victim did manage to receive is invalidated by the attacker's next request. The victim also receives ~1,440 emails a day. The per-IP limiter (30/min) does not interfere with this at all.</p>
+    <p class="fix"><strong>Fix:</strong> do not invalidate older challenges on a new request — allow a small number (e.g. 3) of live challenges per email and delete only the oldest beyond that. Replace the flat cooldown with an escalating per-email budget (e.g. 3 per 15 min, 10 per day). Optionally bind the challenge to the requesting browser with a short-lived nonce cookie so only the requester can redeem it, which also blunts "read me the code" phishing.</p>
+  </div>
+
+  <div class="finding high">
+    <h4><span class="tag high">High</span>Rate limiting is keyed on socket IP with no way to configure it</h4>
+    <p class="loc">auth/src/howdy/auth/routes.gleam:26,65</p>
+    <p><code>api()</code> hard-codes <code>rate_limit.by_ip</code> at 30 requests/minute. Howdy's own docs say that behind a proxy every request shares the proxy's IP — so in the most common production topology, <em>all users share one 30/min bucket</em> and a single client can take auth down for everyone. The limiter also covers <code>GET /me</code> and <code>/logout</code>, so an SPA that calls <code>/me</code> on navigation, or an office behind NAT, will hit 429 in normal use.</p>
+    <p class="fix"><strong>Fix:</strong> accept the limiter/key function as an argument (<code>routes.api(identity, at:, limit_by:)</code>), defaulting to <code>by_ip</code>. Apply the strict limiter only to the unauthenticated credential endpoints and a much looser one (or none) to <code>/me</code> and <code>/logout</code>.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>No password lifecycle: change, reset, or add-to-existing-account</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:307-315 — the only <code>INSERT INTO howdy_auth_passwords</code></p>
+    <p>A password can only be set during registration. A user who forgets it can still sign in by email token but can never replace the password; a user who suspects compromise cannot rotate it; an email-only user cannot add one. For a security module, "cannot rotate a compromised credential" is a real gap, not just a missing feature.</p>
+    <p class="fix"><strong>Fix:</strong> add <code>set_password(auth, principal, new_password)</code> requiring a recently created session (email-token exchange within N minutes acts as the reset proof), which upserts the hash, revokes all other sessions, and writes an event.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>Password-attempt throttle enables targeted lockout and never escalates</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:414-437</p>
+    <p>Five attempts per email per minute, counted before verification and shared globally. Six junk requests a minute lock the real user out of password login indefinitely (email-token login is the only fallback — and see the first finding). Conversely the window never grows, so a patient attacker gets 7,200 guesses/day per account forever. The 15-character minimum makes online guessing impractical, but credential stuffing with reused long passwords still works at that rate.</p>
+    <p class="fix"><strong>Fix:</strong> throttle on the pair (email, client key) first and on email alone with a much higher ceiling; use exponential back-off on consecutive failures; reset on success; record failures as events so they can be alerted on.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>Audit trail is too thin to investigate an incident</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:589-605 · auth/src/howdy/authorization.gleam:72,92,111</p>
+    <p>Events record only <code>user_id</code>, a free-text <code>action</code> and a timestamp. There is no actor (who suspended whom? who granted the role?), no client IP/user agent, and failed logins / failed exchanges are never recorded (they return before or roll back the event). Role events pack data into the action string (<code>"role.assigned:org:42:admin"</code>) and <code>define_role</code> writes an empty <code>user_id</code>. The table has no index and no retention, so it also grows without bound.</p>
+    <p class="fix"><strong>Fix:</strong> add <code>actor_id</code>, <code>subject</code>/<code>detail</code> columns and an <code>(user_id, occurred_at)</code> index; make privileged functions take the acting <code>Principal</code>; log failures in a separate committed write (as the attempt counter already does); expose a <code>prune_events(before:)</code> helper.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>Sessions are fixed 24 h bearer secrets with no management</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:50,319-340</p>
+    <p>No idle timeout, no sliding renewal (active users are logged out mid-work at 24 h), no way for a user to list or revoke their other sessions, and no metadata (created-at, last-seen, user agent) to make such a list meaningful. Lifetime is a <code>const</code>, so an app wanting 1 h admin sessions or 30 d consumer sessions must fork.</p>
+    <p class="fix"><strong>Fix:</strong> make lifetime and idle timeout configurable on <code>Auth</code>; store <code>created_at</code>/<code>last_seen_at</code>; add <code>sessions(auth, principal)</code> and <code>revoke_session</code>.</p>
+  </div>
+
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>A failed exchange does not burn the token</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:267-317</p>
+    <p>The consuming <code>DELETE … RETURNING</code> is inside the same transaction as account checks. If a later step fails (account exists, user suspended, registration disabled, passwords disabled) the rollback restores the challenge, which stays redeemable until it expires. Not exploitable given 256-bit tokens, but it contradicts the "single-use" promise in the docs and UI.</p>
+    <p class="fix"><strong>Fix:</strong> consume the challenge in its own committed transaction, then do the account work in a second one.</p>
+  </div>
+
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>Origin validation accepts values a browser will never send</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:111-138</p>
+    <p><code>https://Example.com</code>, <code>https://example.com:443</code> and <code>http://localhost:80</code> all pass <code>validate_origin</code>, but browsers serialise the Origin lower-cased with default ports removed, so every cookie write would then fail with 403 — a confusing fail-closed misconfiguration. <code>Some("::1")</code> without brackets is also unreachable.</p>
+    <p class="fix"><strong>Fix:</strong> canonicalise at construction (lower-case host, strip default port) or reject non-canonical input with a specific error.</p>
+  </div>
+
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>Smaller hardening items</h4>
+    <p>• <code>Session</code> and <code>Delivery</code> are public records with a plaintext <code>token</code> field — one <code>echo</code>/<code>string.inspect</code> in application code leaks a credential. Consider an opaque <code>Secret</code> wrapper with an explicit <code>reveal</code>.<br>
+    • No breached/common-password check and no Unicode normalisation (NIST 800-63B recommends both; without NFKC the same password typed on a different OS can fail).<br>
+    • No rehash-on-login path, so raising Argon2 cost later will not upgrade existing hashes.<br>
+    • Throttle keys are unsalted SHA-256 of the email — that is not meaningful pseudonymisation (and the challenges table stores the plaintext email anyway); either drop the digest or HMAC with a server key.<br>
+    • Registering with an address that already has an account still delivers a token that then fails at exchange with a bare 401. Give <code>Delivery</code> an <code>AlreadyRegistered</code> intent so the app can send a "you already have an account" email instead.<br>
+    • <code>users.email</code> and <code>identities.subject</code> duplicate the address; token login reads one and password login reads the other. The day email-change lands, these can diverge.</p>
+  </div>
+
+  <!-- ================= MAINTAINABILITY ================= -->
+  <h2 id="maintainability">Maintainability — 7 / 10</h2>
+
+  <h3>What is done well</h3>
+  <div class="panel"><ul class="good">
+    <li>Clear layering: headless operations (<code>auth</code>) → HTTP transport (<code>routes</code>) → optional UI (<code>pages</code>), with storage, hashing, tokens and schema under <code>internal/</code>. Authorization is a separate module with a separate migration package.</li>
+    <li>Opaque <code>Auth</code>/<code>Authorization</code>/<code>Passwords</code> types with builder-style opt-ins (<code>allow_registration</code>, <code>with_passwords</code>) — secure defaults are the path of least resistance.</li>
+    <li>Comments explain <em>why</em>, not what (cooldown committed before hashing, write-lock promotion on SQLite, mailbox trick for typed rollback errors, requester ID in the global lock). This is the kind of commentary that saves the next maintainer hours.</li>
+    <li>36 tests, run in CI against both SQLite and a real Postgres 17, including concurrency, rollback, schema drift, migration races, a corrupt-hash fail-closed test, and an Argon2 known-answer vector.</li>
+    <li>Immutable, checksummed, append-only migrations with an advisory lock; a thorough README (375 lines) and a runnable example.</li>
+  </ul></div>
+
+  <h3>Findings</h3>
+
+  <div class="finding high">
+    <h4><span class="tag high">High</span>Vendored, patched Argon2 C sources are a long-term liability</h4>
+    <p class="loc">auth/vendor/jargon/ · auth/gleam.toml:16</p>
+    <p>The fix is correct and well documented, but the package now owns ~4,000 lines of C crypto, needs a manual <code>make</code> before every build, cannot be published to Hex (path dependency), and the README states that no upstream issue has been filed — so nothing will ever make this go away. The vendored copy also has no recorded checksum against the Hex tarball, so a reviewer cannot cheaply confirm "only one constant changed". (Minor: the Makefile lists <code>ref.ci</code>; it only works because <code>basename</code> strips the suffix.)</p>
+    <p class="fix"><strong>Fix:</strong> file the upstream issue/PR against <code>Pevensie/jargon</code> now and link it in the README; commit a <code>PATCH.diff</code> plus the upstream tarball SHA-256; add a CI step that diffs vendor against upstream. Note that existing hashes produced by buggy upstream builds are incompatible — worth stating in the migration notes.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>All policy is hard-coded</h4>
+    <p class="loc">auth.gleam (60, 600, 86_400, 5/6, 1024, 43) · routes.gleam (30/60, 4096) · password.gleam (15)</p>
+    <p>Session length, challenge TTL, cooldown, attempt limits, body limits and password minimum are magic numbers scattered through SQL parameters and conditionals; two of them (<code>60</code> in the cooldown and in <code>TooManyRequests(60)</code>; <code>5</code> vs <code>6</code> in the attempt SQL and the guard) must be changed in lock-step. Every consumer who needs a different value has to fork.</p>
+    <p class="fix"><strong>Fix:</strong> a single <code>Policy</code> record with named defaults held inside <code>Auth</code>, plus <code>with_session_seconds</code>-style setters. Name the remaining constants.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>Schema fingerprinting is brittle with no escape hatch</h4>
+    <p class="loc">auth/src/howdy/migration.gleam:161-235</p>
+    <p>Startup refuses to run if a digest of catalog output changes. That output is not a stable interface: <code>pg_get_constraintdef</code>/<code>pg_get_indexdef</code> formatting can change between Postgres majors, <code>polroles</code> are cluster-specific OIDs, <code>attnum</code> changes after dump/restore of a table with dropped columns, and it depends on <code>current_schema()</code>/search_path. A routine PG upgrade or restore could leave an app unable to boot with "schema was changed outside its migrations" and no supported way to recover except editing the ledger by hand. It also forbids legitimate DBA actions such as adding an index to a hot auth table.</p>
+    <p class="fix"><strong>Fix:</strong> add an explicit <code>migration.rebaseline(repo, package)</code> operator command; consider fingerprinting a normalised structural subset (tables, columns, types, nullability, constraints) rather than rendered definitions, and make extra indexes a warning rather than fatal.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>Stringly-typed and boolean-flag code in places that matter</h4>
+    <p>• <code>exchange</code> matches the stored intent as <code>"register" -&gt; … | _ -&gt; Ok(Nil)</code> (auth.gleam:292) — add a decoder back to <code>Intent</code> so an unknown value fails instead of silently meaning "login".<br>
+    • <code>authorization.check(…, permission: Bool)</code> and <code>pages.page(…, register: Bool, password: Bool)</code> are flag parameters; call sites read <code>page(identity, prefix, api, True, False)</code>. Use small custom types (<code>Role | Permission</code>, <code>Page</code> variants).<br>
+    • Adapter dispatch is <code>case repo.adapter_name(repo) { "postgres" … _ -&gt; sqlite }</code> in four places with inconsistent fall-through: <code>connect</code> rejects unknown adapters while <code>lock_user</code>, <code>lock_migrations</code> and <code>fingerprint</code> silently treat them as SQLite. Parse once into a <code>Backend</code> type.</p>
+  </div>
+
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>Structure and readability</h4>
+    <p>• <code>auth.gleam</code> is 605 lines mixing configuration, validation, five flows and admin operations, with 200-character inline SQL strings. Move statements into an <code>internal/queries</code> module with named functions; it makes the flows readable and the SQL auditable in one place.<br>
+    • The SQLite write-lock promotion (<code>UPDATE … WHERE 1 = 0</code>) appears twice as a copy-pasted trick — wrap it as <code>db.write_transaction</code>.<br>
+    • <code>suspend</code>, <code>resume</code>, <code>assign</code>, <code>revoke</code> succeed silently for a non-existent user/role (assign relies on an FK error surfacing as a generic 500). Return <code>NotFound</code>.<br>
+    • The package defines <code>howdy/migration</code>, <code>howdy/auth</code> and <code>howdy/authorization</code> inside the core package's module namespace. BEAM module names are global, so if core ever adds <code>howdy/migration</code> the two packages cannot coexist. Consider <code>howdy_auth/…</code> or at least reserve the names in core.<br>
+    • The generic migration runner is useful beyond auth — it arguably belongs in its own package rather than being owned by the auth module.<br>
+    • One 1,038-line test file with names like <code>session_expiry_logout_and_suspension_test</code> covering several behaviours each; when one fails it is unclear which. Split by area and into one behaviour per test.<br>
+    • HTML is built by string concatenation. It is safe today (inputs are validated), but every future edit carries injection risk; a tiny escaping helper or an HTML builder would make that structural.</p>
+  </div>
+
+  <!-- ================= PERFORMANCE ================= -->
+  <h2 id="performance">Performance — 6.5 / 10</h2>
+
+  <h3>Measurements (this machine)</h3>
+  <table>
+    <tr><th>What</th><th>Result</th><th>Comment</th></tr>
+    <tr><td>Argon2id hash, 19 MiB / t=2 / p=1</td><td class="n">~24 ms avg (51 ms cold)</td><td>Runs on a dirty CPU scheduler, so it does not block normal schedulers. Appropriate cost.</td></tr>
+    <tr><td><code>with_repo_lock</code>, uncontended</td><td class="n">~20 µs</td><td>Negligible.</td></tr>
+    <tr><td><code>with_repo_lock</code>, 8 processes, 1 ms hold</td><td class="n">p50 1 ms · p95 2 ms · <strong>max 2,903 ms</strong></td><td><code>global</code> resolves contention with randomised exponential sleep, not a queue.</td></tr>
+    <tr><td>Test suite (SQLite)</td><td class="n">36 pass</td><td></td></tr>
+  </table>
+
+  <h3>What is done well</h3>
+  <div class="panel"><ul class="good">
+    <li>Authenticating a request on Postgres is one primary-key lookup with a PK join; a permission check is one more indexed query. No N+1, no per-request hashing (SHA-256 only).</li>
+    <li>Expensive hashing is deliberately kept outside transactions and outside the SQLite lock, so it never holds a connection or blocks other requests.</li>
+    <li>The NIF is flagged <code>ERL_NIF_DIRTY_JOB_CPU_BOUND</code>; memory cost per hash is bounded (19 MiB) and the IP limiter caps concurrent abuse.</li>
+    <li>Throttles use single-statement upserts — atomic without explicit row locks — and expired rows are reaped opportunistically, so no background job is needed.</li>
+  </ul></div>
+
+  <h3>Findings</h3>
+
+  <div class="finding high">
+    <h4><span class="tag high">High</span>SQLite mode serialises every auth operation behind <code>global:trans</code></h4>
+    <p class="loc">auth/src/howdy_auth_ffi.erl:7-8 · auth/src/howdy/auth/internal/database.gleam:19-28</p>
+    <p>Every call — including the read-only <code>authenticate</code> and <code>allowed</code> on <em>every authenticated request</em> — takes a <code>global</code> lock. <code>global</code> is designed for rare cluster-wide coordination: each acquire is a round-trip to the <code>global_name_server</code> process, and a contended acquire does not queue, it <em>sleeps a random, exponentially growing interval</em> (up to 8 s) and retries. In the benchmark above, eight concurrent callers holding the lock for 1 ms produced a worst-case wait of 2.9 s. It is also unfair, so a request can starve. Under modest concurrent traffic this becomes sporadic multi-second page loads.</p>
+    <p class="fix"><strong>Fix:</strong> replace it with a per-Repo serialiser process (a tiny actor/gen_server that runs the closure, giving FIFO fairness and microsecond hand-off), or better, push the serialisation into Gloo's SQLite adapter where it belongs. With WAL mode, reads need no lock at all if a second read-only connection is used.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>No caching on the per-request path</h4>
+    <p class="loc">auth/src/howdy/auth.gleam:478-492 · auth/src/howdy/authorization.gleam:135-157</p>
+    <p>A guarded route with a permission check costs two DB round-trips (plus two lock acquisitions on SQLite) before the handler starts. Always-fresh reads are a defensible security choice, but there is no option for apps that would trade 5 s of staleness for halving DB load.</p>
+    <p class="fix"><strong>Fix:</strong> offer a single-query <code>authenticate_and_check</code> joining sessions→users→assignments→permissions, and/or an optional short-TTL ETS cache keyed by session digest that <code>logout</code>/<code>suspend</code>/<code>revoke</code> invalidate.</p>
+  </div>
+
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>Missing indexes and scan-prone cleanup queries</h4>
+    <p class="loc">auth/src/howdy/auth/internal/schema.gleam</p>
+    <p>• <code>DELETE FROM howdy_auth_challenges WHERE expires_at &lt;= $1 OR email = $2</code> — there is no index on <code>email</code>, and an <code>OR</code> across two columns usually defeats the expiry index too; split into two statements and index <code>email</code>.<br>
+    • <code>howdy_auth_throttles(next_at)</code> and <code>howdy_auth_password_attempts(window_start)</code> are swept on every request without an index. They are small in normal use but these are precisely the tables an attacker inflates (one row per distinct email), turning every login into a sequential scan when you can least afford it.<br>
+    • FK columns without indexes: <code>howdy_auth_identities(user_id)</code> and <code>howdy_authz_assignments(scope, role)</code> — cascading deletes of a user or role scan the child table on Postgres.<br>
+    • <code>howdy_auth_events</code> has no secondary index and no retention.</p>
+  </div>
+
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>Smaller items</h4>
+    <p>• The Argon2 build compiles the portable <code>ref.c</code>, not the SIMD <code>opt.c</code>. Defenders pay roughly 1.5–2× more per hash than necessary, which is budget that could otherwise buy a higher memory cost. Build <code>opt.c</code> on x86-64 when available.<br>
+    • Each <code>issue_session</code> also runs an expired-session sweep inside the login transaction; on a large table after quiet periods that is a long delete holding the user row lock. Bound it (<code>LIMIT</code> via subquery) or sweep out of band.<br>
+    • <code>define_role</code> inserts permissions one statement at a time; fine for tens, slow for hundreds — use a multi-row insert.<br>
+    • <code>/client.js</code> is served <code>no-store</code>; it is a static constant and could carry an ETag or long max-age with a versioned path.<br>
+    • 43-character random text primary keys for users are larger and less index-friendly than UUIDv7; irrelevant at small scale, noticeable in every FK and index at large scale.<br>
+    • No concurrency cap on in-flight Argon2 jobs: N simultaneous password requests allocate N × 19 MiB and saturate the dirty schedulers (shared with all other NIF work). A small semaphore would make the worst case explicit.</p>
+  </div>
+
+  <!-- ================= PLAN ================= -->
+  <h2 id="plan">Suggested order of work</h2>
+  <table>
+    <tr><th>#</th><th>Change</th><th>Area</th><th>Status</th></tr>
+    <tr><td class="n">1</td><td>Stop invalidating live challenges on new requests; move to a per-email budget with back-off</td><td>Security</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">2</td><td>Make the route limiter/key injectable; exempt <code>/me</code> and <code>/logout</code> from the strict bucket</td><td>Security</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">3</td><td>Replace <code>global:trans</code> with a FIFO per-Repo serialiser</td><td>Performance</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">4</td><td>File the upstream Jargon fix; record patch diff + checksum; CI diff check</td><td>Maintainability</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">5</td><td>Add <code>set_password</code> (change / reset / add) that revokes other sessions</td><td>Security</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">6</td><td>Introduce a <code>Policy</code> record; remove magic numbers</td><td>Maintainability</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">7</td><td>Migration 3: indexes (challenges.email, throttle sweeps, FK columns), richer events (actor, detail, index)</td><td>Perf / Security</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">8</td><td>Add <code>migration.rebaseline</code> and relax fingerprint strictness</td><td>Maintainability</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">9</td><td>Typed <code>Intent</code> decoding, <code>Backend</code> type, replace boolean flags, extract SQL module</td><td>Maintainability</td><td><a href="#status">Implemented</a></td></tr>
+    <tr><td class="n">10</td><td>Session metadata, idle timeout, list/revoke own sessions; burn token on failed exchange</td><td>Security</td><td><a href="#status">Implemented</a></td></tr>
+  </table>
+
+
+  <h2 id="verify">Earlier verification of the ten fixes — 17 Sept 2026, 20:30</h2>
+  <p><strong>Historical snapshot:</strong> this verification predates the additional fixes and PostgreSQL run in <a href="#status">the updated follow-up below</a>.</p>
+  <p>Independent re-check of the working tree: every item was confirmed in the code and exercised, not just read. <strong>All ten are verified on SQLite.</strong> One item (email lock-out) is verified as implemented but only reduces, rather than removes, the underlying risk; and nothing here has yet run against PostgreSQL.</p>
+
+  <div class="scores">
+    <div class="score"><div class="label">Security</div><div class="num">8.5<small> / 10</small></div><div class="bar"><i style="width:85%"></i></div><p>Was 7.5. Lock-out and inbox flooding blunted, limiter proxy-aware, password rotation, attributed audit trail, session management, burned tokens.</p></div>
+    <div class="score"><div class="label">Maintainability</div><div class="num">8<small> / 10</small></div><div class="bar"><i style="width:80%"></i></div><p>Was 7. One policy record, SQL in one module, typed backend/intent/grants, rebaseline escape hatch, provable vendor copy with an upstream issue.</p></div>
+    <div class="score"><div class="label">Performance</div><div class="num">8<small> / 10</small></div><div class="bar"><i style="width:80%"></i></div><p>Was 6.5. SQLite tail latency 2.9 s → 17 ms; sweeps and cascades indexed. No caching yet; Argon2 still the portable build.</p></div>
+    <div class="score"><div class="label">Overall</div><div class="num">8<small> / 10</small></div><div class="bar"><i style="width:80%"></i></div><p>Was 7. A green PostgreSQL CI run is the remaining gate before relying on it.</p></div>
+  </div>
+
+  <h3>Checks run</h3>
+  <table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td><code>gleam test</code> (SQLite)</td><td><strong>54 passed, 0 failed</strong>; build has 0 warnings</td></tr>
+    <tr><td><code>gleam format --check</code> (auth and example), <code>gleam check</code> (example)</td><td>Clean</td></tr>
+    <tr><td><code>vendor/jargon/verify.sh</code></td><td>Tarball SHA-256 matches; vendored sources = Hex 1.1.0 + the one-line <code>PATCH.diff</code></td></tr>
+    <tr><td>Lock benchmark, rerun (8 processes, 1 ms hold)</td><td>p50 15 ms · p95 16 ms · max 17 ms (was max 2,903 ms); uncontended 6 µs (was 20 µs)</td></tr>
+    <tr><td>Live example app over HTTP: fresh file database, migrate twice, then curl</td><td>All responses as designed — see below</td></tr>
+    <tr><td>PostgreSQL suite</td><td><strong>Not run</strong> — no server on this machine (<code>pg_isready</code>: no response)</td></tr>
+  </table>
+  <p>HTTP smoke test results: register 202 → immediate repeat 429 with <code>Retry-After: 60</code> → token exchange 200 with cookie → replayed token 401 → <code>POST /password</code> from that fresh email session 204 → same request without <code>Origin</code> 403 → password login 200 → <code>POST /password</code> from the password session 403 → <code>GET /sessions</code> lists both sessions with method, timestamps and the correct <code>current</code> flag. Migrations 1–3 applied to a new file database and a second run was a no-op.</p>
+
+  <h3>Item by item</h3>
+  <table>
+    <tr><th>#</th><th>Item</th><th>Verdict</th><th>Evidence</th></tr>
+    <tr><td class="n">1</td><td>Email lock-out</td><td><strong>Verified — risk reduced, not removed</strong></td><td><code>store.insert_challenge</code> keeps the newest <code>live_challenges</code>; <code>store.reserve_email</code> doubles under a row lock. Tests: back-off doubles and resets, earlier tokens survive up to the limit, exchange clears the back-off, concurrent requests yield one email. See residual note.</td></tr>
+    <tr><td class="n">2</td><td>Rate limiter</td><td>Verified</td><td><code>routes.api_limited_by</code>; separate 30/min and 300/min buckets applied per route. Tests: 31st credential request 429 while <code>/me</code> and another client still pass; header-keyed limiter isolates clients sharing one socket address.</td></tr>
+    <tr><td class="n">3</td><td>SQLite lock</td><td>Verified</td><td>No <code>global:</code> call remains. Three regression tests (exclusion under 8 workers, reentrancy, release on holder kill) pass; benchmark rerun above. Also hand-checked: dead waiter is skipped, exception releases.</td></tr>
+    <tr><td class="n">4</td><td>Vendored Jargon</td><td>Verified</td><td><code>verify.sh</code> passes and is a CI step ahead of the build; README links <a href="https://github.com/Pevensie/jargon/issues/9">Pevensie/jargon#9</a> and states the removal condition. Known-answer test still passes.</td></tr>
+    <tr><td class="n">5</td><td>Password lifecycle</td><td>Verified</td><td>Tests and live HTTP: add, replace and reset work; password sessions and sessions older than ten minutes get 403; other sessions are revoked; disabled passwords give 403; short passwords 400.</td></tr>
+    <tr><td class="n">6</td><td>Policy</td><td>Verified</td><td>No policy literal remains in <code>auth.gleam</code>, <code>store.gleam</code> or <code>password.gleam</code>. Tests: invalid policies rejected; custom session length, idle timeout, live-challenge count, attempt limit, window and minimum length all take effect.</td></tr>
+    <tr><td class="n">7</td><td>Migration 3, audit</td><td>Verified on SQLite</td><td>Upgrade test from schema 1 keeps users and sessions; fresh install verified live. Test asserts actor and detail for role and suspension events, three <code>login.failed</code> rows, and pruning. PostgreSQL DDL is standard but unexecuted.</td></tr>
+    <tr><td class="n">8</td><td>Fingerprint</td><td>Verified on SQLite</td><td>Tests: plain operator index accepted, unique index and namespaced index rejected, <code>rebaseline</code> refuses wrong history then repairs reviewed drift. The PostgreSQL catalog query changed (index filter, role names) and is the least-proven SQL in the change.</td></tr>
+    <tr><td class="n">9</td><td>Typing and structure</td><td>Verified</td><td><code>adapter_name</code> is read in exactly one place; <code>intent_from</code> errors on unknown values; <code>Grant</code> and <code>Page</code> types replace the flags; <code>auth.gleam</code> contains no SQL.</td></tr>
+    <tr><td class="n">10</td><td>Sessions, burned token</td><td>Verified</td><td>Tests and live HTTP: metadata recorded, idle timeout enforced, users can list and revoke only their own sessions, a token that fails exchange cannot be replayed even after the account is resumed.</td></tr>
+  </table>
+
+  <h3>What still needs attention</h3>
+  <div class="finding med">
+    <h4><span class="tag med">Medium</span>Run the PostgreSQL job before trusting this on Postgres</h4>
+    <p>Every new statement was written to be portable, but none has executed on PostgreSQL. The ones to watch in the first CI run: the rewritten catalog fingerprint in <code>migration.gleam</code>, <code>SELECT … FOR UPDATE OF t</code> in <code>reserve_email</code>, the parameterised <code>LIMIT</code> inside <code>NOT IN</code> in <code>insert_challenge</code>, and the parameterised <code>CASE</code> in <code>count_password_attempt</code>.</p>
+  </div>
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>Item 1 residual: a third party can still delay an owner's <em>new</em> token requests</h4>
+    <p>Any throttle keyed only on the address can be consumed by someone else. The fix removes the two damaging effects — cancelling the token already in the owner's inbox, and unbounded email volume (now at most a handful per hour) — but an attacker who keeps requesting can hold the address in back-off, so the owner's own request may be refused for up to an hour. Password login is unaffected. Fully closing this needs the challenge or the throttle bound to the requesting client (for example a short-lived nonce cookie set on request and required on exchange), which the headless API has no concept of today.</p>
+  </div>
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>Other findings from the original review remain open by design</h4>
+    <p>They were outside the ten-item plan: per-client password throttling with back-off, origin canonicalisation, opaque secret types, breached-password and Unicode-normalisation checks, rehash-on-login, the SIMD Argon2 build, optional auth caching, <code>NotFound</code> from admin operations on unknown ids, the shared <code>howdy/</code> module namespace, and starter pages for the new endpoints.</p>
+  </div>
+
+  <h2 id="verify2">Earlier verification of the follow-up fixes — 17 Sept 2026, 21:00</h2>
+  <p>Second independent check, covering the ten extra items listed under “Additional follow-up fixes” below, and — now that a container runtime is available — the first PostgreSQL run made by this reviewer. <strong>Everything claimed in the status section reproduced.</strong> Scores are re-rated here; the original and first-verification scores above are kept for history.</p>
+
+  <div class="scores">
+    <div class="score"><div class="label">Security</div><div class="num">9<small> / 10</small></div><div class="bar"><i style="width:90%"></i></div><p>7.5 → 8.5 → 9. Per-client password back-off, canonical origins, opaque secrets, NFC + screening hook, rehash-on-login. Held from higher by the address-keyed email throttle and a token built-in password list.</p></div>
+    <div class="score"><div class="label">Maintainability</div><div class="num">8.5<small> / 10</small></div><div class="bar"><i style="width:85%"></i></div><p>7 → 8 → 8.5. 68 tests on two databases and two Argon2 builds in CI, JS page tests, namespace guard, provable vendor patch. <code>auth.gleam</code> is back above 800 lines and the vendored dependency remains.</p></div>
+    <div class="score"><div class="label">Performance</div><div class="num">8.5<small> / 10</small></div><div class="bar"><i style="width:85%"></i></div><p>6.5 → 8 → 8.5. Optional authorization cache added. Two caveats measured below: the cache is invalidated by every auth transaction, and the SIMD build gains about 7 %.</p></div>
+    <div class="score"><div class="label">Overall</div><div class="num">8.5<small> / 10</small></div><div class="bar"><i style="width:85%"></i></div><p>7 → 8 → 8.5. The PostgreSQL gate from the last verification is now cleared.</p></div>
+  </div>
+
+  <h3>Checks run</h3>
+  <table>
+    <tr><th>Check</th><th>Result</th></tr>
+    <tr><td>Reference Argon2 build · SQLite</td><td><strong>68 passed, 0 failed</strong></td></tr>
+    <tr><td>Reference Argon2 build · PostgreSQL 17 (the CI image, <code>postgres:17</code> under Podman)</td><td><strong>68 passed, 0 failed</strong></td></tr>
+    <tr><td>SIMD (<code>opt</code>) Argon2 build · SQLite</td><td><strong>68 passed, 0 failed</strong></td></tr>
+    <tr><td>SIMD (<code>opt</code>) Argon2 build · PostgreSQL 17</td><td><strong>68 passed, 0 failed</strong></td></tr>
+    <tr><td><code>node --test test/pages_client_test.mjs</code> (Node 26.7)</td><td>3 passed, 0 failed</td></tr>
+    <tr><td><code>vendor/jargon/verify.sh</code></td><td>Passes; <code>PATCH.diff</code> now holds the version constant and the <code>ARGON2_IMPL</code> Makefile selection, and nothing else</td></tr>
+    <tr><td><code>scripts/check-auth-namespace.sh</code>, format checks (auth, example), <code>gleam check</code> (example)</td><td>All clean</td></tr>
+  </table>
+  <p>This clears the medium finding from the previous verification: the four statements flagged there as unproven on PostgreSQL (catalog fingerprint, <code>FOR UPDATE OF</code>, parameterised <code>LIMIT</code> in <code>NOT IN</code>, parameterised <code>CASE</code>) all execute correctly, as does migration 4. The status section reports PostgreSQL 18.6 from an earlier run; this run used 17 to match CI. The test container was stopped and removed afterwards.</p>
+
+  <h3>Item by item</h3>
+  <table>
+    <tr><th>Item</th><th>Verdict</th><th>What was checked in the code</th></tr>
+    <tr><td>Password throttling</td><td>Verified</td><td><code>store.reserve_password_client</code> keys on a digest of address + client, locks the row, allows <code>password_attempts</code> guesses, then doubles from the window up to <code>password_backoff_max_seconds</code>; a refused request returns before any update, so it cannot extend the wait. A separate 100-per-window address ceiling bounds rotating clients. Success clears the pair; <code>set_password</code> clears every pair. HTTP passes the limiter key. This closes the original medium finding on targeted lock-out.</td></tr>
+    <tr><td>Origin canonicalisation</td><td>Verified</td><td><code>canonical_origin</code> lower-cases, drops default ports, normalises IPs via <code>inet</code>, re-brackets IPv6, rejects non-ASCII and numeric-ending hosts and out-of-range ports.</td></tr>
+    <tr><td>Secret values</td><td>Verified</td><td><code>secret.Secret</code> is an opaque closure; <code>Delivery.token</code> and <code>Session.token</code> use it and every transport boundary calls <code>reveal</code>. Correctly described as log protection only.</td></tr>
+    <tr><td>Screening and Unicode</td><td>Verified, with a caveat</td><td>NFC via <code>unicode:characters_to_nfc_binary</code>; length is validated before and after normalising; <code>with_password_check</code> errors fail closed. The built-in list has eight entries, so on its own it is a placeholder — the application hook is what provides real screening.</td></tr>
+    <tr><td>Rehash on login</td><td>Verified</td><td>Upgrade is hashed outside the transaction, then written only after the old hash is re-matched under the row lock; parameters are raised with <code>max</code>, never lowered. Legacy un-normalised input is tried only when the normalised form fails and differs.</td></tr>
+    <tr><td>SIMD Argon2</td><td>Verified; benefit smaller than predicted</td><td>Both builds pass the known-answer vector and full suites. Measured: <code>ref</code> 29 ms, <code>opt</code> 27 ms per hash. The original review’s “1.5–2×” estimate was wrong for this setup: at <code>-O3</code> the compiler already vectorises <code>ref.c</code> to SSE2, and the larger gains need AVX2, which a portable release build rightly avoids.</td></tr>
+    <tr><td>Optional caching</td><td>Verified, with a caveat</td><td>Generation is read before the load and stored with the entry, and bumped before and after each transaction, so a slow read cannot install a stale grant. Errors are not cached; table is capped at 10,000 entries; TTL limited to 1–60 s; off by default. Caveat below.</td></tr>
+    <tr><td>Missing admin subjects</td><td>Verified</td><td><code>require_user</code> runs inside the write transaction before any change or audit event.</td></tr>
+    <tr><td>Module namespace</td><td>Verified</td><td>Script fails if core defines any reserved module; wired into the core CI job.</td></tr>
+    <tr><td>Starter pages</td><td>Verified</td><td><code>/account</code> page and client script covered by Gleam and Node tests.</td></tr>
+  </table>
+
+  <h3>Observations at that review</h3>
+  <p>The first two observations are addressed by <a href="#verify3">the latest correction pass</a>; they are preserved here as the original finding descriptions.</p>
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>The authorization cache is invalidated by every auth transaction, not just the ones that change grants</h4>
+    <p class="loc">auth/src/howdy/auth/internal/database.gleam:55,66</p>
+    <p><code>db.transaction</code> bumps the single global generation twice, and logins, token requests, logouts and password attempts all run through it. It is safe — it can only cause extra reads — but on a busy site the cache is flushed every time anyone signs in, so the hit rate will be far below what the TTL suggests, which is precisely when the cache is wanted.</p>
+    <p class="fix"><strong>Fix:</strong> invalidate only from the operations that can change an answer: <code>define_role</code>, <code>assign</code>, <code>revoke</code>, <code>suspend</code>, <code>resume</code>. Minor related points: the cache key embeds the full SQL text (a <code>Role</code>/<code>Permission</code> tag would do), and the generation restarts at 0 if the lock server is ever restarted — harmless given the 60 s TTL ceiling, but a <code>erlang:unique_integer</code> seed would remove the question.</p>
+  </div>
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>A wrong, non-NFC password costs two Argon2 verifications</h4>
+    <p class="loc">auth/src/howdy/auth/internal/password.gleam:91-105</p>
+    <p>The legacy fallback doubles the work for that input class. It is bounded by the per-client back-off, so this is a note rather than a risk; remove the fallback once legacy hashes have aged out.</p>
+  </div>
+  <div class="finding low">
+    <h4><span class="tag low">Low</span>Still open</h4>
+    <p>The address-keyed email-token throttle trade-off (a third party can delay an owner’s <em>new</em> requests; documented, not changed); the vendored Jargon copy pending <a href="https://github.com/Pevensie/jargon/issues/9">Pevensie/jargon#9</a>; <code>auth.gleam</code> has grown to ~810 lines and would split naturally into password, session and administration modules; the actual GitHub Actions workflow has not been run from here.</p>
+  </div>
+
+  <h2 id="verify3">Latest correction pass — 17 Sept 2026</h2>
+  <p><strong>Outcome: fixed.</strong> Two reproductions failed before the patch: ordinary signup/logout/pruning discarded an authorization cache entry, and a wrong decomposed-Unicode password invoked Argon2 twice for a freshly set credential. Both now pass. The independent patch review also exposed a concurrent-login regression: an NFC metadata upgrade of an unchanged hash rejected another in-flight verification. A regression test reproduced it; the recheck now accepts that one-way metadata transition while rejecting actual hash replacement.</p>
+  <table>
+    <tr><th>Boundary</th><th>Change and compatibility evidence</th></tr>
+    <tr><td>Authorization cache</td><td>Invalidation moved from every transaction to role definition, assignment/revocation, suspension/resume and migrations. A per-process transaction scope carries dirty state to the outermost completion and bypasses caching inside a mutation. Tests cover commit, rollback, data migrations, ordinary auth traffic, resume and role-permission replacement. <code>access.with_changes</code> supports application-owned grant SQL; external writes without that wrapper retain TTL semantics.</td></tr>
+    <tr><td>Password verification</td><td>Append-only migration 5 labels existing credentials and pending challenges unknown, new hashes NFC. Successful normalized verification marks metadata without rehashing; exact legacy success rehashes normalized input. Known-NFC and missing-account dummy paths use one Argon2 call. Tests preserve old challenges, legacy exact input, equivalent Unicode login and stronger costs.</td></tr>
+    <tr><td>Password screening</td><td>Common-root repetition, predictable numeric/punctuation suffixes and repeated-character passwords are rejected. <code>howdy/auth/password_check.blocklist</code> provides a local normalized SHA-256 lookup for an application corpus. Tests verify normalization, rejection without writes and ordinary successful login.</td></tr>
+  </table>
+  <p><strong>Files changed in this pass:</strong> auth runtime, authorization and migration modules; internal database, cache, password, store and schema modules; <code>howdy_auth_ffi.erl</code>; new <code>howdy/auth/password_check.gleam</code>; <code>howdy_auth_followup_test.gleam</code> and its test FFI; existing migration/legacy-hash fixtures; package README and this report. Earlier unrelated working-tree changes were retained.</p>
+  <p><strong>Validation:</strong> <code>gleam check</code>; <code>gleam test</code> and <code>HOWDY_AUTH_TEST_BACKEND=postgres gleam test</code> under both <code>ARGON2_IMPL=ref</code> and <code>ARGON2_IMPL=opt</code> (78 tests per combination); <code>node --test test/pages_client_test.mjs</code> (3 tests); auth/example format checks, example <code>gleam check</code>, vendor verification and namespace check. All pass. The database was PostgreSQL 17 in a local Podman container; GitHub Actions itself was not triggered.</p>
+  <p><strong>Remaining limits:</strong> an unknown legacy hash can still require two checks until successful login or reset; removing that fallback immediately would break valid old passwords. Applications supply their maintained breach corpus and trusted proxy key. Email-token throttling remains address-keyed; upstream Jargon publication and the optional module-size refactor are unchanged. These are not presented as completed fixes.</p>
+
+  <h2 id="status">Follow-up: action plan status</h2>
+  <p>The original action plan and additional fixes are implemented, with the latest cache and password corrections described below. <strong>78/78 Gleam tests pass on SQLite and PostgreSQL 17 with both reference and SIMD Argon2 builds</strong>; three JavaScript account-page tests pass. Formatting, example type-checking, the namespace check and vendor provenance verification pass. The PostgreSQL 17 test container was temporary and removed afterwards. Earlier independent scores and measurements remain recorded above.</p>
+  <table>
+    <tr><th>#</th><th>Item</th><th>What changed</th></tr>
+    <tr><td class="n">1</td><td>Email lock-out</td><td>New requests keep the three newest live tokens instead of deleting them. The flat cooldown became an exponential per-address back-off (60 s doubling to 1 h, reset after 15 quiet minutes or on a successful exchange), decided under a row lock.</td></tr>
+    <tr><td class="n">2</td><td>Rate limiter</td><td><code>routes.api_limited_by(identity, at:, key:)</code> for proxies. Credential endpoints keep 30/min; <code>/me</code>, <code>/sessions</code>, <code>/logout</code> get their own 300/min bucket.</td></tr>
+    <tr><td class="n">3</td><td>SQLite lock</td><td><code>global:trans</code> replaced by a FIFO, reentrant lock server that releases locks when a holder dies. New regression tests cover exclusion, nesting and holder death. Original follow-up benchmark (not rerun here): worst wait 2,903 ms → 16 ms; uncontended 20 µs → 7 µs.</td></tr>
+    <tr><td class="n">4</td><td>Vendored Jargon</td><td>Existing upstream issue <a href="https://github.com/Pevensie/jargon/issues/9">Pevensie/jargon#9</a> was verified and linked in both READMEs; it remains open, so the copy stays until a fixed release. Added <code>PATCH.diff</code>, the Hex tarball SHA-256 and <code>verify.sh</code>, which CI now runs — the version fix and SIMD/portable Makefile selection are both recorded in the verified patch.</td></tr>
+    <tr><td class="n">5</td><td>Password lifecycle</td><td><code>auth.set_password</code> / <code>POST /password</code>: set, change or reset, authorised by an email-token session under ten minutes old; revokes all other sessions.</td></tr>
+    <tr><td class="n">6</td><td>Policy</td><td><code>howdy/auth/policy.Policy</code> with validated <code>auth.with_policy</code>; eleven former magic numbers are now named fields.</td></tr>
+    <tr><td class="n">7</td><td>Migration 3</td><td>Indexes on challenge email, throttle sweeps and FK columns; events gained <code>actor_id</code>, <code>detail</code> and two indexes. Privileged operations take <code>by: user.System | user.Acting(principal)</code>. Failed logins are recorded; <code>prune_events</code> and <code>prune_expired</code> added.</td></tr>
+    <tr><td class="n">8</td><td>Fingerprint</td><td><code>migration.rebaseline</code> (refuses on mismatched history). Non-unique operator indexes outside the package namespace are tolerated; Postgres policies hash role names rather than OIDs.</td></tr>
+    <tr><td class="n">9</td><td>Typing and structure</td><td>Stored intent decodes to <code>Intent</code> or fails; one <code>Backend</code> type replaces four adapter-name matches; boolean flags replaced by <code>Grant</code> and <code>Page</code>; authentication flow SQL moved to <code>internal/store</code>.</td></tr>
+    <tr><td class="n">10</td><td>Sessions</td><td><code>created_at</code>, <code>last_seen_at</code>, <code>method</code>; optional idle timeout; <code>auth.sessions</code> / <code>auth.revoke_session</code> and endpoints. The token is now spent in its own transaction, so a failed exchange burns it.</td></tr>
+  </table>
+  <p><strong>Verification commands:</strong> in <code>auth/</code>, <code>make -C vendor/jargon/c_src</code>, <code>gleam test</code>, <code>gleam format --check src test</code> and <code>vendor/jargon/verify.sh</code>; in <code>examples/auth/</code>, <code>gleam check</code> and <code>gleam format --check src</code>.</p>
+  <p><strong>Breaking changes:</strong> <code>suspend</code>, <code>resume</code>, <code>revoke_sessions</code>, <code>define_role</code>, <code>assign</code> and <code>revoke</code> need a <code>by:</code> argument; <code>auth.session_seconds</code> became <code>auth.policy(identity).session_seconds</code>; databases now need auth migration 5 and authz migration 2. <code>Delivery.token</code> and <code>Session.token</code> are <code>Secret</code> values; transport code must call <code>secret.reveal</code>. New password hashes use NFC-normalized input; legacy exact input is accepted and upgraded on successful login. Missing admin subjects now return <code>NotFound</code>.</p>
+  <h3 id="additional-fixes">Additional follow-up fixes — updated</h3>
+  <p><strong>Latest correction pass:</strong> addressed the cache-invalidation and Unicode-verification observations from the second review, added local password-corpus support, and preserved the reviewed APIs. Auth migration 5 is required. See <a href="#verify3">the new regression evidence</a>.</p>
+  <table>
+    <tr><th>Item</th><th>Resolution</th><th>Evidence / use</th></tr>
+    <tr><td>Password throttling</td><td>Persistent client/address failure history: five initial guesses, then 60-second exponential back-off capped at an hour. Denied requests do not extend it. A higher 100/minute address ceiling bounds rotating clients. Successful login clears only its pair; password reset clears all pairs.</td><td><code>auth.login_password_from</code>; HTTP uses the configured trusted limiter key. Tests cover victim isolation, increasing waits, reset, shared ceiling, concurrent guesses and proxy routes. Migration 4 adds indexed state. The compatibility <code>login_password</code> wrapper shares a headless client bucket.</td></tr>
+    <tr><td>Origin canonicalisation</td><td>Lowercase scheme/host, remove default ports, normalize IP spelling and restore IPv6 brackets; reject invalid hosts/ports. IDNs must use their ASCII spelling.</td><td>Tests exercise mixed-case domains, default/custom ports and IPv6 through actual cookie-route Origin checks.</td></tr>
+    <tr><td>Secret values</td><td>Opaque <code>secret.Secret</code> wraps returned tokens; ordinary record inspection does not print the captured value. Explicit <code>secret.reveal</code> is required at delivery and transport boundaries.</td><td>Inspection and authentication regression tests; routes, tests and example migrated. This is accidental-log protection, not encryption or process-memory isolation.</td></tr>
+    <tr><td>Password screening and Unicode</td><td>Built-in common-password and predictable-pattern rejection plus fail-closed <code>auth.with_password_check</code>. <code>password_check.blocklist(corpus)</code> builds a local, normalized digest lookup with no remote password transmission. New passwords are NFC-normalized without trimming.</td><td>Tests cover common patterns, a local corpus with equivalent Unicode spellings, rejecting/unavailable checkers, and unchanged credentials on failure. A complete production breach corpus must be supplied by the application.</td></tr>
+    <tr><td>Rehash on login</td><td>Successful verification upgrades legacy normalization and weaker Argon2 parameters outside the transaction, then rechecks the old hash under the account lock. Higher existing costs and output lengths are preserved. Migration 5 tracks NFC status in both installed credentials and pending registration challenges; known-NFC and dummy hashes perform one verification. Unknown legacy rows retain fallback until successful login or reset.</td><td>Regression tests count actual Argon2 calls and cover pending legacy challenges, metadata-only upgrades without rehash, stronger costs, and concurrent logins across a harmless metadata upgrade. Real password replacement still rejects stale verification.</td></tr>
+    <tr><td>SIMD Argon2</td><td>Use upstream <code>opt.c</code> on x86-64 with baseline SSE2; other targets default to <code>ref.c</code>. <code>ARGON2_IMPL=ref|opt</code> supports explicit target builds.</td><td>Known-answer and full database suites pass with both builds. Makefile changes are included in <code>PATCH.diff</code> and <code>verify.sh</code>; CI covers both.</td></tr>
+    <tr><td>Optional caching</td><td><code>access.with_cache(permissions, seconds: 5)</code> caches role/permission results with a bounded table and TTL. Default remains fresh reads. Only role/grant changes, suspension/resume and migration execution invalidate generations; ordinary login, throttle and session traffic preserves entries. Nested mutations invalidate after the outer transaction, including rollback. Errors are never cached.</td><td>Tests cover ordinary-traffic cache hits, permission replacement, resume, data migrations, nested commit/rollback and stale reads. <code>access.with_changes</code> brackets application-owned grant SQL. Keys use role/permission tags instead of SQL text; generation identity includes the server PID and a unique seed. Always authenticate each request; other BEAM nodes and direct SQL may remain stale for the configured TTL.</td></tr>
+    <tr><td>Missing admin subjects</td><td><code>suspend</code>, <code>resume</code>, <code>revoke_sessions</code>, <code>assign</code> and <code>revoke</code> check and lock subjects, returning <code>NotFound</code> for missing users/roles.</td><td>Regression tests assert errors and no misleading audit events. Revoking an absent assignment of an existing role remains idempotent.</td></tr>
+    <tr><td>Module namespace</td><td>Core reserves <code>howdy/auth</code>, <code>howdy/auth/*</code>, <code>howdy/authorization</code> and <code>howdy/migration</code> for this optional package.</td><td>Agreement documented in both READMEs and enforced by <code>scripts/check-auth-namespace.sh</code> in CI.</td></tr>
+    <tr><td>Starter pages</td><td>Session-protected <code>/account</code> page supports setting/resetting passwords, listing/revoking sessions and logout; login pages link to it.</td><td>Gleam tests verify authentication and rendered controls. JavaScript tests exercise 204 responses, password-input clearing, session refresh, revoke and logout.</td></tr>
+  </table>
+  <p><strong>Operational choices still required:</strong> configure a trusted proxy client key and a production breach-password checker; opt into authorization caching only when its bounded cross-node staleness is acceptable. The vendored Jargon dependency still awaits a corrected published upstream release. The earlier email-token per-address throttle trade-off remains documented in the verification section; this follow-up does not introduce browser-bound email challenges.</p>
+  <p><strong>Additional checks:</strong> <code>HOWDY_AUTH_TEST_BACKEND=postgres gleam test</code>, both <code>make -C vendor/jargon/c_src ARGON2_IMPL=ref</code> and <code>ARGON2_IMPL=opt</code>, <code>node --test test/pages_client_test.mjs</code>, and the root namespace check. PostgreSQL test cluster was stopped after verification.</p>
+
+  <p class="sub" style="margin-top:40px">Original review method: full manual read of every file under <code>auth/src</code>, the schema, FFI, the vendored Jargon wrapper and Makefile, test inventory, CI workflow diff and the relevant core modules (<code>howdy/rate_limit</code>, <code>howdy/cookie</code>); test suite executed on SQLite; micro-benchmarks run against the compiled build. Not covered: a line-by-line audit of the vendored Argon2 reference C sources, the Postgres test run, and load testing over HTTP.</p>
+</main>
+</body>
+</html>
