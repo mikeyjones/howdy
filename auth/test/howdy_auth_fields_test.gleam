@@ -138,6 +138,30 @@ pub fn postgres_keeps_instants_as_timestamps_test() {
   }
 }
 
+pub fn fractional_instants_read_as_the_second_they_fall_in_test() {
+  use database, identity, _, _ <- fixture
+  // Only PostgreSQL keeps fractions, such as from `CURRENT_TIMESTAMP` in a
+  // migration. Rounding them would read an instant from the future.
+  case db.backend(database) {
+    Ok(Postgres) -> {
+      exec(
+        database,
+        "UPDATE howdy_auth_groups SET created_at = to_timestamp(1000.6) WHERE id = 'default'",
+      )
+      assert stored_seconds(
+          database,
+          "howdy_auth_groups",
+          "created_at",
+          group.default_id,
+        )
+        == 1000
+      let assert Ok(everyone) = groups.get(identity, group.default_id)
+      assert everyone.created_at == timestamp.from_unix_seconds(1000)
+    }
+    _ -> Nil
+  }
+}
+
 pub fn changes_move_updated_at_and_leave_created_at_test() {
   use database, identity, _, mailbox <- fixture
   let session = signup(identity, mailbox, "ada@example.com")

@@ -279,10 +279,13 @@ pub fn for_update(repo: Repo, alias: String) -> String {
 
 /// SQL reading an instant column as unix seconds. PostgreSQL keeps instants
 /// as TIMESTAMPTZ; SQLite has no such type and keeps the seconds themselves.
-/// `column` is trusted query text.
+/// Fractional seconds, such as from `CURRENT_TIMESTAMP`, are truncated like
+/// the system clock's seconds: a bare `::bigint` cast would round up, reading
+/// an instant as up to half a second in the future. `column` is trusted query
+/// text.
 pub fn read_time(repo: Repo, column: String) -> String {
   case backend(repo) {
-    Ok(Postgres) -> "EXTRACT(EPOCH FROM " <> column <> ")::bigint"
+    Ok(Postgres) -> "FLOOR(EXTRACT(EPOCH FROM " <> column <> "))::bigint"
     _ -> column
   }
 }
