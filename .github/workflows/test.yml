@@ -12,6 +12,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            build/packages
+          key: gleam-test-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-test-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
@@ -19,7 +26,7 @@ jobs:
           rebar3-version: "3"
           # elixir-version: "1"
       - run: scripts/check-auth-namespace.sh
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam run -m rate_limit_benchmark
       - run: gleam run -m routing_benchmark
@@ -32,12 +39,19 @@ jobs:
         working-directory: ui
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            ui/build/packages
+          key: gleam-ui-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-ui-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test
 
@@ -48,12 +62,19 @@ jobs:
         working-directory: howdy_dev
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            howdy_dev/build/packages
+          key: gleam-howdy_dev-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-howdy_dev-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test
 
@@ -80,12 +101,19 @@ jobs:
         working-directory: database
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            database/build/packages
+          key: gleam-database-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-database-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test
 
@@ -96,12 +124,19 @@ jobs:
         working-directory: remote
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            remote/build/packages
+          key: gleam-remote-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-remote-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test
 
@@ -112,12 +147,19 @@ jobs:
         working-directory: mail
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            mail/build/packages
+          key: gleam-mail-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-mail-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test
 
@@ -142,13 +184,20 @@ jobs:
         working-directory: admin
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            admin/build/packages
+          key: gleam-admin-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-admin-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
       - run: make -C ../auth/vendor/jargon/c_src
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam test
         env:
@@ -166,6 +215,13 @@ jobs:
         working-directory: examples/${{ matrix.example }}
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            examples/${{ matrix.example }}/build/packages
+          key: gleam-example-${{ matrix.example }}-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-example-${{ matrix.example }}-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
@@ -173,7 +229,7 @@ jobs:
           rebar3-version: "3"
       - if: matrix.example == 'admin'
         run: make -C ../../auth/vendor/jargon/c_src
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - if: matrix.example == 'live'
         run: gleam run -m howdy/ui diff button
@@ -209,6 +265,14 @@ jobs:
         working-directory: auth
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            auth/build/packages
+            examples/auth/build/packages
+          key: gleam-auth-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-auth-
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29"
@@ -217,9 +281,11 @@ jobs:
       - run: node --test test/pages_client_test.mjs
       - run: vendor/jargon/verify.sh
       - run: make -C vendor/jargon/c_src ARGON2_IMPL=${{ matrix.implementation }}
-      - run: gleam deps download
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
+        working-directory: examples/auth
       - run: gleam test
         working-directory: examples/auth
       - run: gleam format --check src test

@@ -122,8 +122,9 @@ pub fn method_not_allowed_test() {
   let res = testing.request(http.Put, "/user/all") |> testing.send(app())
 
   assert res.status == 405
-  // `/user/all` also matches the `/:id` delete route, so both are allowed.
-  assert response.get_header(res, "allow") == Ok("GET, DELETE")
+  // `/user/all` also matches the `/:id` delete route, so both are allowed
+  // (plus HEAD, which GET routes answer too).
+  assert response.get_header(res, "allow") == Ok("GET, HEAD, DELETE")
 }
 
 pub fn create_is_rate_limited_per_api_key_test() {
