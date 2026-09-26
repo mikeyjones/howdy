@@ -192,6 +192,8 @@ pub fn move(
     Single -> Error(service.Invalid("every user shares the default group"))
     _ -> Ok(Nil)
   })
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.write_transaction(
     auth.repo(identity),

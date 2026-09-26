@@ -282,13 +282,12 @@ pub fn user_show(
   }
 }
 
+/// Run something on the user in the path, then go back to their page.
 pub fn user_action(
   config: Config,
-  identity: Auth,
   ctx: Context,
   run: fn(String) -> service.Result(Nil),
 ) -> Response(Content) {
-  let _ = identity
   let id = result.unwrap(controller.param(ctx, "id"), "")
   case run(id) {
     Ok(Nil) -> layout.redirect(pieces.user_path(config, id))

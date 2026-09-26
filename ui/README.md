@@ -275,8 +275,10 @@ It is a `log` for screen readers. Pair it with `avatar`, `attachment` and
 
 `howdy/ui/gallery` is a browsable reference of everything here: each
 component, block and theme preset, its examples drawn beside the code that
-drew them, the command that copies it, and its full source. Mount it in
-development:
+drew them, the command that copies it, and its full source. It is a
+development tool, not part of the package's API: it is an internal module,
+left out of the documentation, and it reads package sources from disk.
+Mount it in development only:
 
 ```gleam
 howdy.new()
@@ -345,6 +347,11 @@ gleam run -m howdy/ui list --registry=./shared/ui-registry
 
 An entry in another registry may depend on built-in ones, which are copied
 alongside it and its imports pointed at them.
+
+A registry URL must be `https://`: what it serves is code that runs in your
+project, so it is not fetched over a connection that could be altered in
+transit. Pass `--insecure` to accept that for a plain `http://` registry,
+such as one on your own machine.
 
 ### Writing one from scratch
 
@@ -516,6 +523,13 @@ classes in the order passed to `export.classes`; duplicate classes keep their
 first position. Choose this order deliberately because equally specific rules
 later in the stylesheet win. Export uses an isolated stylesheet and does not
 populate the runtime registry.
+
+CSS a Sketch class cannot carry, such as the `@keyframes` behind spinners,
+skeletons and toasts, is registered by name with `style.rule` when the
+component is drawn and written once per document by pages, live views and
+the development stylesheet. The built-in rules are exported after the
+classes; a copied or custom component that registers its own passes them
+with `export.rules(my_component.rules())`.
 
 Minification preserves descendant selectors such as `div :hover`. CSS containing
 escapes, comments or URLs is left unchanged rather than risking a tokenization

@@ -39,6 +39,7 @@ fn listen(
   channel: String,
   owner: Pid,
   notify: fn(String) -> Nil,
+  lost: fn() -> Nil,
 ) -> Result(Nil, Nil)
 
 @external(erlang, "howdy_admin_ffi", "listen_via")
@@ -54,6 +55,7 @@ fn listen_via(
   channel: String,
   owner: Pid,
   notify: fn(String) -> Nil,
+  lost: fn() -> Nil,
 ) -> Result(Nil, Nil)
 
 /// Whether this Repo is on PostgreSQL and the admin has a way to listen:
@@ -128,13 +130,23 @@ pub fn uninstall(repo: Repo) -> service.Result(Nil) {
 /// Call `notify` with each table name announced on the channel, from a
 /// process linked to `owner`, until `owner` exits. Connects with the
 /// settings the app gave, or else with those found inside the pool. An
-/// `Error` means no notifications will come, and says why in the log.
+/// `Error` means no notifications will come, and says why in the log. If
+/// the connection is lost later, `lost` is called once, and no more
+/// notifications come: the caller should fall back to polling.
 pub fn subscribe(
   repo: Repo,
   settings: Option(pog.Config),
   owner: Pid,
   notify: fn(String) -> Nil,
+  lost: fn() -> Nil,
 ) -> Result(Nil, Nil) {
+  let lost = fn() {
+    logging.log(
+      logging.Warning,
+      "howdy/admin: the PostgreSQL notification connection was lost; the grid polls instead",
+    )
+    lost()
+  }
   let outcome = case settings {
     Some(config) ->
       listen_via(
@@ -149,10 +161,11 @@ pub fn subscribe(
         channel,
         owner,
         notify,
+        lost,
       )
     None -> {
       use pool <- result.try(postgres_pool(repo))
-      listen(pool, channel, owner, notify)
+      listen(pool, channel, owner, notify, lost)
     }
   }
   case outcome {

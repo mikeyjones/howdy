@@ -1,7 +1,7 @@
 -module(query_fuzz_ffi).
 -export([matches_stdlib/0]).
 
-%% howdy_ffi:parse_query must agree with gleam/uri.parse_query on every
+%% howdy_query_ffi:parse_query must agree with gleam/uri.parse_query on every
 %% input: the probed edge cases, then random strings over an alphabet dense
 %% in the characters that matter.
 matches_stdlib() ->
@@ -12,9 +12,9 @@ matches_stdlib() ->
              <<"a=%%20">>, <<"a=%2G">>, <<"a=%e2%82%ac">>, <<"a=%ff">>, <<"a=\x01">>,
              <<233, $=, 252>>, <<"a=%C3%A9%">>, <<"+=+">>, <<"%2B=%2b">>, <<"a=%F0%9F%98%80">>],
     lists:foreach(fun compare/1, Fixed),
-    {ok, [{<<>>, <<>>}, {<<"#">>, <<>>}]} = howdy_ffi:parse_query(<<"&#">>),
-    {ok, [{<<"a">>, <<"1">>}, {<<"#65;b">>, <<"2">>}]} = howdy_ffi:parse_query(<<"a=1&#65;b=2">>),
-    {ok, [{<<>>, <<>>}, {<<"#65;">>, <<>>}]} = howdy_ffi:parse_query(<<"&#65;">>),
+    {ok, [{<<>>, <<>>}, {<<"#">>, <<>>}]} = howdy_query_ffi:parse_query(<<"&#">>),
+    {ok, [{<<"a">>, <<"1">>}, {<<"#65;b">>, <<"2">>}]} = howdy_query_ffi:parse_query(<<"a=1&#65;b=2">>),
+    {ok, [{<<>>, <<>>}, {<<"#65;">>, <<>>}]} = howdy_query_ffi:parse_query(<<"&#65;">>),
     Alphabet = [$a, $b, $z, $A, $0, $9, $%, $%, $%, $+, $&, $=, $;, $\s, $G, $f, $F, $2, $#, $/,
                 <<"é"/utf8>>, <<"€"/utf8>>, <<233>>],
     rand:seed(exsss, {1, 2, 3}),
@@ -32,7 +32,7 @@ compare(Q) ->
     case binary:match(Q, <<"&#">>) of
         nomatch ->
             Expected = gleam_stdlib:parse_query(Q),
-            case howdy_ffi:parse_query(Q) of
+            case howdy_query_ffi:parse_query(Q) of
                 Expected -> ok;
                 Actual -> error({query_mismatch, Q, Expected, Actual})
             end;

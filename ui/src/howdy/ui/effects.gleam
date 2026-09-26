@@ -23,15 +23,21 @@ pub fn scroll_fade() -> Attribute(msg) {
 /// Text that shimmers while it waits for something, such as a reply being
 /// written. It stays still for people who ask for reduced motion.
 pub fn shimmer(children: List(Element(msg))) -> Element(msg) {
-  html.span([class(shimmer_class()), attribute.data("howdy-shimmer", "")], [
-    html.style([], shimmer_css),
-    ..children
-  ])
+  style.rule(shimmer_rule, shimmer_css)
+  html.span(
+    [class(shimmer_class()), attribute.data("howdy-shimmer", "")],
+    children,
+  )
 }
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
   [scroll_fade_class(), shimmer_class()]
+}
+
+/// The CSS this module registers with `style.rule`, for `howdy/ui/export`.
+pub fn rules() -> List(#(String, String)) {
+  [#(shimmer_rule, shimmer_css)]
 }
 
 const fade = "1.5rem"
@@ -70,6 +76,8 @@ pub fn shimmer_class() -> Class {
   ])
 }
 
-// Sketch classes cannot carry `@keyframes`, so the animation travels with
-// the element.
+// Sketch classes cannot carry `@keyframes`, so the animation is registered
+// as a rule, emitted once per document.
+const shimmer_rule = "howdy-shimmer"
+
 const shimmer_css = "@keyframes howdy-shimmer{from{background-position:100% 0}to{background-position:-100% 0}}[data-howdy-shimmer]{animation:howdy-shimmer 2s linear infinite}@media (prefers-reduced-motion:reduce){[data-howdy-shimmer]{animation:none}}"

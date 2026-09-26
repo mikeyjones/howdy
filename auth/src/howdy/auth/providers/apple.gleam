@@ -69,6 +69,10 @@ pub fn with_transport(
 ) -> Provider {
   let keys_cache = provider_keys.new()
   let private_key = secret.wrap(private_key)
+  // Fixed URLs parse once here, at installation, so no sign-in can fail on
+  // building a request from a constant.
+  let assert Ok(token_request) = request.to(token_url)
+  let assert Ok(keys_request) = request.to(keys_url)
   let client_secret = fn() {
     sign_client_secret(
       secret.reveal(private_key),
@@ -118,7 +122,7 @@ pub fn with_transport(
         |> result.replace_error(service.Internal("Apple client secret failed")),
       )
       use response <- result.try(
-        post(send, [
+        post(send, token_request, [
           #("grant_type", "authorization_code"),
           #("code", secret.reveal(exchange.code)),
           #("client_id", client_id),
@@ -133,14 +137,23 @@ pub fn with_transport(
         )
         |> result.replace_error(service.Unauthorized),
       )
-      let assert Ok(keys_request) = request.to(keys_url)
       let fetch_keys = fn() { send(keys_request) }
-      use keys <- result.try(provider_keys.get(keys_cache, False, fetch_keys))
+      use keys <- result.try(provider_keys.get(
+        keys_cache,
+        "Apple signing keys",
+        False,
+        fetch_keys,
+      ))
       use payload <- result.try(case verify_signature(signed, keys) {
         Ok(payload) -> Ok(payload)
         Error(_) -> {
           // A new signing key may appear before the cached set expires.
-          use keys <- result.try(provider_keys.get(keys_cache, True, fetch_keys))
+          use keys <- result.try(provider_keys.get(
+            keys_cache,
+            "Apple signing keys",
+            True,
+            fetch_keys,
+          ))
           verify_signature(signed, keys)
           |> result.replace_error(service.Unauthorized)
         }
@@ -170,9 +183,9 @@ fn send(req: Request(String)) -> service.Result(Response(String)) {
 
 fn post(
   send: fn(Request(String)) -> service.Result(Response(String)),
+  req: Request(String),
   fields: List(#(String, String)),
 ) -> service.Result(String) {
-  let assert Ok(req) = request.to(token_url)
   use res <- result.try(send(
     req
     |> request.set_method(http.Post)
@@ -227,7 +240,7 @@ fn claims(
     && exp > now
     && iat <= now + 60
     && iat < exp
-    && token.digest(nonce) == nonce_digest
+    && token.constant_time_equal(token.digest(nonce), nonce_digest)
   {
     // Apple verifies every address it releases, its private relay included.
     // Without one the identity can still sign in to an account it is linked to.

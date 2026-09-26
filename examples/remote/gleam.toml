@@ -1,5 +1,6 @@
 name = "howdy_remote_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "Two howdy services calling each other with howdy_remote"
 
 [dependencies]

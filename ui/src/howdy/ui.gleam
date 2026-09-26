@@ -219,6 +219,19 @@ pub fn classes() -> List(Class) {
   ])
 }
 
+/// The CSS the built-in components register with `style.rule`, such as
+/// their `@keyframes`. `howdy/ui/export` includes these in the file it
+/// writes.
+pub fn rules() -> List(#(String, String)) {
+  list.flatten([
+    loading.rules(),
+    progress.rules(),
+    effects.rules(),
+    toast.rules(),
+    drawer.rules(),
+  ])
+}
+
 /// A controller for development that serves the theme variables, base
 /// styles and every class registered so far as one `text/css` file at
 /// `path`. Link it with `page.stylesheet`. It is sent with an ETag and

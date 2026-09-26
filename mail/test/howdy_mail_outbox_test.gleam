@@ -160,8 +160,7 @@ pub fn a_supervised_outbox_answers_and_is_restarted_test() {
   // A crash loses the memory but not the handle.
   let assert [first] = children(supervisor.pid)
   process.kill(first)
-  process.sleep(100)
-  let assert [second] = children(supervisor.pid)
+  let second = await_restart(supervisor.pid, first)
   assert second != first
   assert outbox.messages(box) == Ok([])
   let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "Two"))
@@ -170,7 +169,7 @@ pub fn a_supervised_outbox_answers_and_is_restarted_test() {
 
   process.unlink(supervisor.pid)
   process.send_exit(supervisor.pid)
-  process.sleep(100)
+  await_stopped(box)
   assert outbox.messages(box)
     == Error(mail.Unavailable("the outbox is not running"))
 }
@@ -186,7 +185,7 @@ pub fn a_supervised_directory_outbox_keeps_its_messages_across_restarts_test() {
   let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "One"))
   let assert [first] = children(supervisor.pid)
   process.kill(first)
-  process.sleep(100)
+  let _ = await_restart(supervisor.pid, first)
   let assert Ok([one]) = outbox.messages(box)
   assert one.subject == "One"
   process.unlink(supervisor.pid)
@@ -200,7 +199,7 @@ pub fn an_outbox_that_stops_mid_call_is_unavailable_test() {
   let assert Ok(pid) = outbox_pid(box)
   process.unlink(pid)
   process.kill(pid)
-  process.sleep(50)
+  await_stopped(box)
   assert outbox.messages(box)
     == Error(mail.Unavailable("the outbox is not running"))
   assert outbox.clear(box)
@@ -212,6 +211,37 @@ pub fn an_outbox_that_stops_mid_call_is_unavailable_test() {
 
 @external(erlang, "howdy_mail_test_ffi", "children")
 fn children(supervisor: process.Pid) -> List(process.Pid)
+
+/// The pid of the child the supervisor started in place of `old`, polling
+/// rather than sleeping a fixed time.
+fn await_restart(supervisor: process.Pid, old: process.Pid) -> process.Pid {
+  poll(50, fn() {
+    case children(supervisor) {
+      [new] if new != old -> Ok(new)
+      _ -> Error(Nil)
+    }
+  })
+}
+
+fn await_stopped(box: outbox.Outbox) -> Nil {
+  poll(50, fn() {
+    case outbox.messages(box) {
+      Error(mail.Unavailable(_)) -> Ok(Nil)
+      _ -> Error(Nil)
+    }
+  })
+}
+
+fn poll(attempts: Int, check: fn() -> Result(a, Nil)) -> a {
+  case check(), attempts {
+    Ok(value), _ -> value
+    Error(Nil), 0 -> panic as "condition not met in time"
+    Error(Nil), _ -> {
+      process.sleep(20)
+      poll(attempts - 1, check)
+    }
+  }
+}
 
 fn outbox_pid(box: outbox.Outbox) -> Result(process.Pid, Nil) {
   outbox.pid(box)

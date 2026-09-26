@@ -1,6 +1,6 @@
 -module(howdy_mail_test_ffi).
 -export([new_table/0, table_push/2, table_all/1, start_smtp/1, stop_smtp/1, smtp_port/1,
-         attempts/1, monotonic_ms/0, children/1, received/1, mime_header/2, mime_leaves/1, closed_port/0]).
+         attempts/1, monotonic_ms/0, children/1, received/1, mime_header/2, mime_leaves/1, closed_port/0, putenv/2, unsetenv/1]).
 
 %% A test SMTP server on a free loopback port, reporting to the caller and
 %% counting the messages attempted through it.
@@ -68,3 +68,11 @@ table_push(Table, Value) ->
     nil.
 table_all(Table) ->
     [Value || {_, Value} <- lists:keysort(1, ets:tab2list(Table))].
+
+putenv(Name, Value) ->
+    true = os:putenv(unicode:characters_to_list(Name), unicode:characters_to_list(Value)),
+    nil.
+
+unsetenv(Name) ->
+    true = os:unsetenv(unicode:characters_to_list(Name)),
+    nil.

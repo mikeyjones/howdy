@@ -1,6 +1,7 @@
 -module(howdy_telemetry_test_ffi).
--export([rescue/1, websocket_roundtrip/3, crash_process/1, putenv/2,
-         recorder_owners/0, hold_recorder/1, release/1, default_formatter/0]).
+-export([rescue/1, websocket_roundtrip/3, crash_process/1, putenv/2, unsetenv/1,
+         recorder_owners/0, hold_recorder/1, release/1, default_formatter/0,
+         handler_formats/2]).
 
 rescue(Run) ->
     try {ok, Run()} catch _:_ -> {error, nil} end.
@@ -37,7 +38,6 @@ crash_process(Secret) ->
     end),
     Ref = erlang:monitor(process, Pid),
     receive {'DOWN', Ref, process, Pid, _} -> ok end,
-    timer:sleep(50),
     nil.
 
 %% How many recorder owners the package's supervisor holds.
@@ -58,12 +58,28 @@ release(Pid) ->
     Ref = erlang:monitor(process, Pid),
     Pid ! release,
     receive {'DOWN', Ref, process, Pid, _} -> ok end,
-    timer:sleep(50),
     nil.
 
 putenv(Name, Value) ->
     os:putenv(binary_to_list(Name), binary_to_list(Value)),
     nil.
+
+unsetenv(Name) ->
+    os:unsetenv(binary_to_list(Name)),
+    nil.
+
+%% Does the log handler format a line at `Level` when it has `Recorders`?
+%% The handler runs in the calling process, so a report whose callback
+%% tells this process when it runs settles that before `log` returns.
+handler_formats(Level, Recorders) ->
+    Self = self(),
+    Ref = make_ref(),
+    Event = #{level => binary_to_existing_atom(Level),
+              msg => {report, #{what => probe}},
+              meta => #{time => erlang:system_time(microsecond),
+                        report_cb => fun(_) -> Self ! {formatted, Ref}, {"probe", []} end}},
+    ok = howdy_telemetry_logs:log(Event, #{config => #{recorders => Recorders}}),
+    receive {formatted, Ref} -> true after 0 -> false end.
 
 %% The module formatting the default handler's output.
 default_formatter() ->

@@ -1,5 +1,6 @@
 name = "howdy_telemetry"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "OpenTelemetry for Howdy apps: traces over OTLP, structured logs, and a recorder the dev admin shows"
 licences = ["Apache-2.0"]
 target = "erlang"

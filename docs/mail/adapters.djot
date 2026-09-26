@@ -72,8 +72,9 @@ smtp.new("smtp.example.com")
 `smtp.tls` takes `smtp.NoTls`, `smtp.StartTls(verify:)` or
 `smtp.ImplicitTls(verify:)`. Only turn `verify` off for a server you
 control. Without `credentials`, no authentication is tried. `timeout` is
-how long to wait at each step, 10 seconds by default, and `helo` sets the
-name this host gives in `EHLO`.
+how long to wait for the connection to open, 10 seconds by default (once
+connected, each reply is waited for up to gen_smtp's own limit of twenty
+minutes), and `helo` sets the name this host gives in `EHLO`.
 
 Each send opens a connection, delivers one message and closes it, in the
 process that called `mail.send`. An SMTP `4xx` reply is `Unavailable`, and

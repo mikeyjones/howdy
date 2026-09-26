@@ -1,5 +1,6 @@
-//// Every class a gallery example uses must be in `ui.classes()`, so the
-//// exported stylesheet covers what the components draw.
+//// Every class a gallery example uses must be in `ui.classes()`, and every
+//// rule it registers in `ui.rules()`, so the exported stylesheet covers
+//// what the components draw.
 
 import gleam/list
 import gleam/set
@@ -12,7 +13,11 @@ import lustre/element
 
 pub fn every_gallery_example_uses_only_exported_classes_test() {
   let exported =
-    ui.classes() |> list.map(stylesheet.class_name) |> set.from_list
+    list.append(
+      ui.classes() |> list.map(stylesheet.class_name),
+      ui.rules() |> list.map(fn(rule) { rule.0 }),
+    )
+    |> set.from_list
   let gaps =
     registry.entries()
     |> list.flat_map(fn(entry) {

@@ -1,8 +1,10 @@
 name = "howdy_mail"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "Email for Howdy apps: smail templates, SMTP and HTTP provider adapters, and a development outbox"
 licences = ["Apache-2.0"]
 target = "erlang"
+internal_modules = ["howdy/mail/internal/*"]
 
 [dependencies]
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"

@@ -251,7 +251,12 @@ pub fn confirm(
         ))
       }
       Ok(Otp) if code != "" ->
-        case code_digest(config, user.id, code) == ceremony.payload {
+        case
+          token.constant_time_equal(
+            code_digest(config, user.id, code),
+            ceremony.payload,
+          )
+        {
           True -> Ok(security_store.Factor(labels.factor_name(Otp), "", -1))
           False -> Error(service.Unauthorized)
         }
@@ -415,7 +420,10 @@ pub fn verify(
       DeliveredCode if !by_email && pending.otp_digest != "" && code != "" ->
         case
           mfa.can_deliver(mfa_config)
-          && code_digest(config, user.id, code) == pending.otp_digest
+          && token.constant_time_equal(
+            code_digest(config, user.id, code),
+            pending.otp_digest,
+          )
         {
           True -> Ok(Nil)
           False -> Error(service.Unauthorized)

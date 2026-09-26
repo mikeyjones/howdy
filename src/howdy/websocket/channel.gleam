@@ -29,16 +29,16 @@ import gleam/json.{type Json}
 import gleam/list
 import howdy/websocket.{type Frame, type Socket}
 
-@external(erlang, "howdy_ffi", "channel_join")
+@external(erlang, "howdy_channel_ffi", "channel_join")
 fn join_pid(topic: String, pid: Pid) -> Nil
 
-@external(erlang, "howdy_ffi", "channel_leave")
+@external(erlang, "howdy_channel_ffi", "channel_leave")
 fn leave_pid(topic: String, pid: Pid) -> Nil
 
-@external(erlang, "howdy_ffi", "channel_members")
+@external(erlang, "howdy_channel_ffi", "channel_members")
 fn members(topic: String) -> List(Pid)
 
-@external(erlang, "howdy_ffi", "channel_broadcast")
+@external(erlang, "howdy_channel_ffi", "channel_broadcast")
 fn send_all(topic: String, tag: Atom, frame: Frame) -> Nil
 
 /// Subscribe a socket to a topic. Joining a topic twice has no extra effect.

@@ -1,8 +1,10 @@
 name = "howdy_ui"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "Pages, themes and live server components for howdy, built on Lustre and Sketch"
 licences = ["Apache-2.0"]
 target = "erlang"
+internal_modules = ["howdy/ui/gallery", "howdy/ui/gallery/*"]
 
 [erlang]
 application_start_module = "howdy_ui_app"

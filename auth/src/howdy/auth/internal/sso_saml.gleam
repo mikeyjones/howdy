@@ -79,7 +79,12 @@ pub fn provider(
       )
       use _ <- result.try(case in_response_to {
         "_" <> nonce if nonce != "" ->
-          case token.digest(nonce) == exchange.nonce_digest {
+          case
+            token.constant_time_equal(
+              token.digest(nonce),
+              exchange.nonce_digest,
+            )
+          {
             True -> Ok(Nil)
             False -> Error(service.Unauthorized)
           }

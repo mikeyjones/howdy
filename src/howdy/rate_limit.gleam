@@ -61,13 +61,13 @@ type Admission {
 }
 
 /// Constructors return the table and the sweep interval in milliseconds.
-@external(erlang, "howdy_ffi", "fixed_window_new")
+@external(erlang, "howdy_rate_limit_ffi", "fixed_window_new")
 fn fixed_window_new(window_ms: Int) -> #(Table, Int)
 
-@external(erlang, "howdy_ffi", "token_bucket_new")
+@external(erlang, "howdy_rate_limit_ffi", "token_bucket_new")
 fn token_bucket_new(capacity_milli: Int, rate_per_second: Int) -> #(Table, Int)
 
-@external(erlang, "howdy_ffi", "token_bucket_check")
+@external(erlang, "howdy_rate_limit_ffi", "token_bucket_check")
 fn token_bucket_check(
   table: Table,
   key: String,
@@ -76,13 +76,13 @@ fn token_bucket_check(
   max_identities: Int,
 ) -> Admission
 
-@external(erlang, "howdy_ffi", "now_ms")
+@external(erlang, "howdy_rate_limit_ffi", "now_ms")
 fn now_ms() -> Int
 
-@external(erlang, "howdy_ffi", "system_ms")
+@external(erlang, "howdy_rate_limit_ffi", "system_ms")
 fn system_ms() -> Int
 
-@external(erlang, "howdy_ffi", "fixed_window_hit")
+@external(erlang, "howdy_rate_limit_ffi", "fixed_window_hit")
 fn fixed_window_hit(
   table: Table,
   key: String,
@@ -90,7 +90,7 @@ fn fixed_window_hit(
   max_identities: Int,
 ) -> Admission
 
-@external(erlang, "howdy_ffi", "token_bucket_hit")
+@external(erlang, "howdy_rate_limit_ffi", "token_bucket_hit")
 fn token_bucket_hit(
   table: Table,
   key: String,

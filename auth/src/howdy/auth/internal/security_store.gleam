@@ -31,12 +31,15 @@ pub fn ceremony(
   kind: String,
   value: Ceremony,
 ) -> service.Result(Nil) {
-  use _ <- result.try(prune(conn))
+  // One statement sweeps expired ceremonies and replaces this session's
+  // earlier one of the same kind. Other tables' expiries are swept where
+  // they are written and by `auth.prune_expired`.
   use _ <- result.try(
     db.execute(
       conn,
-      "DELETE FROM howdy_auth_ceremonies WHERE user_id = $1 AND kind = $2 AND session_id = $3",
+      "DELETE FROM howdy_auth_ceremonies WHERE expires_at <= $1 OR (user_id = $2 AND kind = $3 AND session_id = $4)",
       [
+        sql.int(token.now()),
         sql.nullable(sql.string, value.user_id),
         sql.string(kind),
         sql.string(value.session_id),

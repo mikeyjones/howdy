@@ -279,6 +279,113 @@ pub fn try_map_can_fail_test() {
   )
 }
 
+pub fn float_constraints_test() {
+  let ratio =
+    schema.float() |> schema.float_minimum(0.5) |> schema.float_maximum(9.5)
+  assert json.parse("2.5", schema.decoder(ratio)) == Ok(2.5)
+  let assert Error(json.UnableToDecode([error])) =
+    json.parse("0.25", schema.decoder(ratio))
+  assert error.expected == "must be at least 0.5"
+  let assert Error(json.UnableToDecode([error])) =
+    json.parse("10", schema.decoder(ratio))
+  assert error.expected == "must be at most 9.5"
+
+  let ratios =
+    controller.new("ratio")
+    |> endpoint.get("/", {
+      use _ratio <- endpoint.query("ratio", ratio)
+      use ctx <- endpoint.handle
+      controller.text(ctx, "ok")
+    })
+  assert string.contains(
+    document_of(spec(), ratios),
+    "\"schema\":{\"type\":\"number\",\"minimum\":0.5,\"maximum\":9.5}",
+  )
+}
+
+pub fn list_constraints_test() {
+  let tags =
+    schema.list(schema.string()) |> schema.min_items(1) |> schema.max_items(2)
+  assert json.parse("[\"a\"]", schema.decoder(tags)) == Ok(["a"])
+  let assert Error(json.UnableToDecode([error])) =
+    json.parse("[]", schema.decoder(tags))
+  assert error.expected == "must have at least 1 item"
+  let assert Error(json.UnableToDecode([error])) =
+    json.parse("[\"a\",\"b\",\"c\"]", schema.decoder(tags))
+  assert error.expected == "must have at most 2 items"
+
+  let tagged =
+    controller.new("tagged")
+    |> endpoint.get("/", {
+      use _tags <- endpoint.query("tag", tags)
+      use ctx <- endpoint.handle
+      controller.text(ctx, "ok")
+    })
+  assert string.contains(
+    document_of(spec(), tagged),
+    "\"schema\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":2,\"items\":{\"type\":\"string\"}}",
+  )
+}
+
+pub type Shape {
+  Circle(radius: Float)
+  Square(side: Float)
+}
+
+fn circle() -> Schema(Float) {
+  use radius <- schema.field("radius", schema.float(), fn(radius) { radius })
+  schema.success(radius)
+}
+
+fn square() -> Schema(Float) {
+  use side <- schema.field("side", schema.float(), fn(side) { side })
+  schema.success(side)
+}
+
+fn shape() -> Schema(Shape) {
+  schema.one_of(
+    [schema.variant(circle(), Circle), schema.variant(square(), Square)],
+    encode: fn(shape) {
+      case shape {
+        Circle(radius) -> schema.to_json(radius, circle())
+        Square(side) -> schema.to_json(side, square())
+      }
+    },
+  )
+}
+
+pub fn one_of_test() {
+  assert json.parse("{\"radius\":1.5}", schema.decoder(shape()))
+    == Ok(Circle(1.5))
+  assert json.parse("{\"side\":2.0}", schema.decoder(shape()))
+    == Ok(Square(2.0))
+  assert json.to_string(schema.to_json(Square(2.0), shape()))
+    == "{\"side\":2.0}"
+  assert json.to_string(schema.to_json(Circle(1.5), shape()))
+    == "{\"radius\":1.5}"
+  // A body matching no variant reports the first variant's errors.
+  let shapes =
+    controller.new("shape")
+    |> endpoint.post("/", {
+      use shape <- endpoint.body(shape())
+      use ctx <- endpoint.handle
+      controller.text(ctx, string.inspect(shape))
+    })
+  let app = howdy.new() |> howdy.controller(shapes)
+  let res =
+    testing.post("/shape", json.object([#("side", json.float(2.0))]))
+    |> testing.send(app)
+  assert testing.text(res) == "Square(2.0)"
+  let res = testing.post("/shape", json.object([])) |> testing.send(app)
+  assert res.status == 422
+  assert testing.field_errors(res)
+    == Ok([service.FieldError("radius", "is required")])
+  assert string.contains(
+    document_of(spec(), shapes),
+    "\"schema\":{\"anyOf\":[{\"type\":\"object\",\"properties\":{\"radius\":{\"type\":\"number\"}},\"required\":[\"radius\"]},{\"type\":\"object\",\"properties\":{\"side\":{\"type\":\"number\"}},\"required\":[\"side\"]}]}",
+  )
+}
+
 pub fn example_format_and_deprecated_are_documented_test() {
   let day =
     schema.string()
@@ -484,6 +591,26 @@ pub fn wrap_runs_middleware_around_the_endpoint_test() {
   let res = testing.get("/user/abc") |> testing.send(app)
   assert res.status == 400
   assert response.get_header(res, "x-wrapped") == Ok("yes")
+}
+
+pub fn wrap_keeps_the_guard_test() {
+  let stamp = fn(ctx, next) {
+    next(ctx) |> response.set_header("x-wrapped", "yes")
+  }
+  let mine = {
+    use ctx: controller.GuardedContext(String) <- endpoint.handle
+    controller.text(ctx, ctx.guard)
+  }
+  let app =
+    howdy.new()
+    |> howdy.controller(
+      controller.guarded("/me", fn(_ctx) { Ok("Ada") })
+      |> endpoint.get("/", mine |> endpoint.wrap(stamp))
+      |> controller.build,
+    )
+  let res = testing.get("/me") |> testing.send(app)
+  assert response.get_header(res, "x-wrapped") == Ok("yes")
+  assert testing.text(res) == "Ada"
 }
 
 // -- The document ------------------------------------------------------------

@@ -8,12 +8,9 @@
 //// ```
 
 import envoy
-import gleam/erlang/process.{type Subject}
-import gleam/io
+import gleam/erlang/process
 import gleam/json
-import gleam/otp/actor
 import gleam/otp/static_supervisor as supervisor
-import gleam/otp/supervision.{type ChildSpecification}
 import gleam/result
 import gleam/string
 import howdy
@@ -49,7 +46,11 @@ pub fn main() -> Nil {
       // `-sname web` on this machine is `web@<host>`; the users node shares
       // the host part.
       let assert [_, host] = string.split(remote.self(), "@")
-      #(remote.cluster(), supervisor.add(tree, reconnector("users@" <> host)))
+      // The library keeps the node connected and reconnects with backoff.
+      #(
+        remote.cluster(),
+        supervisor.add(tree, remote.connector_supervised(["users@" <> host])),
+      )
     }
   }
 
@@ -62,39 +63,4 @@ pub fn main() -> Nil {
     ))
     |> howdy.start_application(name: "howdy_remote_web")
   process.sleep_forever()
-}
-
-// -- Reconnecting ------------------------------------------------------------
-
-type Tick {
-  Tick
-}
-
-type Connection {
-  Connection(node: String, connected: Bool, self: Subject(Tick))
-}
-
-/// Erlang does not reconnect a lost node by itself, so an actor under the
-/// supervisor tries every few seconds, ticking itself with `send_after`
-/// rather than sleeping. Once connected, `remote.cluster()` finds the users
-/// server.
-fn reconnector(node: String) -> ChildSpecification(Subject(Tick)) {
-  use <- supervision.worker
-  actor.new_with_initialiser(1000, fn(self) {
-    process.send(self, Tick)
-    actor.initialised(Connection(node:, connected: False, self:))
-    |> actor.returning(self)
-    |> Ok
-  })
-  |> actor.on_message(fn(state, _tick) {
-    let connected = remote.connect(state.node) == Ok(Nil)
-    case connected, state.connected {
-      True, False -> io.println("Connected to " <> state.node)
-      False, True -> io.println("Lost " <> state.node <> ", retrying")
-      _, _ -> Nil
-    }
-    process.send_after(state.self, 5000, Tick)
-    actor.continue(Connection(..state, connected:))
-  })
-  |> actor.start
 }

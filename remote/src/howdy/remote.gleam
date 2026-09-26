@@ -363,14 +363,13 @@ fn serve_http(
 ) -> Response(Content) {
   let assert Ok(name) = controller.param(ctx, "procedure")
   case authorised(ctx, token), dict.get(server.handlers, name) {
-    False, _ -> wire_error(ctx, 401, "refused", [])
+    False, _ -> wire_error(401, "refused", [])
     True, Error(Nil) ->
-      wire_error(ctx, 404, "no_handler", [#("procedure", json.string(name))])
+      wire_error(404, "no_handler", [#("procedure", json.string(name))])
     True, Ok(handler) ->
       case controller.read_body(ctx, limit: body.default_limit) {
         Error(_) ->
           wire_reply(
-            ctx,
             400,
             encode_error(service.Invalid("request body could not be read")),
           )
@@ -378,17 +377,16 @@ fn serve_http(
           case bit_array.to_string(bits) {
             Error(Nil) ->
               wire_reply(
-                ctx,
                 400,
                 encode_error(service.Invalid("request body is not UTF-8")),
               )
             Ok(payload) ->
               case run(handler, payload) {
-                Ok(Ok(output)) -> wire_reply(ctx, 200, output)
-                Ok(Error(error)) -> wire_reply(ctx, error_status(error), error)
+                Ok(Ok(output)) -> wire_reply(200, output)
+                Ok(Error(error)) -> wire_reply(error_status(error), error)
                 Error(reason) -> {
                   logging.log(logging.Error, name <> " crashed: " <> reason)
-                  wire_error(ctx, 500, "crashed", [])
+                  wire_error(500, "crashed", [])
                 }
               }
           }
@@ -404,21 +402,20 @@ fn authorised(ctx: Context, token: String) -> Bool {
   }
 }
 
-fn wire_reply(_ctx: Context, status: Int, body: String) -> Response(Content) {
+fn wire_reply(status: Int, body: String) -> Response(Content) {
   response.new(status)
   |> response.set_header("content-type", "application/json; charset=utf-8")
   |> response.set_body(content.Text(body))
 }
 
 fn wire_error(
-  ctx: Context,
   status: Int,
   kind: String,
   fields: List(#(String, Json)),
 ) -> Response(Content) {
   json.object([#("kind", json.string(kind)), ..fields])
   |> json.to_string
-  |> wire_reply(ctx, status, _)
+  |> wire_reply(status, _)
 }
 
 fn error_status(error: String) -> Int {
@@ -744,9 +741,50 @@ fn describe_decode_errors(errors: List(decode.DecodeError)) -> String {
 fn connect_ffi(node: String) -> Result(Nil, Error)
 
 /// Connect to a node now, rather than on the first call. Connecting to one
-/// node of a cluster connects to the rest.
+/// node of a cluster connects to the rest. A name that is not `name@host`
+/// is `Unavailable`.
 pub fn connect(node: String) -> Result(Nil, Error) {
   connect_ffi(node)
+}
+
+@external(erlang, "howdy_remote_ffi", "connect_to")
+fn connect_to_ffi(nodes: List(String)) -> Result(Nil, Error)
+
+/// Keep this node connected to `nodes`. Erlang connects to a node once and
+/// does not try again when the connection drops, so a service that depends
+/// on another node needs something that does. A connector under the
+/// `howdy_remote` application's supervisor connects to each node, retries
+/// a lost one with a backoff that doubles from a second to half a minute,
+/// and logs each connection and loss once. Calling it again adds nodes.
+///
+/// ```gleam
+/// let assert Ok(Nil) = remote.connect_to(["users@10.0.0.5"])
+/// ```
+///
+/// The call returns as soon as the connector is running, not once the nodes
+/// are connected. A name that is not `name@host`, or a node that is not
+/// distributed, is `Unavailable`. Apps that run their own supervision tree
+/// can use `connector_supervised` instead.
+pub fn connect_to(nodes: List(String)) -> Result(Nil, Error) {
+  connect_to_ffi(nodes)
+}
+
+@external(erlang, "howdy_remote_ffi", "start_connector")
+fn start_connector(
+  nodes: List(String),
+) -> Result(actor.Started(Nil), actor.StartError)
+
+/// `connect_to` as a child of the application's own supervisor:
+///
+/// ```gleam
+/// static_supervisor.new(static_supervisor.OneForOne)
+/// |> static_supervisor.add(remote.connector_supervised(["users@10.0.0.5"]))
+/// |> static_supervisor.add(howdy.supervised(app))
+/// ```
+pub fn connector_supervised(
+  nodes: List(String),
+) -> supervision.ChildSpecification(Nil) {
+  supervision.worker(fn() { start_connector(nodes) })
 }
 
 @external(erlang, "howdy_remote_ffi", "self_node")

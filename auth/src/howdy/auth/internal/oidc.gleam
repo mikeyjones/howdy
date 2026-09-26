@@ -59,7 +59,8 @@ fn fetch(
 }
 
 /// The document must name the issuer it was fetched from, and every endpoint
-/// must itself be HTTPS. Endpoints may live on other hosts, as Google's do.
+/// must itself be HTTPS and form a request. Endpoints may live on other
+/// hosts, as Google's do.
 pub fn discover(client: Client) -> service.Result(Metadata) {
   use body <- result.try(fetch(
     client,
@@ -82,7 +83,11 @@ pub fn discover(client: Client) -> service.Result(Metadata) {
   }
   case json.parse(body, decoder) {
     Ok(#(found, authorize, token, keys, methods)) ->
-      case found == client.issuer && list.all([authorize, token, keys], https) {
+      case
+        found == client.issuer
+        && list.all([authorize, token, keys], https)
+        && list.all([token, keys], requestable)
+      {
         True ->
           Ok(Metadata(
             authorize,
@@ -94,6 +99,10 @@ pub fn discover(client: Client) -> service.Result(Metadata) {
       }
     Error(_) -> Error(service.Unauthorized)
   }
+}
+
+fn requestable(url: String) -> Bool {
+  result.is_ok(request.to(url))
 }
 
 pub fn https(url: String) -> Bool {
@@ -138,7 +147,9 @@ pub fn exchange(
   metadata: Metadata,
   exchange: provider.Exchange,
 ) -> service.Result(Claims) {
-  let assert Ok(req) = request.to(metadata.token)
+  use req <- result.try(
+    request.to(metadata.token) |> result.replace_error(service.Unauthorized),
+  )
   let fields = [
     #("grant_type", "authorization_code"),
     #("code", secret.reveal(exchange.code)),
@@ -253,7 +264,7 @@ fn claims(
     && iat <= now + 60
     && iat < exp
     && nbf <= now + 60
-    && token.digest(nonce) == nonce_digest
+    && token.constant_time_equal(token.digest(nonce), nonce_digest)
   {
     True -> {
       let email =

@@ -326,14 +326,28 @@ pub fn an_unreachable_provider_fails_the_sign_in_not_startup_test() {
     auth.begin_provider(identity, "corp", callback, "client-one")
   assert count(database, "SELECT COUNT(*) FROM howdy_auth_provider_attempts")
     == 0
-  assert oidc.new(
-      id: "corp",
-      name: "Corp",
-      issuer: "http://id.corp.test",
-      client_id: "client",
-      client_secret: "hunter2",
-      authoritative_for: [],
-    )
-    |> auth.with_provider(identity, _)
-    |> is_invalid
+  // Issuers that are not plain HTTPS URLs, or cannot form the discovery
+  // request, are refused at installation rather than failing a sign-in.
+  list.each(
+    [
+      "http://id.corp.test",
+      "https://id.corp.test#frag",
+      "https://user@id.corp.test",
+      "https:///path",
+      "https://",
+      "id.corp.test",
+    ],
+    fn(issuer) {
+      assert oidc.new(
+          id: "corp",
+          name: "Corp",
+          issuer:,
+          client_id: "client",
+          client_secret: "hunter2",
+          authoritative_for: [],
+        )
+        |> auth.with_provider(identity, _)
+        |> is_invalid
+    },
+  )
 }

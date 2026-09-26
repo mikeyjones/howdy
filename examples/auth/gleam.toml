@@ -1,5 +1,6 @@
 name = "howdy_auth_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 target = "erlang"
 
 [dependencies]

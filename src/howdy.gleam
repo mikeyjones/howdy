@@ -231,13 +231,20 @@ fn stop_application_now(name: String) -> Nil
 /// WebSockets are sent a going-away close frame and HTTP/2 streams are told
 /// GOAWAY. Returns once every connection is gone and the port is free. The
 /// calling process is unlinked from the server first, so it is not taken
-/// down by the stop.
+/// down by the stop. A server still running a minute after the default
+/// drain timeout is killed rather than waited on forever.
 pub fn stop(server: Pid) -> Nil {
-  stop_server(server)
+  stop_server(server, 15_000)
+}
+
+/// Like `stop`, for a server whose `shutdown_timeout` is not the default:
+/// the wait for a wedged server is measured from it.
+pub fn stop_within(server: Pid, shutdown_timeout milliseconds: Int) -> Nil {
+  stop_server(server, milliseconds)
 }
 
 @external(erlang, "howdy_ffi", "stop_server")
-fn stop_server(server: Pid) -> Nil
+fn stop_server(server: Pid, drain_ms: Int) -> Nil
 
 /// Start a server for `app` that answers requests with `handler` instead of
 /// the app's own. The address, port and banner come from `app`. This is
@@ -286,9 +293,9 @@ fn to_address(address: ewe.SocketAddress) -> Address {
   case address {
     ewe.TcpSocketAddress(ip_address:, port:) ->
       Address(ip: ewe.ip_address_to_string(ip_address), port:)
-    // `bind` only takes network interfaces.
-    ewe.UnixSocketAddress(..) ->
-      panic as "howdy: the server is listening on a Unix socket"
+    // `bind` only takes network interfaces, so this is only reachable
+    // through `handler` with ewe's own builder; report the path as the ip.
+    ewe.UnixSocketAddress(path:) -> Address(ip: path, port: 0)
   }
 }
 

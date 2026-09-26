@@ -47,6 +47,7 @@ pub fn progress(
 /// A bar for work whose size is not known yet. It sweeps while the work
 /// goes on, and holds still for people who ask for reduced motion.
 pub fn indeterminate(label label: String) -> Element(msg) {
+  style.rule(sweep_rule, sweep_css)
   html.div(
     [
       class(track_class()),
@@ -54,13 +55,18 @@ pub fn indeterminate(label label: String) -> Element(msg) {
       attribute.aria_label(label),
       attribute.data("howdy-indeterminate-progress", ""),
     ],
-    [html.style([], sweep_css), html.div([class(sweep_class())], [])],
+    [html.div([class(sweep_class())], [])],
   )
 }
 
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
   [track_class(), bar_class(), sweep_class()]
+}
+
+/// The CSS this module registers with `style.rule`, for `howdy/ui/export`.
+pub fn rules() -> List(#(String, String)) {
+  [#(sweep_rule, sweep_css)]
 }
 
 pub fn sweep_class() -> Class {
@@ -72,8 +78,10 @@ pub fn sweep_class() -> Class {
   ])
 }
 
-// Sketch classes cannot carry `@keyframes`, so the animation travels with
-// the element.
+// Sketch classes cannot carry `@keyframes`, so the animation is registered
+// as a rule, emitted once per document.
+const sweep_rule = "howdy-progress-sweep"
+
 const sweep_css = "@keyframes howdy-sweep{from{transform:translateX(-100%)}to{transform:translateX(250%)}}[data-howdy-indeterminate-progress]>div{animation:howdy-sweep 1.4s ease-in-out infinite}@media (prefers-reduced-motion:reduce){[data-howdy-indeterminate-progress]>div{animation:none;transform:translateX(75%)}}"
 
 pub fn track_class() -> Class {

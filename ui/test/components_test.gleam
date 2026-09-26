@@ -31,7 +31,7 @@ fn class_of(class: css.Class) -> String {
 
 pub fn every_variant_and_size_has_its_own_class_test() {
   let classes = button.classes()
-  // Six variants in seven sizes.
+  // Six variants in eight sizes: four text sizes and four icon sizes.
   assert list.length(classes) == 48
   assert list.length(list.unique(list.map(classes, class_of))) == 48
   assert button.button_class(button.Ghost)
@@ -166,16 +166,17 @@ pub fn table_scrolls_inside_a_wrapper_test() {
   assert string.contains(html, ">1</td>")
 }
 
-pub fn loading_indicators_carry_their_animation_test() {
-  let spinner = render(ui.spinner("Saving", []))
+pub fn loading_indicators_register_their_animation_test() {
+  let #(spinner, css) =
+    stylesheet.scoped(fn() { render(ui.spinner("Saving", [])) })
   assert string.contains(spinner, "role=\"status\"")
   assert string.contains(spinner, "aria-label=\"Saving\"")
-  assert string.contains(spinner, "@keyframes howdy-spin")
-  assert string.contains(spinner, "prefers-reduced-motion")
+  assert string.contains(css, "@keyframes howdy-spin")
+  assert string.contains(css, "prefers-reduced-motion")
 
-  let skeleton = render(ui.skeleton([]))
+  let #(skeleton, css) = stylesheet.scoped(fn() { render(ui.skeleton([])) })
   assert string.contains(skeleton, "aria-hidden=\"true\"")
-  assert string.contains(skeleton, "@keyframes howdy-pulse")
+  assert string.contains(css, "@keyframes howdy-pulse")
 }
 
 pub fn every_copyable_entry_depends_only_on_what_it_may_test() {

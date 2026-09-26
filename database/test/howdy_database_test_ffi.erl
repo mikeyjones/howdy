@@ -1,6 +1,6 @@
 -module(howdy_database_test_ffi).
 -export([lock_serializes/0, lock_reentrant/0, lock_holder_exit/0,
-         lock_server_restart/0, children/1]).
+         lock_server_restart/0, children/1, putenv/2, unsetenv/1]).
 
 %% The pids of a supervisor's running children.
 children(Supervisor) ->
@@ -95,3 +95,11 @@ wait_until(Check, Failure, Tries) ->
         true -> ok;
         false -> timer:sleep(10), wait_until(Check, Failure, Tries - 1)
     end.
+
+putenv(Name, Value) ->
+    true = os:putenv(unicode:characters_to_list(Name), unicode:characters_to_list(Value)),
+    nil.
+
+unsetenv(Name) ->
+    true = os:unsetenv(unicode:characters_to_list(Name)),
+    nil.

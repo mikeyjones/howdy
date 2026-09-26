@@ -62,9 +62,12 @@ pub opaque type Schema(a) {
 /// renders into the document.
 ///
 /// A named node is shown as a reference to its component, with `outer`
-/// keywords, those added after naming, beside the reference.
+/// keywords, those added after naming, beside the reference. `kind` is the
+/// JSON type, rendered as the `type` keyword; a node that is a choice
+/// between others, such as `nullable` or `one_of`, has none.
 pub opaque type Node {
   Node(
+    kind: Option(String),
     keywords: List(#(String, Json)),
     items: Option(Node),
     values: Option(Node),
@@ -130,7 +133,7 @@ fn primitive(
   from_text: fn(String) -> Dynamic,
 ) -> Schema(a) {
   Schema(
-    node: fn() { leaf([#("type", json.string(kind))]) },
+    node: fn() { typed(kind, []) },
     decoder:,
     encode:,
     placeholder: fn() { placeholder },
@@ -145,9 +148,7 @@ fn primitive(
 /// `?tag=a&tag=b`.
 pub fn list(of inner: Schema(a)) -> Schema(List(a)) {
   Schema(
-    node: fn() {
-      Node(..leaf([#("type", json.string("array"))]), items: Some(inner.node()))
-    },
+    node: fn() { Node(..typed("array", []), items: Some(inner.node())) },
     decoder: decode.list(inner.decoder),
     encode: fn(values) { json.array(values, inner.encode) },
     placeholder: fn() { [] },
@@ -159,12 +160,7 @@ pub fn list(of inner: Schema(a)) -> Schema(List(a)) {
 /// A JSON object used as a map from string keys to values of one schema.
 pub fn dict(of inner: Schema(a)) -> Schema(Dict(String, a)) {
   Schema(
-    node: fn() {
-      Node(
-        ..leaf([#("type", json.string("object"))]),
-        values: Some(inner.node()),
-      )
-    },
+    node: fn() { Node(..typed("object", []), values: Some(inner.node())) },
     decoder: decode.dict(decode.string, inner.decoder),
     encode: fn(values) { json.dict(values, fn(key) { key }, inner.encode) },
     placeholder: fn() { dict.new() },
@@ -177,12 +173,7 @@ pub fn dict(of inner: Schema(a)) -> Schema(Dict(String, a)) {
 /// `optional_field` instead.
 pub fn nullable(inner: Schema(a)) -> Schema(Option(a)) {
   Schema(
-    node: fn() {
-      Node(..leaf([]), any_of: [
-        inner.node(),
-        leaf([#("type", json.string("null"))]),
-      ])
-    },
+    node: fn() { Node(..leaf([]), any_of: [inner.node(), typed("null", [])]) },
     decoder: decode.optional(inner.decoder),
     encode: fn(value) { json.nullable(value, inner.encode) },
     placeholder: fn() { None },
@@ -211,12 +202,7 @@ pub fn enum(variants: List(a), name: fn(a) -> String) -> Schema(a) {
   let names = list.map(named, fn(variant) { variant.0 })
   let message = "must be one of " <> string.join(names, ", ")
   Schema(
-    node: fn() {
-      leaf([
-        #("type", json.string("string")),
-        #("enum", json.array(names, json.string)),
-      ])
-    },
+    node: fn() { typed("string", [#("enum", json.array(names, json.string))]) },
     decoder: decode.then(decode.string, fn(text) {
       case list.key_find(named, text) {
         Ok(value) -> decode.success(value)
@@ -227,6 +213,66 @@ pub fn enum(variants: List(a), name: fn(a) -> String) -> Schema(a) {
     placeholder: fn() { first },
     text: Single(dynamic.string),
     members: fn() { [] },
+  )
+}
+
+/// One of several shapes, each described by its own schema and turned into
+/// a variant of one type with `variant`. Decoding tries the variants in
+/// order and takes the first that matches, so put the most specific first.
+/// Encoding is `encode`, which picks the variant's schema for a value:
+/// write it as a `case` over the type, with `schema.to_json`, and the
+/// compiler sees that every variant is covered. Shown as `anyOf` over the
+/// variants' schemas. Panics if `variants` is empty.
+///
+/// ```gleam
+/// schema.one_of(
+///   [
+///     schema.variant(circle(), fn(c) { Circle(c) }),
+///     schema.variant(square(), fn(s) { Square(s) }),
+///   ],
+///   encode: fn(shape) {
+///     case shape {
+///       Circle(c) -> schema.to_json(c, circle())
+///       Square(s) -> schema.to_json(s, square())
+///     }
+///   },
+/// )
+/// ```
+pub fn one_of(
+  variants: List(Variant(a)),
+  encode encode: fn(a) -> Json,
+) -> Schema(a) {
+  let assert [first, ..rest] = variants
+    as "howdy/openapi/schema: one_of needs at least one variant"
+  Schema(
+    node: fn() {
+      Node(
+        ..leaf([]),
+        any_of: list.map(variants, fn(variant) { variant.node() }),
+      )
+    },
+    decoder: decode.one_of(
+      first.decoder,
+      list.map(rest, fn(variant) { variant.decoder }),
+    ),
+    encode:,
+    placeholder: first.placeholder,
+    text: Single(dynamic.string),
+    members: fn() { [] },
+  )
+}
+
+/// One shape a `one_of` accepts: `inner` describes and decodes it, and
+/// `to` makes the union's value from the decoded one.
+pub opaque type Variant(a) {
+  Variant(node: fn() -> Node, decoder: Decoder(a), placeholder: fn() -> a)
+}
+
+pub fn variant(inner: Schema(b), to to: fn(b) -> a) -> Variant(a) {
+  Variant(
+    node: inner.node,
+    decoder: decode.map(inner.decoder, to),
+    placeholder: fn() { to(inner.placeholder()) },
   )
 }
 
@@ -314,7 +360,7 @@ fn object_step(
 /// Finish an object with the value built from its fields.
 pub fn success(value: r) -> Schema(r) {
   Schema(
-    node: fn() { leaf([#("type", json.string("object"))]) },
+    node: fn() { typed("object", []) },
     decoder: decode.success(value),
     encode: fn(_) { json.object([]) },
     placeholder: fn() { value },
@@ -424,6 +470,72 @@ pub fn maximum(schema: Schema(Int), value: Int) -> Schema(Int) {
   constrain(schema, [#("maximum", json.int(value))], validate.max(value))
 }
 
+/// `minimum` for a `float`, with the message `"must be at least 0.5"`.
+pub fn float_minimum(schema: Schema(Float), value: Float) -> Schema(Float) {
+  constrain(
+    schema,
+    [#("minimum", json.float(value))],
+    check(
+      fn(number) { number >=. value },
+      "must be at least " <> float.to_string(value),
+    ),
+  )
+}
+
+/// `maximum` for a `float`, with the message `"must be at most 9.5"`.
+pub fn float_maximum(schema: Schema(Float), value: Float) -> Schema(Float) {
+  constrain(
+    schema,
+    [#("maximum", json.float(value))],
+    check(
+      fn(number) { number <=. value },
+      "must be at most " <> float.to_string(value),
+    ),
+  )
+}
+
+/// At least `count` items, shown as `minItems`, with the message
+/// `"must have at least 1 item"`.
+pub fn min_items(schema: Schema(List(a)), count: Int) -> Schema(List(a)) {
+  constrain(
+    schema,
+    [#("minItems", json.int(count))],
+    check(
+      fn(items) { list.length(items) >= count },
+      "must have at least " <> items(count),
+    ),
+  )
+}
+
+/// At most `count` items, shown as `maxItems`, with the message
+/// `"must have at most 10 items"`.
+pub fn max_items(schema: Schema(List(a)), count: Int) -> Schema(List(a)) {
+  constrain(
+    schema,
+    [#("maxItems", json.int(count))],
+    check(
+      fn(items) { list.length(items) <= count },
+      "must have at most " <> items(count),
+    ),
+  )
+}
+
+fn items(count: Int) -> String {
+  case count {
+    1 -> "1 item"
+    _ -> int.to_string(count) <> " items"
+  }
+}
+
+fn check(valid: fn(a) -> Bool, message: String) -> validate.Rule(a) {
+  fn(value) {
+    case valid(value) {
+      True -> Ok(value)
+      False -> Error(message)
+    }
+  }
+}
+
 /// Run a `howdy/validate` rule while decoding. Rules may change the value,
 /// as `validate.trim()` does, and a failing rule reports its message for
 /// the field. The document does not show what a rule checks; add a
@@ -529,10 +641,7 @@ pub fn from_text(
 /// Whether a schema describes a JSON object.
 @internal
 pub fn is_object(schema: Schema(a)) -> Bool {
-  case list.key_find(schema.node().keywords, "type") {
-    Ok(kind) -> json.to_string(kind) == "\"object\""
-    Error(Nil) -> False
-  }
+  schema.node().kind == Some("object")
 }
 
 /// Whether a parameter schema takes every occurrence of its key.
@@ -594,8 +703,20 @@ pub fn render(node: Node, components: Components) -> #(Json, Components) {
       #(json.object([reference, ..node.outer]), components)
     }
     None -> {
-      let Node(keywords:, items:, values:, properties:, required:, any_of:, ..) =
-        node
+      let Node(
+        kind:,
+        keywords:,
+        items:,
+        values:,
+        properties:,
+        required:,
+        any_of:,
+        ..,
+      ) = node
+      let kind = case kind {
+        Some(kind) -> [#("type", json.string(kind))]
+        None -> []
+      }
       let #(items, components) = render_option("items", items, components)
       let #(values, components) =
         render_option("additionalProperties", values, components)
@@ -632,7 +753,15 @@ pub fn render(node: Node, components: Components) -> #(Json, Components) {
       }
       #(
         json.object(
-          list.flatten([keywords, items, values, properties, required, any_of]),
+          list.flatten([
+            kind,
+            keywords,
+            items,
+            values,
+            properties,
+            required,
+            any_of,
+          ]),
         ),
         components,
       )
@@ -654,8 +783,13 @@ fn render_option(
   }
 }
 
+fn typed(kind: String, keywords: List(#(String, Json))) -> Node {
+  Node(..leaf(keywords), kind: Some(kind))
+}
+
 fn leaf(keywords: List(#(String, Json))) -> Node {
   Node(
+    kind: None,
     keywords:,
     items: None,
     values: None,

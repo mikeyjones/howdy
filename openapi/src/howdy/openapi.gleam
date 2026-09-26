@@ -348,13 +348,6 @@ fn add_operation(
 /// The documents are built once, here, from the controllers already
 /// mounted.
 pub fn serve(app: howdy.App, spec: Spec, at path: String) -> howdy.App {
-  let main =
-    Served(
-      path:,
-      version: option.map(howdy.version_group(app), main_version),
-      main: True,
-      document: json.to_string(document(spec, app)),
-    )
   let versions =
     list.map(versions(app), fn(name) {
       let assert Ok(document) = version_document(spec, app, name)
@@ -365,6 +358,23 @@ pub fn serve(app: howdy.App, spec: Spec, at path: String) -> howdy.App {
         document: json.to_string(document),
       )
     })
+  // The main document is one of the versions' documents, served again at
+  // `path`, so it is built once and shared rather than built again.
+  let main = case howdy.version_group(app) {
+    Some(group) -> {
+      let name = main_version(group)
+      let assert Ok(served) =
+        list.find(versions, fn(served) { served.version == Some(name) })
+      Served(..served, path:, main: True)
+    }
+    None ->
+      Served(
+        path:,
+        version: None,
+        main: True,
+        document: json.to_string(document(spec, app)),
+      )
+  }
   list.fold([main, ..versions], app, fn(app, served) {
     howdy.controller(app, json_controller(served))
   })

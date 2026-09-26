@@ -123,6 +123,55 @@ itself, one per connection, and a crash inside a handler only ends that
 connection with a `500`. The tree above is about the processes that live
 as long as the app.
 
+## Running as an Erlang release
+
+`gleam export erlang-shipment` builds the app and its dependencies into
+`build/erlang-shipment`, a directory that needs only Erlang to run: copy it
+to the server, or into a container image whose base has the same Erlang
+version. Modules under `dev/` and `test/` are left out. Its
+`entrypoint.sh` is the program to start:
+
+```sh
+gleam export erlang-shipment
+build/erlang-shipment/entrypoint.sh run
+```
+
+`run` starts `erl` without a shell and calls `main`, so the process is the
+node: a container runtime or `systemd` starts and stops it directly.
+`shell` opens an Erlang shell on the same code, for a look around.
+
+Stopping works as above. `SIGTERM` runs `init:stop()`, which stops the
+applications in reverse start order; a tree started with
+`howdy.start_application` is one of them, so the server drains its
+connections before the VM halts. When `main` returns, Gleam's runner
+calls `init:stop()` too, so keep `main` alive with `process.sleep_forever()`
+and let a signal end it. Give the runtime a stop timeout longer than
+`howdy.shutdown_timeout`, or the drain is cut short.
+
+### Configuration
+
+A release has no `gleam run` and no project directory, so read what the
+app needs from the environment at startup, in `main`, with `howdy/env`:
+the port, the database URL, secrets and keys. `main` then passes those
+values into the app, so nothing else in the code reads the environment.
+Missing or malformed values should stop the start with a clear message,
+rather than fail later inside a request.
+
+Howdy itself reads no `application:get_env` settings. If a library your
+app depends on does, put those in a `sys.config` file and point `erl` at
+it with `-config`, and put VM flags such as `+sbwt none` or `-name` in a
+`vm.args` file with `-args_file`. The shipment's `entrypoint.sh` does not
+read either, so pass them through `ERL_FLAGS`, which `erl` reads on top of
+its command line:
+
+```sh
+ERL_FLAGS="-config /etc/my_app/sys.config -args_file /etc/my_app/vm.args" \
+  build/erlang-shipment/entrypoint.sh run
+```
+
+Keep secrets out of `sys.config` when the file is committed; `howdy/env`
+is the place for those.
+
 ## Testing with a supervised server
 
 Tests do not need any of this. `howdy/testing` runs requests through the

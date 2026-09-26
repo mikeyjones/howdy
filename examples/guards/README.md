@@ -7,7 +7,7 @@ cd examples/guards
 gleam run
 ```
 
-It listens on port **8788**. The original example in `examples` is unchanged.
+It listens on port **8788**, so it can run beside `examples/simple` on 8787.
 The two hard-coded bearer tokens demonstrate the guard flow; they are demo credentials.
 
 ```sh

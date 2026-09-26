@@ -296,7 +296,7 @@ type Inbound(msg) {
 @internal
 pub const channel_tag = "howdy_websocket"
 
-@external(erlang, "howdy_ffi", "tuple_second")
+@external(erlang, "howdy_channel_ffi", "tuple_second")
 fn tuple_second(message: Dynamic) -> Frame
 
 /// Upgrade the request. The connection then runs until a callback returns

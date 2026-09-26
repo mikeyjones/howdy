@@ -149,7 +149,7 @@ pub fn get_query(
 
 /// Decode `key=value&...` pairs. `howdy/form` shares it, since urlencoded
 /// form bodies use the same grammar.
-@external(erlang, "howdy_ffi", "parse_query")
+@external(erlang, "howdy_query_ffi", "parse_query")
 @internal
 pub fn parse_query(query: String) -> Result(List(#(String, String)), Nil)
 

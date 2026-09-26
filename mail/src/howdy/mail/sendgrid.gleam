@@ -21,8 +21,10 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
+import howdy/env
 import howdy/mail.{type Adapter, type Address, type Outgoing}
 import howdy/mail/internal/http as mail_http
+import howdy/mail/internal/json as mail_json
 
 pub opaque type Config {
   Config(api_key: String, base_url: String, timeout: Int)
@@ -34,10 +36,7 @@ pub fn new(api_key: String) -> Config {
 
 /// Read the API key from `SENDGRID_API_KEY`.
 pub fn from_env() -> Result(Config, Nil) {
-  case mail_http.getenv("SENDGRID_API_KEY") {
-    Ok(key) if key != "" -> Ok(new(key))
-    _ -> Error(Nil)
-  }
+  env.get("SENDGRID_API_KEY") |> result.map(new)
 }
 
 /// Where the API is, without a trailing slash. Default
@@ -114,8 +113,8 @@ fn body(outgoing: Outgoing) -> Json {
             json.object(
               list.flatten([
                 [#("to", json.array(to, address))],
-                present("cc", cc, json.array(_, address)),
-                present("bcc", bcc, json.array(_, address)),
+                mail_json.present("cc", cc, json.array(_, address)),
+                mail_json.present("bcc", bcc, json.array(_, address)),
               ]),
             ),
           ]),
@@ -153,7 +152,7 @@ fn body(outgoing: Outgoing) -> Json {
           ),
         ]
       },
-      present("attachments", outgoing.attachments, fn(attachments) {
+      mail_json.present("attachments", outgoing.attachments, fn(attachments) {
         json.array(attachments, fn(attachment: mail.Attachment) {
           json.object(
             list.flatten([
@@ -176,7 +175,7 @@ fn body(outgoing: Outgoing) -> Json {
           )
         })
       }),
-      present(
+      mail_json.present(
         "categories",
         list.take(outgoing.tags, 10),
         json.array(_, fn(tag) { json.string(string.slice(tag, 0, 255)) }),
@@ -212,16 +211,5 @@ fn unique(addresses: List(Address), seen: List(String)) -> List(Address) {
         False -> [first, ..unique(rest, [email, ..seen])]
       }
     }
-  }
-}
-
-fn present(
-  name: String,
-  values: List(a),
-  encode: fn(List(a)) -> Json,
-) -> List(#(String, Json)) {
-  case values {
-    [] -> []
-    values -> [#(name, encode(values))]
   }
 }

@@ -46,6 +46,11 @@ pub fn with_transport(
   send: fn(Request(String)) -> service.Result(Response(String)),
 ) -> Provider {
   let client_secret = secret.wrap(client_secret)
+  // Fixed URLs parse once here, at installation, so no sign-in can fail on
+  // building a request from a constant.
+  let assert Ok(token_request) = request.to(token_url)
+  let assert Ok(user_request) = request.to(user_url)
+  let assert Ok(emails_request) = request.to(emails_url)
   let valid = case
     string.trim(client_id) != "" && secret.reveal(client_secret) != ""
   {
@@ -71,7 +76,7 @@ pub fn with_transport(
     },
     fn(exchange) {
       use response <- result.try(
-        post(send, [
+        post(send, token_request, [
           #("client_id", client_id),
           #("client_secret", secret.reveal(client_secret)),
           #("code", secret.reveal(exchange.code)),
@@ -90,7 +95,7 @@ pub fn with_transport(
         True -> Error(service.Unauthorized)
         False -> Ok(access)
       })
-      use profile <- result.try(get(send, user_url, access))
+      use profile <- result.try(get(send, user_request, access))
       use subject <- result.try(
         json.parse(profile, decode.field("id", decode.int, decode.success))
         |> result.replace_error(service.Unauthorized),
@@ -108,7 +113,7 @@ pub fn with_transport(
         |> result.replace_error(service.Unauthorized),
       )
       use emails <- result.try(
-        list_of_emails(send, access)
+        list_of_emails(send, emails_request, access)
         |> result.replace_error(service.Unauthorized),
       )
       let #(email, authoritative) = address_of(emails, stated)
@@ -126,9 +131,9 @@ pub fn with_transport(
 /// address (`email: null`) is used only as an unauthoritative fallback below.
 fn list_of_emails(
   send: fn(Request(String)) -> service.Result(Response(String)),
+  emails_request: Request(String),
   access: String,
 ) -> service.Result(List(#(String, Bool, Bool))) {
-  let assert Ok(emails_request) = request.to(emails_url)
   use response <- result.try(send(
     emails_request
     |> request.set_header("authorization", "Bearer " <> access)
@@ -179,10 +184,9 @@ fn address_of(
 
 fn get(
   send: fn(Request(String)) -> service.Result(Response(String)),
-  url: String,
+  req: Request(String),
   access: String,
 ) -> service.Result(String) {
-  let assert Ok(req) = request.to(url)
   use response <- result.try(send(
     req
     |> request.set_header("authorization", "Bearer " <> access)
@@ -219,9 +223,9 @@ fn send(req: Request(String)) -> service.Result(Response(String)) {
 
 fn post(
   send: fn(Request(String)) -> service.Result(Response(String)),
+  req: Request(String),
   fields: List(#(String, String)),
 ) -> service.Result(String) {
-  let assert Ok(req) = request.to(token_url)
   let response =
     send(
       req

@@ -22,21 +22,39 @@
 %% full text goes only to the recorders, for the dev admin; what reaches a
 %% span, and so an exporter, is the exception class and a shallow print of
 %% the reason.
-log(Event = #{level := Level, meta := Meta}, #{config := #{recorders := Recorders}}) ->
-    Message = message(Event),
-    {TraceId, SpanId} = case current_ids() of
+%%
+%% The handler is installed at level `all`, so most lines that reach it
+%% have nowhere to go: no span to attach to and no recorder to keep them.
+%% Those return before the message is formatted.
+log(Event = #{level := Level}, #{config := #{recorders := []}}) ->
+    case current_ids() of
         undefined ->
-            crash_span(Event);
+            _ = crash_span(Event);
         Ids ->
-            span_event(Level, case exception(Event) of
-                                  undefined -> Message;
-                                  {Class, Reason} -> <<Class/binary, ": ", Reason/binary>>
-                              end),
-            Ids
+            case logger:compare_levels(Level, warning) of
+                lt -> ok;
+                _ -> span_log(Event, Ids)
+            end
+    end,
+    ok;
+log(Event = #{level := Level, meta := Meta}, #{config := #{recorders := Recorders}}) ->
+    {Message, {TraceId, SpanId}} = case current_ids() of
+        undefined -> {message(Event), crash_span(Event)};
+        Ids -> span_log(Event, Ids)
     end,
     At = maps:get(time, Meta, erlang:system_time(microsecond)),
     [howdy_telemetry_recorder:record_log(R, TraceId, SpanId, At, Level, Message) || R <- Recorders],
     ok.
+
+%% Attach a warning or worse to the current span as an event, and hand
+%% back the formatted message for the recorders.
+span_log(Event = #{level := Level}, Ids) ->
+    Message = message(Event),
+    span_event(Level, case exception(Event) of
+                          undefined -> Message;
+                          {Class, Reason} -> <<Class/binary, ": ", Reason/binary>>
+                      end),
+    {Message, Ids}.
 
 message(Event) ->
     Formatted = logger_formatter:format(Event, #{single_line => true, template => [msg]}),

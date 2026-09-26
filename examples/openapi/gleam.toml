@@ -1,5 +1,6 @@
 name = "howdy_openapi_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "A howdy JSON API documented with howdy_openapi"
 
 [dependencies]

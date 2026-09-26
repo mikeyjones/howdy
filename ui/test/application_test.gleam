@@ -7,6 +7,7 @@ import howdy/ui
 import howdy/ui/calendar.{Date}
 import howdy/ui/chart
 import howdy/ui/data_table.{Ascending, Descending, Events, Links, Sort}
+import howdy/ui/internal/stylesheet
 import howdy/ui/live
 import howdy/ui/pagination
 import howdy/ui/toast
@@ -294,16 +295,19 @@ pub fn colours_follow_the_series_not_its_position_test() {
 // -- Toasts, command menus and live values -----------------------------------
 
 pub fn toasts_live_in_a_polite_region_test() {
-  let html =
-    toast.region([], [
-      toast.toast(toast.Info, [toast.duration(8000), toast.persistent()], [
-        toast.title([text("Saved")]),
-        toast.close([attribute.aria_label("Dismiss")]),
-      ]),
-    ])
-    |> render
+  let #(html, css) =
+    stylesheet.scoped(fn() {
+      toast.region([], [
+        toast.toast(toast.Info, [toast.duration(8000), toast.persistent()], [
+          toast.title([text("Saved")]),
+          toast.close([attribute.aria_label("Dismiss")]),
+        ]),
+      ])
+      |> render
+    })
   assert string.contains(html, "aria-live=\"polite\"")
-  assert string.contains(html, "@keyframes howdy-toast-out")
+  // The countdown animation is registered once for the document.
+  assert string.contains(css, "@keyframes howdy-toast-out")
   assert string.contains(html, "--howdy-toast-duration:8000ms")
   assert string.contains(html, "data-persistent")
   assert string.contains(html, "data-howdy-toast-close")

@@ -8,9 +8,6 @@ import gleam/option.{None, Some}
 import gleam/string
 import howdy/mail.{type Address}
 
-@external(erlang, "howdy_mail_ffi", "getenv")
-pub fn getenv(name: String) -> Result(String, Nil)
-
 pub fn send(
   request: Request(String),
   timeout: Int,

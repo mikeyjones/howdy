@@ -91,9 +91,7 @@ pub fn call(
 }
 
 fn email_of(identity: Auth, id: String) -> String {
-  users.list(identity)
-  |> result.unwrap([])
-  |> list.find(fn(account) { account.id == id })
+  users.get(identity, id)
   |> result.map(fn(account) { account.email })
   |> result.unwrap(id)
 }

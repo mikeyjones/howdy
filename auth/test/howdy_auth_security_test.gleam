@@ -1541,3 +1541,44 @@ pub fn mfa_key_rotates_without_failing_a_sign_in_test() {
   assert mfa.with_decryption_keys(after, [old, "too-short"])
     |> result.is_error
 }
+
+pub fn digest_comparisons_are_constant_time_and_exact_test() {
+  let a = token.digest("one")
+  let b = token.digest("two")
+  assert token.constant_time_equal(a, a)
+  assert token.constant_time_equal("", "")
+  assert !token.constant_time_equal(a, b)
+  // Unequal lengths are unequal, never an error.
+  assert !token.constant_time_equal(a, a <> "x")
+  assert !token.constant_time_equal("", a)
+  // Content, not prefix.
+  assert !token.constant_time_equal("abc", "abd")
+  assert token.constant_time_equal("héllo", "héllo")
+}
+
+pub fn provider_paths_are_plain_absolute_paths_test() {
+  list.each(["/", "/account", "/auth/callback", "/a-b_c/D9"], fn(path) {
+    assert auth.provider_path(path)
+  })
+  // Protocol-relative, backslash, query, fragment, space, scheme and
+  // relative forms would all leave the site or change routing.
+  list.each(
+    [
+      "",
+      "//evil.example",
+      "//evil.example/account",
+      "/\\evil.example",
+      "\\evil.example",
+      "/account?next=x",
+      "/account#frag",
+      "/account with space",
+      "/account%2F..",
+      "https://evil.example",
+      "account",
+      "/account/../admin",
+    ],
+    fn(path) {
+      assert !auth.provider_path(path)
+    },
+  )
+}

@@ -1,12 +1,8 @@
 //// Live checks that `howdy.tls` serves HTTPS with HTTP/2 offered through
 //// ALPN, and that plaintext HTTP/2 with prior knowledge works without it.
 
-import gleam/erlang/process
 import howdy
 import howdy/controller
-
-@external(erlang, "howdy_test_ffi", "free_port")
-fn free_port() -> Int
 
 @external(erlang, "howdy_test_ffi", "test_certificate")
 fn test_certificate() -> #(BitArray, BitArray)
@@ -34,18 +30,16 @@ fn app(port: Int) -> howdy.App {
   )
 }
 
-fn with_server(app: howdy.App, run: fn() -> a) -> a {
+fn with_server(app: howdy.App, run: fn(Int) -> a) -> a {
   let assert Ok(started) = howdy.start(app)
-  let result = run()
-  process.unlink(started.pid)
-  process.send_exit(started.pid)
+  let result = run(started.data.port)
+  howdy.stop(started.pid)
   result
 }
 
 pub fn tls_serves_http1_and_http2_over_alpn_test() {
-  let port = free_port()
   let #(cert, key) = test_certificate()
-  use <- with_server(app(port) |> howdy.tls_pem(cert:, key:))
+  use port <- with_server(app(0) |> howdy.tls_pem(cert:, key:))
 
   let #(protocol, outcome) = tls_probe(port, "h2")
   assert protocol == "h2"
@@ -57,8 +51,7 @@ pub fn tls_serves_http1_and_http2_over_alpn_test() {
 }
 
 pub fn plaintext_http2_with_prior_knowledge_test() {
-  let port = free_port()
-  use <- with_server(app(port))
+  use port <- with_server(app(0))
   assert same(h2c_probe(port), Settings)
 }
 

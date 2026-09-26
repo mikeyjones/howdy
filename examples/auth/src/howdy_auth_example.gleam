@@ -17,6 +17,7 @@ import howdy/console
 import howdy/controller
 import howdy/guard
 import howdy/migration
+import howdy/param
 import howdy/service
 import notes
 
@@ -44,7 +45,7 @@ pub fn app(db: Repo, identity: auth.Auth, permissions: access.Authorization) {
       |> service.created(ctx, notes.to_json)
     })
     |> controller.delete("/notes/:id", fn(ctx) {
-      let assert Ok(id) = controller.param(ctx, "id")
+      use id <- param.string(ctx, "id")
       notes.delete(db, ctx.guard.user, id) |> service.no_content(ctx)
     })
     |> controller.build()

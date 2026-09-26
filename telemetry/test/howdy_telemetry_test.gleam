@@ -18,6 +18,52 @@ pub fn main() -> Nil {
   gleeunit.main()
 }
 
+/// Every test starts from the same place, whatever the one before left
+/// behind: no SDK running and no collector named in the environment.
+fn isolated(run: fn() -> Nil) -> Nil {
+  reset()
+  run()
+  reset()
+}
+
+fn reset() -> Nil {
+  telemetry.stop()
+  unsetenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+  unsetenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+  unsetenv("OTEL_SDK_DISABLED")
+}
+
+@external(erlang, "howdy_telemetry_test_ffi", "unsetenv")
+fn unsetenv(name: String) -> Nil
+
+/// Poll for something that another process is about to make true, rather
+/// than sleeping a fixed time and hoping.
+fn await(attempts: Int, check: fn() -> Result(a, Nil)) -> a {
+  case check(), attempts {
+    Ok(value), _ -> value
+    Error(Nil), 0 -> panic as "condition not met in time"
+    Error(Nil), _ -> {
+      process.sleep(10)
+      await(attempts - 1, check)
+    }
+  }
+}
+
+/// The traces the recorder holds once it has one with each root `name`.
+fn await_traces(
+  recorder: recorder.Recorder,
+  names: List(String),
+) -> List(recorder.Trace) {
+  await(100, fn() {
+    let traces = recorder.traces(recorder, limit: 10)
+    let found = list.map(traces, fn(t) { t.root.name })
+    case list.all(names, list.contains(found, _)) {
+      True -> Ok(traces)
+      False -> Error(Nil)
+    }
+  })
+}
+
 fn recording() -> recorder.Recorder {
   let recorder = recorder.new(keep: 50)
   let assert Ok(Nil) =
@@ -58,7 +104,7 @@ fn named(spans: List(Span), name: String) -> Span {
 }
 
 pub fn nothing_is_recorded_before_start_test() {
-  telemetry.stop()
+  use <- isolated()
   use <- trace.span("idle", [])
   assert trace.is_recording() == False
   assert trace.trace_id() == None
@@ -72,6 +118,7 @@ pub fn nothing_is_recorded_before_start_test() {
 }
 
 pub fn a_request_is_a_server_span_named_after_its_route_test() {
+  use <- isolated()
   let recorder = recording()
   let response = testing.get("/users/7") |> testing.send(app())
   assert response.status == 200
@@ -97,6 +144,7 @@ pub fn a_request_is_a_server_span_named_after_its_route_test() {
 }
 
 pub fn an_unmatched_request_is_named_after_its_method_test() {
+  use <- isolated()
   let recorder = recording()
   let response = testing.get("/nowhere") |> testing.send(app())
   assert response.status == 404
@@ -106,6 +154,7 @@ pub fn an_unmatched_request_is_named_after_its_method_test() {
 }
 
 pub fn a_server_error_fails_the_span_test() {
+  use <- isolated()
   let recorder = recording()
   let _ = testing.get("/users/7/broken") |> testing.send(app())
   let assert [span] = only_trace(recorder)
@@ -114,6 +163,7 @@ pub fn a_server_error_fails_the_span_test() {
 }
 
 pub fn a_panic_is_recorded_and_carries_on_test() {
+  use <- isolated()
   let recorder = recording()
   let assert Error(_) =
     rescue(fn() { testing.get("/users/7/crash") |> testing.send(app()) })
@@ -124,6 +174,7 @@ pub fn a_panic_is_recorded_and_carries_on_test() {
 }
 
 pub fn an_incoming_traceparent_is_continued_test() {
+  use <- isolated()
   let recorder = recording()
   let parent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
   let _ =
@@ -137,6 +188,7 @@ pub fn an_incoming_traceparent_is_continued_test() {
 }
 
 pub fn inject_writes_the_current_span_test() {
+  use <- isolated()
   let _ = recording()
   use <- trace.span("outgoing", [])
   let assert Some(trace_id) = trace.trace_id()
@@ -146,6 +198,7 @@ pub fn inject_writes_the_current_span_test() {
 }
 
 pub fn a_link_points_at_another_trace_test() {
+  use <- isolated()
   let recorder = recording()
   let parent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
   let assert Ok(link) = trace.link_to(parent)
@@ -158,6 +211,7 @@ pub fn a_link_points_at_another_trace_test() {
 }
 
 pub fn context_carries_a_span_into_another_process_test() {
+  use <- isolated()
   let recorder = recording()
   use <- trace.span("parent", [])
   let context = trace.context()
@@ -174,6 +228,7 @@ pub fn context_carries_a_span_into_another_process_test() {
 }
 
 pub fn logs_are_tied_to_their_trace_test() {
+  use <- isolated()
   let recorder = recording()
   let _ = testing.get("/users/7/logged") |> testing.send(app())
   let assert [span] = only_trace(recorder)
@@ -187,6 +242,7 @@ pub fn logs_are_tied_to_their_trace_test() {
 }
 
 pub fn old_traces_are_dropped_test() {
+  use <- isolated()
   let recorder = recorder.new(keep: 3)
   let assert Ok(Nil) =
     telemetry.new("howdy-telemetry-test")
@@ -205,6 +261,7 @@ pub fn old_traces_are_dropped_test() {
 }
 
 pub fn stop_puts_the_log_formatter_back_test() {
+  use <- isolated()
   let before = default_formatter()
   let assert Ok(Nil) =
     telemetry.new("howdy-telemetry-test")
@@ -219,6 +276,7 @@ pub fn stop_puts_the_log_formatter_back_test() {
 fn default_formatter() -> String
 
 pub fn stop_goes_back_to_idle_test() {
+  use <- isolated()
   let recorder = recording()
   telemetry.stop()
   trace.span("after stop", [], fn() { Nil })
@@ -229,6 +287,7 @@ pub fn stop_goes_back_to_idle_test() {
 fn rescue(run: fn() -> a) -> Result(a, Nil)
 
 pub fn websocket_frames_are_spans_linked_to_the_upgrade_test() {
+  use <- isolated()
   let recorder = recording()
   let socket =
     websocket.new(fn(_socket) { Nil })
@@ -253,9 +312,7 @@ pub fn websocket_frames_are_spans_linked_to_the_upgrade_test() {
     |> ewe.start
   let assert ewe.TcpSocketAddress(_, port) = started.data
   let _ = websocket_roundtrip(port, "/ws", "hello")
-  process.sleep(50)
-
-  let traces = recorder.traces(recorder, limit: 10)
+  let traces = await_traces(recorder, ["GET /ws", "websocket text"])
   let assert Ok(upgrade) = list.find(traces, fn(t) { t.root.name == "GET /ws" })
   let assert Ok(frame) =
     list.find(traces, fn(t) { t.root.name == "websocket text" })
@@ -268,10 +325,11 @@ pub fn websocket_frames_are_spans_linked_to_the_upgrade_test() {
 fn websocket_roundtrip(port: Int, path: String, text: String) -> BitArray
 
 pub fn a_crash_outside_a_span_is_recorded_test() {
+  use <- isolated()
   let recorder = recording()
   crash_process("hunter2")
   let assert Ok(crash) =
-    recorder.traces(recorder, limit: 10)
+    await_traces(recorder, ["process crash"])
     |> list.find(fn(t) { t.root.name == "process crash" })
   assert crash.root.status == recorder.Failed("process crashed")
   assert recorder.attribute(crash.root, "exception.type")
@@ -284,10 +342,11 @@ pub fn a_crash_outside_a_span_is_recorded_test() {
 }
 
 pub fn a_crash_report_keeps_its_secrets_off_the_span_test() {
+  use <- isolated()
   let recorder = recording()
   crash_process("s3cret-token")
   let assert Ok(crash) =
-    recorder.traces(recorder, limit: 10)
+    await_traces(recorder, ["process crash"])
     |> list.find(fn(t) { t.root.name == "process crash" })
   let assert Ok(spans) = recorder.trace(recorder, crash.root.trace_id)
   list.each(spans, fn(span) {
@@ -315,11 +374,17 @@ pub fn a_crash_report_keeps_its_secrets_off_the_span_test() {
 fn crash_process(secret: String) -> Nil
 
 pub fn a_recorder_is_owned_by_a_supervised_process_test() {
+  use <- isolated()
   let before = recorder_owners()
   let holder = hold_recorder(10)
   assert recorder_owners() == before + 1
   release(holder)
-  assert recorder_owners() == before
+  await(100, fn() {
+    case recorder_owners() == before {
+      True -> Ok(Nil)
+      False -> Error(Nil)
+    }
+  })
 }
 
 @external(erlang, "howdy_telemetry_test_ffi", "recorder_owners")
@@ -332,13 +397,33 @@ fn hold_recorder(keep: Int) -> process.Pid
 fn release(holder: process.Pid) -> Nil
 
 pub fn from_env_needs_a_collector_test() {
+  use <- isolated()
+  assert telemetry.from_env("svc") == Error(Nil)
+  // An empty variable is as good as an unset one.
   putenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
   putenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "")
   assert telemetry.from_env("svc") == Error(Nil)
   putenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
-  let assert Ok(_) = telemetry.from_env("svc")
-  putenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+  assert telemetry.from_env("svc") != Error(Nil)
 }
+
+pub fn a_log_line_nobody_will_see_is_not_formatted_test() {
+  use <- isolated()
+  // No SDK, no span, no recorder: the handler returns before formatting.
+  assert !handler_formats("warning", [])
+  let recorder = recording()
+  // Inside a recording span, only lines that become span events are
+  // formatted when no recorder keeps the rest.
+  trace.span("logging", [], fn() {
+    assert !handler_formats("info", [])
+    assert handler_formats("warning", [])
+  })
+  // A recorder wants every line, span or not.
+  assert handler_formats("info", [recorder])
+}
+
+@external(erlang, "howdy_telemetry_test_ffi", "handler_formats")
+fn handler_formats(level: String, recorders: List(recorder.Recorder)) -> Bool
 
 @external(erlang, "howdy_telemetry_test_ffi", "putenv")
 fn putenv(name: String, value: String) -> Nil

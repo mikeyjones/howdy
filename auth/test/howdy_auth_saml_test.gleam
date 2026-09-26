@@ -4,6 +4,7 @@
 
 import gleam/bit_array
 import gleam/http/response
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/string
@@ -41,6 +42,9 @@ fn inflate(encoded: String) -> String
 
 @external(erlang, "provider_test_ffi", "instant")
 fn instant(seconds: Int) -> String
+
+@external(erlang, "howdy_auth_saml_ffi", "atoms_spent")
+fn atoms_spent() -> Int
 
 /// What a test may change about an otherwise valid response.
 type Shape {
@@ -455,4 +459,25 @@ pub fn browser_routes_test() {
   assert me.status == 200
   let replay = post([#("__Host-howdy_sso_post_acme", browser)])
   assert response.get_header(replay, "location") == Ok("/login")
+}
+
+pub fn a_response_over_the_atom_budget_is_refused_without_spending_test() {
+  use _, identity <- acme
+  let spent = atoms_spent()
+  // 5001 names this node has never seen, on the unsigned Response element,
+  // so only the budget stands between this document and a sign-in.
+  let attributes =
+    list.repeat("x", 5001)
+    |> list.index_map(fn(_, n) { " howdyfresh" <> int.to_string(n) <> "=\"x\"" })
+    |> string.concat
+  refused(identity, fn(request_id) {
+    signed_assertion(valid(), request_id)
+    |> string.replace("ID=\"response\"", "ID=\"response\"" <> attributes)
+  })
+  // Refused before parsing, so nothing was spent, and the next sign-in with
+  // ordinary names still goes through.
+  assert atoms_spent() == spent
+  let start = begin(identity)
+  let assert Ok(_) =
+    finish(identity, start, signed_assertion(valid(), request_id(start)))
 }

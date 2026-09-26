@@ -347,7 +347,9 @@ pub fn take_code(
       },
     ),
   )
-  case list.find(rows, fn(row) { row.1 == code_digest }) {
+  case
+    list.find(rows, fn(row) { token.constant_time_equal(row.1, code_digest) })
+  {
     Ok(#(digest, _)) -> consume_challenge(conn, digest, now)
     Error(_) -> {
       use _ <- result.try(
@@ -723,32 +725,55 @@ pub fn fresh_email_session(
   |> result.map(fn(rows) { rows != [] })
 }
 
+const session_columns = "digest, method, created_at, last_seen_at, expires_at, client"
+
+fn session_row() -> decode.Decoder(SessionRow) {
+  use digest <- decode.field(0, decode.string)
+  use method <- decode.field(1, decode.string)
+  use created_at <- decode.field(2, decode.int)
+  use last_seen_at <- decode.field(3, decode.int)
+  use expires_at <- decode.field(4, decode.int)
+  use client <- decode.field(5, decode.string)
+  decode.success(SessionRow(
+    digest,
+    method,
+    created_at,
+    last_seen_at,
+    expires_at,
+    client,
+  ))
+}
+
 pub fn sessions_for_user(
   conn: Repo,
   user_id: String,
   now: Int,
 ) -> service.Result(List(SessionRow)) {
-  let row = {
-    use digest <- decode.field(0, decode.string)
-    use method <- decode.field(1, decode.string)
-    use created_at <- decode.field(2, decode.int)
-    use last_seen_at <- decode.field(3, decode.int)
-    use expires_at <- decode.field(4, decode.int)
-    use client <- decode.field(5, decode.string)
-    decode.success(SessionRow(
-      digest,
-      method,
-      created_at,
-      last_seen_at,
-      expires_at,
-      client,
-    ))
-  }
   db.query(
     conn,
-    "SELECT digest, method, created_at, last_seen_at, expires_at, client FROM howdy_auth_sessions WHERE user_id = $1 AND expires_at > $2 ORDER BY created_at DESC, digest",
+    "SELECT "
+      <> session_columns
+      <> " FROM howdy_auth_sessions WHERE user_id = $1 AND expires_at > $2 ORDER BY created_at DESC, digest",
     [sql.string(user_id), sql.int(now)],
-    row,
+    session_row(),
+  )
+}
+
+/// One live session of a user, by digest: the caller's own, checked without
+/// loading every session they hold.
+pub fn session_for_user(
+  conn: Repo,
+  user_id: String,
+  digest: String,
+  now: Int,
+) -> service.Result(List(SessionRow)) {
+  db.query(
+    conn,
+    "SELECT "
+      <> session_columns
+      <> " FROM howdy_auth_sessions WHERE user_id = $1 AND digest = $2 AND expires_at > $3",
+    [sql.string(user_id), sql.string(digest), sql.int(now)],
+    session_row(),
   )
 }
 
@@ -872,6 +897,31 @@ pub fn active_user(
     },
     [sql.string(user_id)],
     user.row(),
+  )
+}
+
+/// `active_user` together with the account's session version, in one query,
+/// for checking an external store's entry against the database.
+pub fn active_user_version(
+  conn: Repo,
+  user_id: String,
+  locking locking: Bool,
+) -> service.Result(List(#(User, Int))) {
+  db.query(
+    conn,
+    "SELECT "
+      <> user_columns(conn)
+      <> ", u.session_version FROM howdy_auth_users u WHERE u.id = $1 AND u.suspended = 0"
+      <> case locking {
+      True -> db.for_update(conn, "u")
+      False -> ""
+    },
+    [sql.string(user_id)],
+    {
+      use user <- decode.then(user.row())
+      use version <- decode.field(5, decode.int)
+      decode.success(#(user, version))
+    },
   )
 }
 

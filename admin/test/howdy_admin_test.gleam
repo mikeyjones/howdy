@@ -58,6 +58,9 @@ fn notes() -> migration.Package {
 @external(erlang, "howdy_admin_test_ffi", "getenv")
 fn getenv(name: String) -> Result(String, Nil)
 
+@external(erlang, "howdy_admin_test_ffi", "links")
+fn links() -> List(process.Pid)
+
 /// The whole suite runs on PostgreSQL instead when
 /// HOWDY_ADMIN_TEST_POSTGRES_URL names a server whose database it may
 /// empty; otherwise on an in-memory SQLite database.
@@ -237,6 +240,11 @@ pub fn refuses_other_hosts_test() {
     |> request.set_host("dev.example.test")
     |> testing.send(allowed)
   assert res.status == 200
+  // The given hosts replace the loopback names rather than adding to them.
+  use host <- list.each(["localhost", "127.0.0.1", "[::1]", "evil.example"])
+  let res =
+    testing.get("/_howdy") |> request.set_host(host) |> testing.send(allowed)
+  assert res.status == 403 as { host <> " should be refused" }
 }
 
 pub fn refuses_writes_from_other_origins_test() {
@@ -444,9 +452,10 @@ pub fn postgres_announces_changes_and_sqlite_does_not_test() {
       )
       assert notify.install(db, table) != Ok(Nil)
       assert notify.uninstall(db) == Ok(Nil)
+      assert admin.remove_notify_triggers(db) == Ok(Nil)
       // Without a pool to look inside, subscribing fails softly.
       let assert Error(Nil) =
-        notify.subscribe(db, None, process.self(), fn(_) { Nil })
+        notify.subscribe(db, None, process.self(), fn(_) { Nil }, fn() { Nil })
       Nil
     }
     True -> {
@@ -469,10 +478,19 @@ pub fn postgres_announces_changes_and_sqlite_does_not_test() {
       use settings <- list.each([None, Some(settings)])
       let heard = process.new_subject()
       let owner = process.spawn_unlinked(fn() { process.sleep(30_000) })
+      let before = links()
       let assert Ok(Nil) =
-        notify.subscribe(db, settings, owner, fn(name) {
-          process.send(heard, name)
-        })
+        notify.subscribe(
+          db,
+          settings,
+          owner,
+          fn(name) { process.send(heard, name) },
+          fn() { Nil },
+        )
+      // The listener is linked to the caller, so it is the one new link.
+      let assert [listener] =
+        list.filter(links(), fn(pid) { !list.contains(before, pid) })
+      let gone = process.monitor(listener)
       let assert Ok(_) =
         repo.execute(db, "INSERT INTO notes_notes (title) VALUES ('hello')", [])
       assert process.receive(heard, 5000) == Ok("notes_notes")
@@ -480,12 +498,16 @@ pub fn postgres_announces_changes_and_sqlite_does_not_test() {
         repo.execute(db, "UPDATE notes_notes SET stars = 2", [])
       assert process.receive(heard, 5000) == Ok("notes_notes")
 
-      // The listener follows its owner, and the triggers can be removed.
+      // The listener follows its owner, and the triggers can be removed
+      // through the public function.
       process.kill(owner)
-      process.sleep(200)
+      let assert Ok(_) =
+        process.new_selector()
+        |> process.select_specific_monitor(gone, fn(down) { down })
+        |> process.selector_receive(within: 5000)
       let assert Ok(_) = repo.execute(db, "DELETE FROM notes_notes", [])
       assert process.receive(heard, 500) == Error(Nil)
-      let assert Ok(Nil) = notify.uninstall(db)
+      let assert Ok(Nil) = admin.remove_notify_triggers(db)
       assert count(
           db,
           "SELECT COUNT(*) FROM pg_trigger WHERE tgname = 'howdy_admin_notify'",
@@ -743,6 +765,42 @@ pub fn defines_lists_edits_and_deletes_roles_test() {
     |> testing.send(app)
   assert res.status == 200
   assert string.contains(testing.text(res), "nonempty")
+}
+
+pub fn deleting_a_role_takes_its_assignments_with_it_test() {
+  use db, identity, access <- with_authorization
+  let app =
+    app(fn(a) { a |> admin.auth(identity) |> admin.authorization(access) })
+  let assert "/_howdy/users/" <> ada =
+    post(app, "/_howdy/users", [#("email", "ada@example.com")])
+  let assert "/_howdy/users/" <> grace =
+    post(app, "/_howdy/users", [#("email", "grace@example.com")])
+  let _ =
+    post(app, "/_howdy/roles", [#("name", "editor"), #("organization", "acme")])
+  let _ =
+    post(app, "/_howdy/roles", [#("name", "admin"), #("organization", "")])
+  let assign = fn(id, scope, name) {
+    post(app, "/_howdy/roles/role/assign?scope=" <> scope <> "&name=" <> name, [
+      #("user", id),
+    ])
+  }
+  let _ = assign(ada, "org%3Aacme", "editor")
+  let _ = assign(grace, "org%3Aacme", "editor")
+  let _ = assign(ada, "global", "admin")
+  assert count(db, "SELECT COUNT(*) FROM howdy_authz_assignments") == 3
+
+  // Deleting the role held by both drops those assignments and no other.
+  let deleted =
+    post(app, "/_howdy/roles/role/delete?scope=org%3Aacme&name=editor", [])
+  assert deleted == "/_howdy/roles"
+  assert authorization.assignments(access, ada)
+    == Ok([#(authorization.Global, "admin")])
+  assert authorization.assignments(access, grace) == Ok([])
+  assert count(db, "SELECT COUNT(*) FROM howdy_authz_assignments") == 1
+  let page = get(app, "/_howdy/users/" <> ada)
+  assert string.contains(page, "global\tadmin")
+  assert !string.contains(page, "org:acme\teditor")
+  assert !string.contains(get(app, "/_howdy/roles"), "editor")
 }
 
 pub fn assigns_and_revokes_roles_from_both_sides_test() {

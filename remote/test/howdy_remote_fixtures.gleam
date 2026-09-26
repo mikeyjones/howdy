@@ -80,6 +80,23 @@ pub fn await_provider(
   }
 }
 
+/// Poll until nothing serves `procedure` on `node` any more, as a stopped
+/// server or node is noticed asynchronously.
+pub fn await_no_provider(
+  procedure: remote.Procedure(i, o),
+  node: String,
+  attempts: Int,
+) -> Bool {
+  case list.contains(remote.providers(procedure), node), attempts {
+    False, _ -> True
+    True, 0 -> False
+    True, _ -> {
+      process.sleep(20)
+      await_no_provider(procedure, node, attempts - 1)
+    }
+  }
+}
+
 /// Run on a fresh peer through `remote.apply`: the first call it makes must
 /// find a server on another node before `pg` has synced.
 pub fn first_call_via_cluster(prefix: String) -> String {

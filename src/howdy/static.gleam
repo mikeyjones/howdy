@@ -32,6 +32,7 @@ import ewe
 import filepath
 import gleam/bytes_tree
 import gleam/http
+import gleam/http/request
 import gleam/http/response.{type Response}
 import gleam/int
 import gleam/list
@@ -185,7 +186,9 @@ fn safe_segments(path: String) -> Result(List(String), Nil) {
 // The root and its contents are trusted deployment assets: callers must not
 // allow untrusted processes to mutate the tree while requests are served.
 // lstat each component so file links, directory links and linked indexes all
-// fail closed. ewe retains its normal streaming path on both HTTP versions.
+// fail closed: one call per path segment is the price of refusing links
+// anywhere in the path, and the segments are few. ewe streams the file
+// itself on both HTTP versions.
 type Resolution {
   Found(String)
   Directory
@@ -226,6 +229,68 @@ fn valid_relative_name(name: String) -> Bool {
 }
 
 fn send(ctx: GuardedContext(guarded), path: String) -> Response(Content) {
+  // Validators from the file's size and modification time, so a browser
+  // that already has the file gets a `304` instead of the bytes again.
+  let validators = case simplifile.file_info(path) {
+    Ok(info) ->
+      Some(#(
+        "\""
+          <> int.to_string(info.size)
+          <> "-"
+          <> int.to_string(info.mtime_seconds)
+          <> "\"",
+        http_date(info.mtime_seconds),
+        info.mtime_seconds,
+      ))
+    Error(_) -> None
+  }
+  case validators {
+    Some(#(etag, last_modified, mtime)) ->
+      case not_modified(ctx.request, etag, mtime) {
+        True ->
+          response.new(304)
+          |> response.set_header("etag", etag)
+          |> response.set_header("last-modified", last_modified)
+          |> response.set_body(content.Empty)
+        False ->
+          send_bytes(ctx, path)
+          |> response.set_header("etag", etag)
+          |> response.set_header("last-modified", last_modified)
+      }
+    None -> send_bytes(ctx, path)
+  }
+}
+
+/// `If-None-Match` wins when present; otherwise `If-Modified-Since` at
+/// whole-second precision, which is all the header carries.
+fn not_modified(req: request.Request(a), etag: String, mtime: Int) -> Bool {
+  case request.get_header(req, "if-none-match") {
+    Ok(tags) ->
+      tags
+      |> string.split(",")
+      |> list.any(fn(tag) {
+        let tag = string.trim(tag)
+        tag == etag || tag == "*" || tag == "W/" <> etag
+      })
+    Error(Nil) ->
+      case request.get_header(req, "if-modified-since") {
+        Ok(since) ->
+          case parse_http_date(since) {
+            Ok(seconds) -> mtime <= seconds
+            Error(Nil) -> False
+          }
+        Error(Nil) -> False
+      }
+  }
+}
+
+@external(erlang, "howdy_static_ffi", "http_date")
+fn http_date(seconds: Int) -> String
+
+@external(erlang, "howdy_static_ffi", "parse_http_date")
+fn parse_http_date(date: String) -> Result(Int, Nil)
+
+fn send_bytes(ctx: GuardedContext(guarded), path: String) -> Response(Content) {
   let body = case context.connection(ctx.request.body) {
     Some(connection) ->
       ewe.file(connection, path, offset: None, limit: None)

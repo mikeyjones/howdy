@@ -1,5 +1,6 @@
 -module(howdy_auth_ffi).
--export([now/0, normalize_password/1, canonical_host/1, cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1,
+-export([now/0, normalize_password/1, canonical_host/1, constant_time_equal/2,
+         cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1,
          sessions_put/5, sessions_get/2, sessions_list/2, sessions_delete/3, sessions_delete_user/3, sessions_prune/2]).
 
 %% Seconds since the epoch. Tests may skew every clock in their own process
@@ -15,12 +16,31 @@ clock_offset_ms() ->
 
 normalize_password(Value) -> unicode:characters_to_nfc_binary(Value).
 
+%% Equality of two digests in time that depends only on their length.
+%% `crypto:hash_equals/2` raises on unequal lengths, and a length is not a
+%% secret, so unequal lengths are simply unequal.
+constant_time_equal(A, B) when byte_size(A) =:= byte_size(B) -> crypto:hash_equals(A, B);
+constant_time_equal(_, _) -> false.
+
 
 %% The authorization cache is one named public table owned by
 %% howdy_auth_tables, partitioned between Authorization instances by the
 %% reference each `new` returns. Generation changes bracket grant/suspension
 %% mutations, so a slow read cannot install a stale grant after a mutation has
 %% committed.
+%%
+%% Invariant: the transaction and dirty markers live in the process
+%% dictionary, so `cache_transaction` (the Howdy transaction hook) and
+%% `cache_changing` (around each grant/suspension mutation) must run in the
+%% one process that holds the transaction. A mutation performed from a
+%% process spawned inside a transaction sees no marker: it invalidates
+%% immediately, when its own `cache_changing` ends, rather than after the
+%% outer transaction commits, and a concurrent read could re-cache the old
+%% grant in between. Such a mutation cannot be told apart from one made with
+%% no transaction at all, so it is a documented rule, not a checked one. What
+%% can be seen is a mutation inside a Howdy transaction that the cache hook
+%% did not bracket (a transaction opened before the cache was created); that
+%% is logged once and otherwise behaves the same.
 -define(CACHE, howdy_auth_cache).
 
 cache_new() ->
@@ -118,11 +138,28 @@ cache_transaction(Run) ->
     end.
 
 cache_changing(Run) ->
+    unbracketed_check(),
     cache_transaction(fun() ->
         put(howdy_auth_cache_dirty, true),
         cache_invalidate(),
         Run()
     end).
+
+%% Inside a Howdy database transaction in this process, yet without the
+%% cache's own marker: the transaction hook did not bracket it. Warn once per
+%% node; behaviour is unchanged.
+unbracketed_check() ->
+    case get(howdy_database_transaction_depth) =/= undefined
+         andalso get(howdy_auth_cache_transaction_depth) =:= undefined
+         andalso not persistent_term:get(howdy_auth_cache_unbracketed_warned, false) of
+        true ->
+            persistent_term:put(howdy_auth_cache_unbracketed_warned, true),
+            logger:warning("howdy/auth: authorization cache mutation inside a transaction "
+                           "the cache hook did not bracket; the cache was created after the "
+                           "transaction opened, or the mutation runs in another process. "
+                           "Invalidation happens now rather than after commit.");
+        false -> ok
+    end.
 
 %% The in-memory session store: one public ETS table of
 %% {Digest, UserId, ExpiresAt, Record}, owned by a howdy_auth_sessions process

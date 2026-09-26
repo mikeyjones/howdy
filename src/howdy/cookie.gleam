@@ -167,16 +167,23 @@ pub fn delete(
   response.expire_cookie(res, name, options.attributes)
 }
 
+/// Whether `name` is a valid cookie name: one or more RFC 6265 token
+/// characters. `set` and `delete` treat an invalid name as a programming
+/// error and panic, like a malformed route pattern would, since names are
+/// normally literals; an app that builds a name from data should check it
+/// with this first.
+pub fn valid_name(name: String) -> Bool {
+  name != ""
+  && list.all(text.to_graphemes(name), fn(char) {
+    text.contains(
+      "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~",
+      char,
+    )
+  })
+}
+
 fn check(name: String, options: Options) -> Nil {
-  let assert True =
-    name != ""
-    && list.all(text.to_graphemes(name), fn(char) {
-      text.contains(
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~",
-        char,
-      )
-    })
-    as "invalid cookie name"
+  let assert True = valid_name(name) as "invalid cookie name"
   let assert True =
     options.attributes.same_site != option.Some(http_cookie.None)
     || options.attributes.secure

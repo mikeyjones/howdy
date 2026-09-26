@@ -47,6 +47,10 @@ pub fn with_transport(
 ) -> Provider {
   let keys_cache = provider_keys.new()
   let client_secret = secret.wrap(client_secret)
+  // Fixed URLs parse once here, at installation, so no sign-in can fail on
+  // building a request from a constant.
+  let assert Ok(token_request) = request.to(token_url)
+  let assert Ok(keys_request) = request.to(keys_url)
   let valid = case
     string.trim(client_id) != "" && secret.reveal(client_secret) != ""
   {
@@ -74,7 +78,7 @@ pub fn with_transport(
     },
     fn(exchange) {
       use response <- result.try(
-        post(send, [
+        post(send, token_request, [
           #("grant_type", "authorization_code"),
           #("code", secret.reveal(exchange.code)),
           #("client_id", client_id),
@@ -90,14 +94,23 @@ pub fn with_transport(
         )
         |> result.replace_error(service.Unauthorized),
       )
-      let assert Ok(keys_request) = request.to(keys_url)
       let fetch_keys = fn() { send(keys_request) }
-      use keys <- result.try(provider_keys.get(keys_cache, False, fetch_keys))
+      use keys <- result.try(provider_keys.get(
+        keys_cache,
+        "Google signing keys",
+        False,
+        fetch_keys,
+      ))
       use payload <- result.try(case verify_signature(signed, keys) {
         Ok(payload) -> Ok(payload)
         Error(_) -> {
           // A new signing key may appear before the cached set expires.
-          use keys <- result.try(provider_keys.get(keys_cache, True, fetch_keys))
+          use keys <- result.try(provider_keys.get(
+            keys_cache,
+            "Google signing keys",
+            True,
+            fetch_keys,
+          ))
           verify_signature(signed, keys)
           |> result.replace_error(service.Unauthorized)
         }
@@ -127,8 +140,7 @@ fn send(req: Request(String)) -> service.Result(Response(String)) {
   )
 }
 
-fn post(send, fields) {
-  let assert Ok(req) = request.to(token_url)
+fn post(send, req: Request(String), fields) {
   use res <- result.try(send(
     req
     |> request.set_method(http.Post)
@@ -207,7 +219,7 @@ fn claims(
     && iat <= now + 60
     && iat < exp
     && nbf <= now
-    && token.digest(nonce) == nonce_digest
+    && token.constant_time_equal(token.digest(nonce), nonce_digest)
     && verified
   {
     True ->

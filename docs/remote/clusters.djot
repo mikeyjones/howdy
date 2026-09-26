@@ -32,20 +32,17 @@ distribution is off.
 
 Nodes join `remote.cluster()` as they start a server, and leave it as they
 stop or disconnect. Erlang does not reconnect a lost node by itself, so a
-node that must stay connected should try again every few seconds:
+node that must stay connected asks the package to keep it so:
 
 ```gleam
-fn stay_connected(node: String) -> Nil {
-  process.spawn(fn() { reconnect(node) })
-  Nil
-}
-
-fn reconnect(node: String) -> Nil {
-  let _ = remote.connect(node)
-  process.sleep(5000)
-  reconnect(node)
-}
+let assert Ok(Nil) = remote.connect_to(["users@10.0.0.5"])
 ```
+
+A connector under the `howdy_remote` application's supervisor connects to
+each node, watches for it to drop, and reconnects with a backoff that
+doubles from a second to half a minute, logging each connection and loss
+once. `remote.connector_supervised(nodes)` is the same as a child of your
+own supervision tree.
 
 ## Distribution is full trust
 

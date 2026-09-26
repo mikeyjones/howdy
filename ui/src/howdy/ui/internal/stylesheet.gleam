@@ -68,6 +68,34 @@ pub fn class_name(class: Class) -> String {
   name
 }
 
+/// Register a block of CSS that is not a class, such as `@keyframes`, under
+/// a stable name. It is emitted once per document, alongside the classes,
+/// wherever the CSS registered so far is collected. If a render scope is
+/// open in this process, the name is recorded in it, so a live view's
+/// stylesheet carries the block when its view needs it.
+pub fn rule(name: String, css: String) -> Nil {
+  case known(name) {
+    True -> Nil
+    False -> register(name, css)
+  }
+  note(name)
+}
+
+/// Render an explicit list of rules independently of the runtime registry,
+/// in the given order, first occurrence of a name winning.
+pub fn css_of_rules(rules: List(#(String, String))) -> String {
+  let #(_, parts) =
+    list.fold(rules, #(set.new(), []), fn(acc, rule) {
+      let #(seen, parts) = acc
+      let #(name, css) = rule
+      case set.contains(seen, name) {
+        True -> acc
+        False -> #(set.insert(seen, name), [css, ..parts])
+      }
+    })
+  parts |> list.reverse |> string.join("\n\n")
+}
+
 /// Run `render` and return its result with the CSS for exactly the classes
 /// it used.
 pub fn scoped(render: fn() -> a) -> #(a, String) {

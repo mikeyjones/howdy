@@ -1,5 +1,6 @@
 name = "howdy_chat_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "A chat room built on howdy WebSockets and channels"
 
 [dependencies]

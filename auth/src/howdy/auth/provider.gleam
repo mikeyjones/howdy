@@ -162,7 +162,7 @@ pub fn custom(
 
 /// Whether an ID token's `nonce` claim is the one this sign-in sent.
 pub fn nonce_matches(exchange: Exchange, nonce: String) -> Bool {
-  token.digest(nonce) == exchange.nonce_digest
+  token.constant_time_equal(token.digest(nonce), exchange.nonce_digest)
 }
 
 /// The issuer a `custom` provider's accounts are recorded under.

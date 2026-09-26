@@ -10,6 +10,7 @@ import howdy/ui/attachment
 import howdy/ui/chat
 import howdy/ui/gallery
 import howdy/ui/gallery/examples
+import howdy/ui/internal/stylesheet
 import howdy/ui/registry
 import howdy/ui/theme
 import howdy/ui/themes/green
@@ -242,8 +243,10 @@ pub fn attachments_show_their_type_and_upload_test() {
   assert !string.contains(done, "progressbar")
 }
 
-pub fn shimmer_carries_its_animation_test() {
-  let html = render(ui.shimmer([text("Thinking")]))
-  assert string.contains(html, "@keyframes howdy-shimmer")
-  assert string.contains(html, "prefers-reduced-motion")
+pub fn shimmer_registers_its_animation_test() {
+  let #(html, css) =
+    stylesheet.scoped(fn() { render(ui.shimmer([text("Thinking")])) })
+  assert !string.contains(html, "<style")
+  assert string.contains(css, "@keyframes howdy-shimmer")
+  assert string.contains(css, "prefers-reduced-motion")
 }

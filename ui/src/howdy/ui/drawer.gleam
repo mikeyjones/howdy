@@ -56,6 +56,7 @@ pub fn drawer(
   attributes: List(Attribute(msg)),
   children: List(Element(msg)),
 ) -> Element(msg) {
+  style.rule(motion_rule, motion_css)
   html.dialog(
     [
       class(drawer_class()),
@@ -67,7 +68,6 @@ pub fn drawer(
       ..attributes
     ],
     [
-      html.style([], motion_css),
       html.div(
         [
           class(handle_class()),
@@ -106,6 +106,11 @@ pub fn footer(children: List(Element(msg))) -> Element(msg) {
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
   [drawer_class(), handle_class(), body_class()]
+}
+
+/// The CSS this module registers with `style.rule`, for `howdy/ui/export`.
+pub fn rules() -> List(#(String, String)) {
+  [#(motion_rule, motion_css)]
 }
 
 pub fn drawer_class() -> Class {
@@ -167,5 +172,7 @@ pub fn body_class() -> Class {
 }
 
 // Sliding in and out. Sketch classes cannot carry `@starting-style`, so the
-// rules travel with the drawer.
+// rules are registered when a drawer is drawn, emitted once per document.
+const motion_rule = "howdy-drawer"
+
 const motion_css = "[data-howdy-drawer]{transform:translateY(var(--howdy-drawer-drag,0px));transition:transform .25s ease,display .25s allow-discrete,overlay .25s allow-discrete}[data-howdy-drawer][data-dragging]{transition:none}@starting-style{[data-howdy-drawer][open]{transform:translateY(100%)}}[data-howdy-drawer]:not([open]){transform:translateY(100%)}@media (prefers-reduced-motion:reduce){[data-howdy-drawer]{transition:none}}"

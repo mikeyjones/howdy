@@ -44,12 +44,13 @@ import sketch/css.{type Class}
 
 /// A file under construction.
 pub opaque type Export {
-  Export(themes: Themes, classes: List(Class))
+  Export(themes: Themes, classes: List(Class), rules: List(#(String, String)))
 }
 
-/// Start with the themes the site offers and the built-in components.
+/// Start with the themes the site offers and the built-in components: their
+/// classes and the rules they register with `style.rule`.
 pub fn new(themes: Themes) -> Export {
-  Export(themes:, classes: ui.classes())
+  Export(themes:, classes: ui.classes(), rules: ui.rules())
 }
 
 /// Add classes of your own, usually the `all` list of a styles module.
@@ -57,12 +58,20 @@ pub fn classes(export: Export, classes: List(Class)) -> Export {
   Export(..export, classes: list.append(export.classes, classes))
 }
 
-/// The finished CSS in configured class order, conservatively minified.
+/// Add CSS of your own that components register with `style.rule`, such as
+/// the `rules` list of a copied component. Each name is written once.
+pub fn rules(export: Export, rules: List(#(String, String))) -> Export {
+  Export(..export, rules: list.append(export.rules, rules))
+}
+
+/// The finished CSS in configured class order, then the rules,
+/// conservatively minified.
 pub fn to_css(export: Export) -> String {
   [
     theme.to_css(export.themes),
     stylesheet.base,
     stylesheet.css_of(export.classes),
+    stylesheet.css_of_rules(export.rules),
   ]
   |> string.join("\n")
   |> minify

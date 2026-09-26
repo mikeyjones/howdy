@@ -2,8 +2,8 @@
 -export([
     start_directory/1, dispatch/4, dispatch_local/3, run/2,
     call_cluster/4, call_node/5, cast_cluster/3, cast_node/4, spawn_cast/1,
-    multicall/4, apply/5, providers/1, connect/1, self_node/0,
-    scope/0, init_casts/0
+    multicall/4, apply/5, apply_named/3, providers/1, connect/1, connect_to/1,
+    start_connector/1, self_node/0, scope/0, init_casts/0, to_node/1
 ]).
 
 %% Servers are `howdy_remote_directory` processes, one per started server,
@@ -119,7 +119,12 @@ cast_cluster(Name, Payload, Trace) ->
     nil.
 
 cast_node(Node, Name, Payload, Trace) ->
-    safe_cast(to_node(Node), dispatch_local, [Name, Payload, Trace]),
+    try to_node(Node) of
+        Atom -> safe_cast(Atom, dispatch_local, [Name, Payload, Trace])
+    catch
+        error:{howdy_remote, _} ->
+            logger:debug("howdy_remote: dropped cast to ~ts, not a node name", [Node])
+    end,
     nil.
 
 %% Call every node that serves `Name`, in parallel. Returns `{Node, Result}`
@@ -141,20 +146,91 @@ multicall(Name, Payload, Trace, Timeout) ->
 multicall_result({ok, Reply}) -> {ok, Reply};
 multicall_result({Class, Reason}) -> {error, failure(Class, Reason)}.
 
+%% The names cross the wire as binaries and become atoms on the serving
+%% node, where the module either is one: a module already loaded there, or
+%% one with a `.beam` on its code path. A name that is neither is `undef`
+%% without adding to the atom table, which is never garbage collected.
 apply(Node, Module, Function, Args, Timeout) ->
     guard(fun() ->
-        erpc:call(to_node(Node), binary_to_atom(Module), binary_to_atom(Function), Args, Timeout)
+        erpc:call(to_node(Node), ?MODULE, apply_named, [Module, Function, Args], Timeout)
     end).
+
+apply_named(Module, Function, Args) ->
+    M = module_atom(Module),
+    _ = code:ensure_loaded(M),
+    F = try binary_to_existing_atom(Function) catch error:badarg -> undef(Module, Function) end,
+    erlang:apply(M, F, Args).
+
+module_atom(Module) ->
+    try
+        binary_to_existing_atom(Module)
+    catch
+        error:badarg ->
+            case code:where_is_file(unicode:characters_to_list(Module) ++ ".beam") of
+                non_existing -> undef(Module, <<>>);
+                _ -> binary_to_atom(Module)
+            end
+    end.
+
+undef(Module, Function) ->
+    error({howdy_remote, {crashed, <<"undef: ", Module/binary, ":", Function/binary,
+                                     " is not on the serving node">>}}).
 
 %% The nodes with a server for `Name`, sorted.
 providers(Name) ->
     [atom_to_binary(Node) || Node <- lists:usort([node(Pid) || Pid <- pg:get_members(scope(), Name)])].
 
 connect(Node) ->
-    case net_kernel:connect_node(to_node(Node)) of
-        true -> {ok, nil};
-        false -> {error, {unavailable, <<"could not connect to ", Node/binary>>}};
-        ignored -> {error, {unavailable, <<"this node is not distributed">>}}
+    try to_node(Node) of
+        Atom ->
+            case net_kernel:connect_node(Atom) of
+                true -> {ok, nil};
+                false -> {error, {unavailable, <<"could not connect to ", Node/binary>>}};
+                ignored -> {error, {unavailable, <<"this node is not distributed">>}}
+            end
+    catch
+        error:{howdy_remote, Error} -> {error, Error}
+    end.
+
+%% Keep `Nodes` connected from the `howdy_remote` application's own
+%% supervisor: start the connector, or tell the running one about more
+%% nodes.
+connect_to(Nodes) ->
+    case node_atoms(Nodes) of
+        {ok, _} when node() =:= nonode@nohost ->
+            {error, {unavailable, <<"this node is not distributed">>}};
+        {ok, Atoms} ->
+            _ = scope(),
+            case supervisor:start_child(howdy_remote_supervisor, howdy_remote_connector:child_spec(Atoms)) of
+                {ok, _} -> {ok, nil};
+                {error, {already_started, Pid}} ->
+                    ok = howdy_remote_connector:track(Pid, Atoms),
+                    {ok, nil};
+                {error, Reason} ->
+                    {error, {unavailable, format(Reason)}}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+%% A connector for an application's own supervision tree, as the Gleam
+%% `actor.Started` a child specification expects.
+start_connector(Nodes) ->
+    case node_atoms(Nodes) of
+        {ok, Atoms} ->
+            case howdy_remote_connector:start_link(Atoms) of
+                {ok, Pid} -> {ok, {started, Pid, nil}};
+                {error, Reason} -> {error, {init_failed, format(Reason)}}
+            end;
+        {error, {unavailable, Message}} ->
+            {error, {init_failed, Message}}
+    end.
+
+node_atoms(Nodes) ->
+    try
+        {ok, [to_node(Node) || Node <- Nodes]}
+    catch
+        error:{howdy_remote, Error} -> {error, Error}
     end.
 
 self_node() ->
@@ -204,6 +280,7 @@ guard(Call) ->
         Class:Reason -> {error, failure(Class, Reason)}
     end.
 
+failure(error, {howdy_remote, Error}) -> Error;
 failure(error, {erpc, timeout}) -> timeout;
 failure(error, {erpc, noconnection}) -> {unavailable, <<"node is not connected">>};
 failure(error, {erpc, Reason}) -> {unavailable, format(Reason)};
@@ -214,8 +291,28 @@ failure(exit, {signal, Reason}) -> {crashed, format({exit, Reason})};
 failure(throw, Value) -> {crashed, format({throw, Value})};
 failure(Class, Reason) -> {crashed, format({Class, Reason})}.
 
-to_node(Node) when is_binary(Node) -> binary_to_atom(Node);
-to_node(Node) -> Node.
+%% A node name is `name@host`, both parts non-empty and made of letters,
+%% digits, `-`, `_` and `.`, short enough for an atom. Anything else is
+%% refused before it can become an atom that lives for the rest of the VM.
+to_node(Node) when is_atom(Node) -> Node;
+to_node(Node) when is_binary(Node) ->
+    case node_name(Node) of
+        true -> binary_to_atom(Node);
+        false -> error({howdy_remote, {unavailable, <<"not a node name: ", Node/binary>>}})
+    end.
+
+node_name(Node) when byte_size(Node) > 255 -> false;
+node_name(Node) ->
+    case binary:split(Node, <<"@">>) of
+        [Name, Host] when Name =/= <<>>, Host =/= <<>> -> plain(Name) andalso plain(Host);
+        _ -> false
+    end.
+
+plain(Part) ->
+    lists:all(fun(C) ->
+                  (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z) orelse
+                  (C >= $0 andalso C =< $9) orelse C =:= $- orelse C =:= $_ orelse C =:= $.
+              end, binary_to_list(Part)).
 
 %% Prefer a server on this node: it needs no network hop and keeps working
 %% while the node is cut off from the cluster.

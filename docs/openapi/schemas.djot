@@ -52,8 +52,13 @@ the placeholder takes is documented.
   integers such as `5`.
 - `list(of:)` and `dict(of:)`, a JSON object used as a map with string keys.
 - `nullable(schema)`, a value or `null`, as an `Option`.
-- `enum([#("admin", Admin), #("member", Member)])`, a string standing for
-  one of your values.
+- `enum([Admin, Member], name)`, a string standing for one of your values,
+  where `name` gives each variant its string; written as a `case` it cannot
+  miss one.
+- `one_of([variant(card_schema, to: Card), variant(bank_schema, to: Bank)],
+  encode:)`, a value that is one of several shapes, decoded by the first
+  variant that matches and shown as `anyOf`. `encode` is your `fn(a) -> Json`,
+  usually a `case` calling `schema.to_json` with the matching inner schema.
 - `map(schema, to:, from:)` changes the type, such as wrapping an `Int` in a
   `UserId`. `try_map` is for changes that can fail, such as parsing a date,
   and fails with your message.
@@ -69,7 +74,9 @@ uses:
 
 - `min_length`, `max_length` and `not_empty` for strings.
 - `email`, the light check from `validate.email`, shown as `format: email`.
-- `minimum` and `maximum` for integers.
+- `minimum` and `maximum` for integers; `float_minimum` and `float_maximum`
+  for floats.
+- `min_items` and `max_items` for lists.
 
 ```gleam
 schema.string()

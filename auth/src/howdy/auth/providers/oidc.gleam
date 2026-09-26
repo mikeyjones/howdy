@@ -67,7 +67,8 @@ pub fn with_transport(
   let valid = case
     provider.valid_id(id),
     string.trim(name) != "" && string.byte_size(name) <= 100,
-    provider.https(issuer),
+    provider.https(issuer)
+    && result.is_ok(request.to(issuer <> "/.well-known/openid-configuration")),
     string.trim(client_id) != "" && client_secret != "",
     list.all(domains, domain)
   {

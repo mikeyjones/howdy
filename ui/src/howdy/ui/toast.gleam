@@ -54,6 +54,7 @@ pub fn region(
   attributes: List(Attribute(msg)),
   toasts: List(Element(msg)),
 ) -> Element(msg) {
+  style.rule(animation_rule, animation_css)
   html.section(
     [
       class(region_class()),
@@ -61,7 +62,7 @@ pub fn region(
       attribute.aria_live("polite"),
       ..attributes
     ],
-    [html.style([], animation_css), ..toasts],
+    toasts,
   )
 }
 
@@ -274,6 +275,7 @@ pub fn view(
   on_close on_close: fn(Int) -> List(Attribute(msg)),
   on_hold on_hold: fn(Int, Bool) -> msg,
 ) -> Element(msg) {
+  style.rule(animation_rule, animation_css)
   keyed.element(
     "section",
     [
@@ -282,31 +284,28 @@ pub fn view(
       attribute.aria_live("polite"),
       attribute.data("howdy-toast-queue", ""),
     ],
-    [
-      #("style", html.style([], animation_css)),
-      ..list.map(queue.items, fn(item) {
-        let lasts = case item.lasts {
-          Some(ms) -> [duration(ms)]
-          None -> []
-        }
-        // Alternating the fade's name restarts the countdown in place.
-        let lasts = case item.round % 2 {
-          0 -> lasts
-          _ -> [attribute.data("round", "odd"), ..lasts]
-        }
-        #(
-          int.to_string(item.id),
-          toast(item.variant, [held(item.id, on_hold), ..lasts], [
-            title([text(item.title)]),
-            case item.description {
-              "" -> element.none()
-              said -> description([text(said)])
-            },
-            close([attribute.aria_label("Dismiss"), ..on_close(item.id)]),
-          ]),
-        )
-      })
-    ],
+    list.map(queue.items, fn(item) {
+      let lasts = case item.lasts {
+        Some(ms) -> [duration(ms)]
+        None -> []
+      }
+      // Alternating the fade's name restarts the countdown in place.
+      let lasts = case item.round % 2 {
+        0 -> lasts
+        _ -> [attribute.data("round", "odd"), ..lasts]
+      }
+      #(
+        int.to_string(item.id),
+        toast(item.variant, [held(item.id, on_hold), ..lasts], [
+          title([text(item.title)]),
+          case item.description {
+            "" -> element.none()
+            said -> description([text(said)])
+          },
+          close([attribute.aria_label("Dismiss"), ..on_close(item.id)]),
+        ]),
+      )
+    }),
   )
 }
 
@@ -359,6 +358,11 @@ pub fn persistent() -> Attribute(msg) {
 }
 
 /// Every class this module uses, for `howdy/ui/export`.
+/// The CSS this module registers with `style.rule`, for `howdy/ui/export`.
+pub fn rules() -> List(#(String, String)) {
+  [#(animation_rule, animation_css)]
+}
+
 pub fn classes() -> List(Class) {
   [
     region_class(),
@@ -464,6 +468,9 @@ pub fn close_class() -> Class {
   ])
 }
 
-// Sketch classes cannot carry `@keyframes`, so they travel with the region.
+// Sketch classes cannot carry `@keyframes`, so they are registered as a
+// rule when a region is drawn, emitted once per document.
 // Fading out ends with `display: none`, so a faded toast gives up its space.
+const animation_rule = "howdy-toast"
+
 const animation_css = "@keyframes howdy-toast-in{from{opacity:0;transform:translateY(.5rem)}}@keyframes howdy-toast-out{to{opacity:0;visibility:hidden;display:none}}@keyframes howdy-toast-out-again{to{opacity:0;visibility:hidden;display:none}}[data-howdy-toast]{animation:howdy-toast-in .2s ease-out,howdy-toast-out .2s ease-in var(--howdy-toast-duration,5s) forwards}[data-howdy-toast][data-round=odd]{animation-name:howdy-toast-in,howdy-toast-out-again}[data-howdy-toast][data-persistent]{animation:howdy-toast-in .2s ease-out}[data-howdy-toast]:hover,[data-howdy-toast]:focus-within{animation-play-state:paused}@keyframes howdy-toast-spin{to{transform:rotate(360deg)}}[data-howdy-toast-spinner]{animation:howdy-toast-spin .8s linear infinite}@media (prefers-reduced-motion:reduce){[data-howdy-toast-spinner]{animation-duration:2.4s}[data-howdy-toast]{animation-name:none,howdy-toast-out}[data-howdy-toast][data-round=odd]{animation-name:none,howdy-toast-out-again}[data-howdy-toast][data-persistent]{animation:none}}"

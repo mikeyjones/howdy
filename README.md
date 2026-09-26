@@ -50,8 +50,9 @@ needs to name it. For ewe options `howdy.start` does not offer, pass
 
 HTTP/2 is always on. Add `howdy.tls(cert: "priv/cert.pem", key: "priv/key.pem")`
 to serve HTTPS, which is also what lets browsers use HTTP/2. See
-[docs/deployment.md](docs/deployment.md) for TLS, reverse proxies, forwarded
-headers and checking a deployed instance with `scripts/smoke.sh`.
+[docs/guides/supervision.djot](docs/guides/supervision.djot) for running the
+app as a release, and check a deployed instance with `scripts/smoke.sh`, which
+probes HTTP/1.1, HTTP/2, forwarded headers and WebSocket origins.
 
 Further documentation can be found at <https://howdy.hexdocs.pm/>.
 

@@ -139,7 +139,7 @@ fn shell(
         sidebar.header([
           html.a(
             [class(home_class()), attribute.href(base <> "?theme=" <> preset)],
-            [text("howdy_ui " <> cli.version)],
+            [text("howdy_ui " <> cli.version())],
           ),
         ]),
         sidebar.content(groups),

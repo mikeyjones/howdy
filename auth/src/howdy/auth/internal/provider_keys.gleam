@@ -31,12 +31,15 @@ fn single_flight(
 /// no URL can equal.
 const only_key = "keys"
 
+/// `what` names the document for the error a failed fetch reports, such as
+/// "Google signing keys" or "Microsoft issuer metadata".
 pub fn get(
   cache: Cache,
+  what: String,
   refresh: Bool,
   fetch: fn() -> service.Result(Response(String)),
 ) -> service.Result(String) {
-  let failed = service.Internal("Google signing keys unavailable")
+  let failed = service.Internal(what <> " unavailable")
   use <- single_flight(cache, only_key, refresh, _, failed)
   use res <- result.try(fetch())
   case res.status == 200 && string.byte_size(res.body) <= 1_048_576 {

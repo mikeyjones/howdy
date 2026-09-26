@@ -1,5 +1,6 @@
 name = "howdy_guards_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "Typed controller and endpoint guards in howdy"
 
 [dependencies]

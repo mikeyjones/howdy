@@ -29,30 +29,14 @@ pub fn page(
   ctx: Context,
 ) -> Response(Content) {
   let assert Ok(id) = controller.param(ctx, "id")
+  // A trace the recorder holds always has a span, but the id came from the
+  // request, so an empty answer is treated like a dropped trace.
   case recorder.trace(recorder, id) {
-    Error(Nil) ->
-      layout.page(
-        config,
-        ctx,
-        current: "/telemetry",
-        heading: "Trace not found",
-        live: False,
-        content: [
-          ui.p([
-            ui.muted(
-              "The recorder no longer holds this trace: it keeps the newest ones and drops the rest.",
-            ),
-          ]),
-          ui.p([
-            ui.link(config.path(config, "/telemetry"), [text("All traces")]),
-          ]),
-        ],
-      )
-    Ok(spans) -> {
+    Ok([first, ..] as spans) -> {
       let tree = shared.tree(spans)
-      let assert [#(first, _), ..] = tree
       let root =
         list.find(spans, fn(span) { span.parent_id == None })
+        |> result.lazy_or(fn() { list.first(tree) |> result.map(fn(p) { p.0 }) })
         |> result.unwrap(first)
       layout.page(
         config,
@@ -73,6 +57,24 @@ pub fn page(
         ],
       )
     }
+    Error(Nil) | Ok([]) ->
+      layout.page(
+        config,
+        ctx,
+        current: "/telemetry",
+        heading: "Trace not found",
+        live: False,
+        content: [
+          ui.p([
+            ui.muted(
+              "The recorder no longer holds this trace: it keeps the newest ones and drops the rest.",
+            ),
+          ]),
+          ui.p([
+            ui.link(config.path(config, "/telemetry"), [text("All traces")]),
+          ]),
+        ],
+      )
   }
 }
 

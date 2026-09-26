@@ -35,8 +35,10 @@ import gloo/adapter.{Adapter, PgConnection}
 import gloo/repo.{type Repo}
 import gloo/telemetry
 import howdy/database
+import howdy/env
 import howdy/service
 import howdy/trace
+import howdy/url
 import pog
 
 /// The oldest PostgreSQL major version still supported upstream.
@@ -99,17 +101,14 @@ pub opaque type Config {
   )
 }
 
-@external(erlang, "howdy_database_ffi", "getenv")
-fn getenv(name: String) -> Result(String, Nil)
-
 @external(erlang, "howdy_database_ffi", "monotonic_ms")
 fn now() -> Int
 
 /// Read the connection URL from `DATABASE_URL`, as most hosts provide it.
 pub fn from_env() -> Result(Config, Error) {
-  case getenv("DATABASE_URL") {
-    Ok(url) if url != "" -> from_url(url)
-    _ -> Error(MissingUrl("DATABASE_URL"))
+  case env.get("DATABASE_URL") {
+    Ok(url) -> from_url(url)
+    Error(Nil) -> Error(MissingUrl("DATABASE_URL"))
   }
 }
 
@@ -178,22 +177,10 @@ pub fn from_url(url: String) -> Result(Config, Error) {
 fn credentials(
   userinfo: Option(String),
 ) -> Result(#(String, Option(String)), Error) {
-  case userinfo {
-    None -> Ok(#("postgres", None))
-    Some(userinfo) ->
-      case string.split_once(userinfo, ":") {
-        Ok(#(user, password)) -> {
-          use user <- result.try(decoded(user))
-          use password <- result.try(decoded(password))
-          use <- bool.guard(user == "", Error(InvalidUrl))
-          Ok(#(user, Some(password)))
-        }
-        Error(Nil) -> {
-          use user <- result.try(decoded(userinfo))
-          use <- bool.guard(user == "", Error(InvalidUrl))
-          Ok(#(user, None))
-        }
-      }
+  case url.credentials(userinfo) {
+    Ok(None) -> Ok(#("postgres", None))
+    Ok(Some(found)) -> Ok(found)
+    Error(Nil) -> Error(InvalidUrl)
   }
 }
 
@@ -202,13 +189,9 @@ fn decoded(text: String) -> Result(String, Error) {
 }
 
 fn default_ssl(host: String) -> Ssl {
-  case host {
-    "127.0.0.1" | "::1" -> SslDisabled
-    _ ->
-      case string.contains(host, ".") || string.contains(host, ":") {
-        True -> SslVerified
-        False -> SslDisabled
-      }
+  case url.is_local(host) {
+    True -> SslDisabled
+    False -> SslVerified
   }
 }
 

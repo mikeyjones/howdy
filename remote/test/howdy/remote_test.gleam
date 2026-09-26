@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/actor
 import gleam/string
 import howdy/remote
 import howdy/service
@@ -129,29 +130,51 @@ pub fn slow_handler_times_out_test() {
 }
 
 pub fn calls_run_concurrently_test() {
-  let slow =
-    remote.procedure("slow.parallel", input: remote.int(), output: remote.int())
+  // Every handler waits at a gate that opens once all ten have arrived, so
+  // the calls only succeed if they run side by side: run one after
+  // another, the first would wait for the rest forever.
+  let gate = gate(10)
+  let meet =
+    remote.procedure("meet.parallel", input: remote.nil(), output: remote.int())
   let assert Ok(_) =
     remote.server()
-    |> remote.handle(slow, fn(ms) {
-      process.sleep(ms)
-      Ok(ms)
-    })
+    |> remote.handle(meet, fn(_) { Ok(process.call(gate, 1000, Arrive)) })
     |> remote.start
   let reply = process.new_subject()
   list.each(list.repeat(Nil, 10), fn(_) {
     process.spawn(fn() {
       process.send(
         reply,
-        remote.call(remote.cluster(), slow, 200, timeout: 1000),
+        remote.call(remote.cluster(), meet, Nil, timeout: 2000),
       )
     })
   })
-  // Ten 200ms calls through one server finish well inside 1s only if they
-  // run side by side.
   list.each(list.repeat(Nil, 10), fn(_) {
-    assert process.receive(reply, 600) == Ok(Ok(200))
+    assert process.receive(reply, 2000) == Ok(Ok(10))
   })
+}
+
+type Arrival {
+  Arrive(reply: process.Subject(Int))
+}
+
+/// A gate that answers everyone at once, with how many arrived, when
+/// `expected` have.
+fn gate(expected: Int) -> process.Subject(Arrival) {
+  let assert Ok(started) =
+    actor.new([])
+    |> actor.on_message(fn(waiting, arrival: Arrival) {
+      let waiting = [arrival.reply, ..waiting]
+      case list.length(waiting) >= expected {
+        True -> {
+          list.each(waiting, process.send(_, list.length(waiting)))
+          actor.continue([])
+        }
+        False -> actor.continue(waiting)
+      }
+    })
+    |> actor.start
+  started.data
 }
 
 pub fn mismatched_output_is_a_bad_response_test() {
@@ -241,7 +264,11 @@ pub fn stopped_server_leaves_the_cluster_test() {
   let assert Ok(started) = remote.start(fixtures.users_server("stopped"))
   process.unlink(started.pid)
   process.kill(started.pid)
-  process.sleep(20)
+  assert fixtures.await_no_provider(
+    fixtures.whoami("stopped"),
+    remote.self(),
+    100,
+  )
   assert remote.providers(fixtures.whoami("stopped")) == []
   assert remote.call(
       remote.cluster(),
@@ -286,6 +313,49 @@ pub fn apply_calls_plain_erlang_test() {
       timeout: 1000,
     )
 }
+
+pub fn names_that_are_not_node_names_are_refused_test() {
+  // None of these may become an atom on a caller's say-so.
+  list.each(["nope", "@host", "name@", "bad name@host", "a@b@c"], fn(name) {
+    assert remote.connect(name)
+      == Error(remote.Unavailable("not a node name: " <> name))
+    assert remote.connect_to([name])
+      == Error(remote.Unavailable("not a node name: " <> name))
+    let assert Error(remote.Unavailable(_)) =
+      remote.call(remote.node(name), fixtures.whoami("x"), Nil, timeout: 100)
+    // A cast to it is dropped, without raising.
+    remote.cast(remote.node(name), fixtures.whoami("x"), Nil)
+  })
+  let assert Error(remote.Unavailable(_)) =
+    remote.connect(string.repeat("a", 250) <> "@host")
+}
+
+pub fn apply_refuses_a_module_or_function_this_node_has_never_seen_test() {
+  let assert Error(remote.Crashed(reason)) =
+    remote.apply(
+      on: remote.self(),
+      module: "howdy_remote_no_such_module_" <> string.inspect(erlang_unique()),
+      function: "abs",
+      args: [],
+      decoder: decode.int,
+      timeout: 1000,
+    )
+  assert string.contains(reason, "undef")
+  let assert Error(remote.Crashed(reason)) =
+    remote.apply(
+      on: remote.self(),
+      module: "erlang",
+      function: "howdy_remote_no_such_function_"
+        <> string.inspect(erlang_unique()),
+      args: [],
+      decoder: decode.int,
+      timeout: 1000,
+    )
+  assert string.contains(reason, "undef")
+}
+
+@external(erlang, "erlang", "unique_integer")
+fn erlang_unique() -> Int
 
 pub fn codecs_round_trip_test() {
   let round_trip = fn(codec: remote.Codec(a), value: a) {

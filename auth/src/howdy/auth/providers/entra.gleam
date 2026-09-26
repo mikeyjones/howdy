@@ -57,16 +57,31 @@ pub fn with_transport(
       ))
   }
   let metadata_cache = provider_keys.new()
-  let keys_url =
-    "https://login.microsoftonline.com/" <> tenant <> "/discovery/v2.0/keys"
+  // Every URL the flow needs is built from the tenant here, once, so a
+  // tenant that does not form a URL fails installation, never a sign-in.
+  let requests = {
+    use keys <- result.try(
+      request.to(authority(tenant, "/discovery/v2.0/keys")),
+    )
+    use token <- result.try(request.to(authority(tenant, "/oauth2/v2.0/token")))
+    use metadata <- result.try(
+      request.to(authority(tenant, "/v2.0/.well-known/openid-configuration")),
+    )
+    Ok(#(keys, token, metadata))
+  }
+  let valid = case valid, requests {
+    Ok(Nil), Error(Nil) ->
+      Error(service.Invalid("Microsoft Entra tenant does not form a URL"))
+    _, _ -> valid
+  }
+  let #(keys_request, token_request, metadata_request) =
+    result.unwrap(requests, #(request.new(), request.new(), request.new()))
   provider.new(
     "entra",
     "Microsoft",
     valid,
     fn(auth) {
-      "https://login.microsoftonline.com/"
-      <> tenant
-      <> "/oauth2/v2.0/authorize"
+      authority(tenant, "/oauth2/v2.0/authorize")
       <> "?"
       <> uri.query_to_string([
         #("client_id", client_id),
@@ -82,7 +97,7 @@ pub fn with_transport(
     },
     fn(exchange) {
       use response <- result.try(
-        post(send, token_url(tenant), [
+        post(send, token_request, [
           #("grant_type", "authorization_code"),
           #("code", secret.reveal(exchange.code)),
           #("client_id", client_id),
@@ -98,26 +113,40 @@ pub fn with_transport(
         )
         |> result.replace_error(service.Unauthorized),
       )
-      let assert Ok(keys_request) = request.to(keys_url)
       let fetch_keys = fn() { send(keys_request) }
-      use keys <- result.try(provider_keys.get(keys_cache, False, fetch_keys))
+      use keys <- result.try(provider_keys.get(
+        keys_cache,
+        "Microsoft signing keys",
+        False,
+        fetch_keys,
+      ))
       use payload <- result.try(case verify_signature(signed, keys) {
         Ok(payload) -> Ok(payload)
         Error(_) -> {
           // A new signing key may appear before the cached set expires.
-          use keys <- result.try(provider_keys.get(keys_cache, True, fetch_keys))
+          use keys <- result.try(provider_keys.get(
+            keys_cache,
+            "Microsoft signing keys",
+            True,
+            fetch_keys,
+          ))
           verify_signature(signed, keys)
           |> result.replace_error(service.Unauthorized)
         }
       })
-      use issuer <- result.try(expected_issuer(tenant, metadata_cache, send))
+      use issuer <- result.try(expected_issuer(
+        tenant,
+        metadata_cache,
+        metadata_request,
+        send,
+      ))
       claims(payload, client_id, tenant, issuer, exchange.nonce_digest)
     },
   )
 }
 
-fn token_url(tenant: String) -> String {
-  "https://login.microsoftonline.com/" <> tenant <> "/oauth2/v2.0/token"
+fn authority(tenant: String, path: String) -> String {
+  "https://login.microsoftonline.com/" <> tenant <> path
 }
 
 fn valid_tenant(tenant: String) -> Bool {
@@ -154,8 +183,7 @@ fn send(req: Request(String)) -> service.Result(Response(String)) {
   )
 }
 
-fn post(send, url: String, fields) {
-  let assert Ok(req) = request.to(url)
+fn post(send, req: Request(String), fields) {
   use res <- result.try(send(
     req
     |> request.set_method(http.Post)
@@ -216,7 +244,7 @@ fn claims(
     && iat <= now + 60
     && iat < exp
     && nbf <= now
-    && token.digest(nonce) == nonce_digest
+    && token.constant_time_equal(token.digest(nonce), nonce_digest)
   {
     True ->
       Ok(provider.Identity(
@@ -268,18 +296,14 @@ fn valid_tenant_id(tenant: String) -> Bool {
 
 // Domain tenant selectors resolve to a GUID issuer in Microsoft's metadata.
 // Fetch only from the configured Microsoft authority, never a token-supplied URL.
-fn expected_issuer(tenant, cache, send) {
+fn expected_issuer(tenant, cache, req: Request(String), send) {
   case list.contains(identity_tenants, tenant) || valid_tenant_id(tenant) {
-    True -> Ok("https://login.microsoftonline.com/" <> tenant <> "/v2.0")
+    True -> Ok(authority(tenant, "/v2.0"))
     False -> {
-      let assert Ok(req) =
-        request.to(
-          "https://login.microsoftonline.com/"
-          <> tenant
-          <> "/v2.0/.well-known/openid-configuration",
-        )
       use metadata <- result.try(
-        provider_keys.get(cache, False, fn() { send(req) }),
+        provider_keys.get(cache, "Microsoft issuer metadata", False, fn() {
+          send(req)
+        }),
       )
       json.parse(
         metadata,

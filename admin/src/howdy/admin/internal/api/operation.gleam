@@ -18,6 +18,7 @@ import howdy/admin/internal/api_spec.{
 }
 import howdy/admin/internal/config.{type Api, type Config}
 import howdy/admin/internal/layout
+import howdy/auth/user.{type User}
 import howdy/auth/users
 import howdy/content.{type Content}
 import howdy/controller.{type Context}
@@ -75,6 +76,12 @@ pub fn page(
         Some(fields) -> dict.from_list(form.fields(fields))
         None -> defaults(document, operation)
       }
+      // Listed once here, for the "Send as" select, not on every render.
+      let accounts = case config.identity {
+        None -> None
+        Some(identity) ->
+          Some(users.list(identity) |> result.unwrap([]) |> list.take(200))
+      }
       layout.page(
         config,
         ctx,
@@ -93,7 +100,7 @@ pub fn page(
               ),
             ]),
             summary_card(document, operation),
-            request_card(config, served, document, operation, values),
+            request_card(config, served, document, operation, values, accounts),
             case outcome {
               Some(outcome) -> outcome_card(outcome)
               None -> element.none()
@@ -171,6 +178,7 @@ fn request_card(
   document: Document,
   operation: Operation,
   values: Dict(String, String),
+  accounts: Option(List(User)),
 ) -> Element(msg) {
   let value = fn(name) { dict.get(values, name) |> result.unwrap("") }
   let required = api_spec.security_of(document, operation)
@@ -191,7 +199,7 @@ fn request_card(
         ],
         [
           ui.stack([], [
-            identity_field(config, value("as")),
+            identity_field(accounts, value("as")),
             ..list.flatten([
               list.filter_map(document.schemes, fn(entry) {
                 let #(name, scheme) = entry
@@ -235,11 +243,15 @@ fn request_card(
   ])
 }
 
-fn identity_field(config: Config, selected: String) -> Element(msg) {
-  case config.identity {
+/// Who to send as, from the users listed for this request; nothing
+/// without auth.
+fn identity_field(
+  accounts: Option(List(User)),
+  selected: String,
+) -> Element(msg) {
+  case accounts {
     None -> element.none()
-    Some(identity) -> {
-      let listed = users.list(identity) |> result.unwrap([]) |> list.take(200)
+    Some(listed) -> {
       ui.field([], [
         ui.label([attribute.for("as")], [text("Send as")]),
         ui.native_select([attribute.id("as"), attribute.name("as")], [

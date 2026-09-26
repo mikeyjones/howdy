@@ -355,3 +355,26 @@ pub fn facebook_link_and_subsequent_signin_without_email_test() {
   assert signed_in.user.id == session.user.id
   assert finish(start, None) == Error(service.Unauthorized)
 }
+
+pub fn entra_is_validated_when_installed_test() {
+  use _, identity, _, _ <- fixture
+  let invalid = fn(provider) {
+    case auth.with_provider(identity, provider) {
+      Error(service.Invalid(_)) -> True
+      _ -> False
+    }
+  }
+  // A tenant that cannot form Microsoft's URLs is refused at installation,
+  // never left to fail a sign-in.
+  assert invalid(entra.new("client", "secret", ""))
+  assert invalid(entra.new("client", "secret", "contoso/../common"))
+  assert invalid(entra.new("client", "secret", "contoso.com?x=1"))
+  assert invalid(entra.new("client", "secret", "contoso.com#frag"))
+  assert invalid(entra.new("client", "secret", "a b"))
+  assert invalid(entra.new("", "secret", tenant))
+  assert invalid(entra.new("client", "", tenant))
+  let assert Ok(_) =
+    auth.with_provider(identity, entra.new("client", "secret", tenant))
+  let assert Ok(_) =
+    auth.with_provider(identity, entra.new("client", "secret", "contoso.com"))
+}

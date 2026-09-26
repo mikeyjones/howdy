@@ -17,6 +17,16 @@ pub fn class(class: Class) -> Attribute(msg) {
   attribute.class(stylesheet.class_name(class))
 }
 
+/// Register CSS a Sketch class cannot carry, such as `@keyframes` and the
+/// rules that apply them, under a stable name. Call it while rendering the
+/// element that needs it: the block is included once per document by
+/// `howdy/ui/page`, `howdy/ui/live` and `styles`, however many elements
+/// register it. A published stylesheet includes the built-in rules; add
+/// your own with `export.rules`.
+pub fn rule(name: String, css: String) -> Nil {
+  stylesheet.rule(name, css)
+}
+
 /// A `<style>` element holding the CSS for every class used so far. Build
 /// it after the elements it styles. Pages and live views include this for
 /// you.

@@ -1,5 +1,6 @@
 name = "howdy_admin_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "A small app with a database and auth, and the howdy_admin development area mounted from dev/"
 target = "erlang"
 

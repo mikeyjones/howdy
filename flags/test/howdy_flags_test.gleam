@@ -34,7 +34,7 @@ fn search() -> flags.Flag {
   flags.flag("search_v2", description: "New search") |> flags.on_by_default
 }
 
-@external(erlang, "howdy_database_ffi", "getenv")
+@external(erlang, "howdy_flags_ffi", "getenv")
 fn getenv(name: String) -> Result(String, Nil)
 
 /// SQLite in memory, or a PostgreSQL database emptied of the package's
@@ -203,6 +203,29 @@ pub fn percent_text_test() {
   assert flags.percent_to_string(5) == "0.05%"
   assert flags.percent_to_string(1250) == "12.5%"
   assert flags.percent_to_string(10_000) == "100%"
+  // Every shape of the fraction: one hundredth, tenths, both digits, and
+  // the digits either side of a whole number.
+  assert flags.percent_to_string(1) == "0.01%"
+  assert flags.percent_to_string(10) == "0.1%"
+  assert flags.percent_to_string(99) == "0.99%"
+  assert flags.percent_to_string(101) == "1.01%"
+  assert flags.percent_to_string(110) == "1.1%"
+  assert flags.percent_to_string(1234) == "12.34%"
+  assert flags.percent_to_string(9999) == "99.99%"
+  assert flags.percent_to_string(9990) == "99.9%"
+}
+
+@external(erlang, "howdy_flags_ffi", "attempt")
+fn attempt(run: fn() -> a) -> Result(a, String)
+
+pub fn check_every_takes_a_tenth_of_a_second_to_a_minute_test() {
+  let config = flags.new(memory.new()) |> flags.register([checkout()])
+  let assert Ok(_) = attempt(fn() { flags.check_every(config, 100) })
+  let assert Ok(_) = attempt(fn() { flags.check_every(config, 60_000) })
+  let assert Error(reason) = attempt(fn() { flags.check_every(config, 99) })
+  assert string.contains(reason, "100 to 60000")
+  let assert Error(_) = attempt(fn() { flags.check_every(config, 60_001) })
+  let assert Error(_) = attempt(fn() { flags.check_every(config, -1) })
 }
 
 pub fn targets_round_trip_test() {
@@ -460,6 +483,34 @@ pub fn other_nodes_pick_up_changes_test() {
   flags.stop(features)
 }
 
+pub fn refresh_reloads_at_once_and_answers_without_a_keeper_test() {
+  let store = memory.new()
+  let assert Ok(features) =
+    flags.new(store)
+    |> flags.register([checkout(), search()])
+    |> flags.check_every(milliseconds: 60_000)
+    |> flags.start
+  let assert Ok(other) = start(store)
+  let assert Ok(Nil) =
+    flags.set_rollout(other, "new_checkout", to: 10_000, by: "ops")
+  // A change from elsewhere waits for the next check, unless asked for.
+  assert !flags.enabled(features, checkout(), for: flags.user("1"))
+  let assert Ok(Nil) = flags.refresh(features)
+  assert flags.enabled(features, checkout(), for: flags.user("1"))
+  flags.stop(other)
+
+  // Once stopped, the keeper is gone and both messages say so without
+  // crashing: refresh with an error, stop by doing nothing.
+  let assert Ok(pid) = flags.keeper(features)
+  flags.stop(features)
+  assert !process.is_alive(pid)
+  assert flags.keeper(features) == Error(Nil)
+  let assert Error(service.Internal(reason)) = flags.refresh(features)
+  assert string.contains(reason, "not running")
+  flags.stop(features)
+  assert flags.enabled(features, search(), for: flags.anonymous())
+}
+
 pub fn stopped_flags_answer_with_defaults_test() {
   let assert Ok(features) = start(memory.new())
   let assert Ok(Nil) = flags.kill(features, "search_v2", by: "ops")
@@ -550,6 +601,69 @@ pub fn a_store_that_crashes_does_not_take_the_keeper_test() {
   assert process.is_alive(pid)
   assert flags.enabled(features, checkout(), for: flags.user("1"))
   flags.stop(features)
+}
+
+pub fn a_store_that_errors_leaves_the_last_settings_in_force_test() {
+  // The store answers once, then fails every call without crashing.
+  let loads = counter()
+  let store =
+    flags.store(
+      named: "failing",
+      load: fn() {
+        case count(loads) {
+          0 ->
+            Ok(
+              flags.Snapshot(
+                version: 1,
+                settings: [#("new_checkout", setting(10_000))],
+                groups: [],
+              ),
+            )
+          _ -> Error(service.Internal("the store is away"))
+        }
+      },
+      version: fn() { Ok(2) },
+      history: fn(_, _) { Ok([]) },
+    )
+  let assert Ok(features) =
+    flags.new(store)
+    |> flags.register([checkout()])
+    |> flags.check_every(milliseconds: 100)
+    |> flags.start
+  let assert Ok(pid) = flags.keeper(features)
+  assert flags.enabled(features, checkout(), for: flags.user("1"))
+  // Every check finds a new version, tries to reload, and logs the
+  // failure; the settings loaded first stay in force.
+  process.sleep(250)
+  assert process.is_alive(pid)
+  assert flags.enabled(features, checkout(), for: flags.user("1"))
+  let assert Error(service.Internal(reason)) = flags.refresh(features)
+  assert string.contains(reason, "the store is away")
+  assert flags.enabled(features, checkout(), for: flags.user("1"))
+  flags.stop(features)
+}
+
+/// A count shared between processes, as the keeper calls the store.
+type Counter
+
+@external(erlang, "counters", "new")
+fn counters_new(size: Int, options: List(Nil)) -> Counter
+
+@external(erlang, "counters", "add")
+fn counters_add(counter: Counter, index: Int, by: Int) -> Nil
+
+@external(erlang, "counters", "get")
+fn counters_get(counter: Counter, index: Int) -> Int
+
+fn counter() -> Counter {
+  counters_new(1, [])
+}
+
+/// The count so far, then one more.
+fn count(counter: Counter) -> Int {
+  let seen = counters_get(counter, 1)
+  counters_add(counter, 1, 1)
+  seen
 }
 
 pub fn duplicate_keys_and_missing_schema_are_refused_test() {

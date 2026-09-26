@@ -243,18 +243,13 @@ pub fn percent(whole: Int) -> Int {
 /// A rollout as people read it, such as `25%` or `0.5%`.
 pub fn percent_to_string(rollout: Int) -> String {
   let whole = int.to_string(rollout / 100)
+  // Tenths and hundredths, with a trailing zero dropped: 50 is 0.5%, 5 is
+  // 0.05%, 1250 is 12.5%.
   case rollout % 100 {
     0 -> whole <> "%"
-    part ->
-      whole
-      <> "."
-      <> {
-        string.pad_start(int.to_string(part), 2, "0")
-        |> string.replace("0", " ")
-        |> string.trim_end
-        |> string.replace(" ", "0")
-      }
-      <> "%"
+    part if part % 10 == 0 -> whole <> "." <> int.to_string(part / 10) <> "%"
+    part if part < 10 -> whole <> ".0" <> int.to_string(part) <> "%"
+    part -> whole <> "." <> int.to_string(part) <> "%"
   }
 }
 

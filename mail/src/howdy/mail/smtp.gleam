@@ -25,8 +25,10 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gleam/uri
+import howdy/env
 import howdy/mail.{type Adapter, type Outgoing}
 import howdy/mail/mime
+import howdy/url
 
 /// How the connection is encrypted.
 pub type Tls {
@@ -66,9 +68,6 @@ pub opaque type Config {
   )
 }
 
-@external(erlang, "howdy_mail_ffi", "getenv")
-fn getenv(name: String) -> Result(String, Nil)
-
 /// A server at `host` on port 587 with verified `STARTTLS`, or no TLS for
 /// loopback addresses and dotless names such as a Compose service called
 /// `mailpit`.
@@ -88,9 +87,9 @@ pub fn new(host: String) -> Config {
 
 /// Read the server URL from `SMTP_URL`.
 pub fn from_env() -> Result(Config, Error) {
-  case getenv("SMTP_URL") {
-    Ok(url) if url != "" -> from_url(url)
-    _ -> Error(MissingUrl("SMTP_URL"))
+  case env.get("SMTP_URL") {
+    Ok(url) -> from_url(url)
+    Error(Nil) -> Error(MissingUrl("SMTP_URL"))
   }
 }
 
@@ -126,17 +125,15 @@ pub fn from_url(url: String) -> Result(Config, Error) {
     Ok("implicit") -> Ok(ImplicitTls(verify: True))
     Ok(mode) -> Error(UnsupportedTls(mode))
   })
-  use #(username, password) <- result.try(case parsed.userinfo {
-    None -> Ok(#(None, None))
-    Some(userinfo) -> {
-      let #(user, password) =
-        string.split_once(userinfo, ":") |> result.unwrap(#(userinfo, ""))
-      use user <- result.try(decoded(user))
-      use password <- result.try(decoded(password))
-      use <- bool.guard(user == "", Error(InvalidUrl))
-      Ok(#(Some(user), Some(password)))
-    }
-  })
+  // A user with no password still authenticates, with an empty one.
+  use #(username, password) <- result.try(
+    case url.credentials(parsed.userinfo) {
+      Ok(None) -> Ok(#(None, None))
+      Ok(Some(#(user, password))) ->
+        Ok(#(Some(user), Some(option.unwrap(password, ""))))
+      Error(Nil) -> Error(InvalidUrl)
+    },
+  )
   Ok(
     Config(
       ..new(host),
@@ -148,18 +145,10 @@ pub fn from_url(url: String) -> Result(Config, Error) {
   )
 }
 
-fn decoded(text: String) -> Result(String, Error) {
-  uri.percent_decode(text) |> result.replace_error(InvalidUrl)
-}
-
 fn default_tls(host: String) -> Tls {
-  case host {
-    "127.0.0.1" | "::1" -> NoTls
-    _ ->
-      case string.contains(host, ".") || string.contains(host, ":") {
-        True -> StartTls(verify: True)
-        False -> NoTls
-      }
+  case url.is_local(host) {
+    True -> NoTls
+    False -> StartTls(verify: True)
   }
 }
 
@@ -180,7 +169,9 @@ pub fn tls(config: Config, tls: Tls) -> Config {
   Config(..config, tls:)
 }
 
-/// How long to wait for the server at each step. Default 10 seconds.
+/// How long to wait for the connection to open. Default 10 seconds. Once
+/// connected, each reply from the server is waited for up to gen_smtp's
+/// own limit of twenty minutes.
 pub fn timeout(config: Config, milliseconds: Int) -> Config {
   Config(..config, timeout: milliseconds)
 }

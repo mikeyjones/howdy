@@ -17,10 +17,10 @@ fn channel_member(topics: List(String)) -> Pid
 @external(erlang, "howdy_test_ffi", "stop_member")
 fn stop_member(pid: Pid) -> Nil
 
-@external(erlang, "howdy_ffi", "channel_join")
+@external(erlang, "howdy_channel_ffi", "channel_join")
 fn join_pid(topic: String, pid: Pid) -> Nil
 
-@external(erlang, "howdy_ffi", "tuple_second")
+@external(erlang, "howdy_channel_ffi", "tuple_second")
 fn tuple_second(message: dynamic.Dynamic) -> websocket.Frame
 
 import gleam/dynamic

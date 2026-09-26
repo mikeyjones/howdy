@@ -19,17 +19,17 @@ pub fn controller(config: Config, identity: Auth) -> Controller {
     user_pages.user_show(config, identity, ctx)
   })
   |> controller.post("/users/:id/suspend", fn(ctx) {
-    user_pages.user_action(config, identity, ctx, fn(id) {
+    user_pages.user_action(config, ctx, fn(id) {
       auth.suspend(identity, id, by: config.actor)
     })
   })
   |> controller.post("/users/:id/resume", fn(ctx) {
-    user_pages.user_action(config, identity, ctx, fn(id) {
+    user_pages.user_action(config, ctx, fn(id) {
       auth.resume(identity, id, by: config.actor)
     })
   })
   |> controller.post("/users/:id/revoke", fn(ctx) {
-    user_pages.user_action(config, identity, ctx, fn(id) {
+    user_pages.user_action(config, ctx, fn(id) {
       user_pages.forget_token(identity, id)
       auth.revoke_sessions(identity, id, by: config.actor)
     })

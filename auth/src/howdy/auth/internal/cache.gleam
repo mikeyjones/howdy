@@ -1,4 +1,11 @@
 //// Optional bounded authorization cache. Never caches database errors.
+////
+//// The dirty flag and transaction depth live in the calling process's
+//// dictionary (see `howdy_auth_ffi`). `transaction` and `changing` must
+//// therefore run in the process that holds the database transaction: a
+//// grant mutation made from a process spawned inside a transaction is not
+//// seen by the outer transaction's hook and invalidates as soon as its own
+//// `changing` returns, not after the outer commit.
 
 import howdy/database
 import howdy/migration
@@ -32,11 +39,13 @@ pub fn run(
 pub fn invalidate() -> Nil
 
 /// Carry a mutation's dirty flag through outer Howdy transaction boundaries.
+/// Runs as the `around_transactions` hook, in the transaction's own process.
 @external(erlang, "howdy_auth_ffi", "cache_transaction")
 pub fn transaction(run: fn() -> a) -> a
 
 /// Invalidate before a grant mutation and after its outermost transaction,
 /// including rollback or exceptions. Ordinary auth transactions stay read-only
-/// with respect to cache generations.
+/// with respect to cache generations. Call it in the process that holds the
+/// transaction, never from a process spawned inside one.
 @external(erlang, "howdy_auth_ffi", "cache_changing")
 pub fn changing(run: fn() -> a) -> a

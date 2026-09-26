@@ -1,6 +1,6 @@
 -module(howdy_database_ffi).
 -export([with_lock/2, around_runs/2, run_hooks/0, around_transactions/2, outermost_transaction/1,
-         in_transaction/0, getenv/1, monotonic_ms/0]).
+         in_transaction/0, monotonic_ms/0]).
 
 %% Run with the fair, reentrant lock for Lock held. The lock server is
 %% howdy_database_locks; Run executes in the calling process, which keeps
@@ -88,12 +88,6 @@ register_hook(Registry, Name, Hook) ->
 
 hooks(Registry) ->
     [Hook || {_, Hook} <- lists:sort(maps:to_list(persistent_term:get(Registry, #{})))].
-
-getenv(Name) ->
-    case os:getenv(unicode:characters_to_list(Name)) of
-        false -> {error, nil};
-        Value -> {ok, unicode:characters_to_binary(Value)}
-    end.
 
 monotonic_ms() ->
     erlang:monotonic_time(millisecond).

@@ -309,21 +309,14 @@ pub fn authenticate_digest(
       })
       // The store says who; the database says whether they still may.
       use users <- result.try(
-        db.connect(config.repo, store.active_user(
+        db.connect(config.repo, store.active_user_version(
           _,
           entry.user_id,
           locking: False,
         )),
       )
-      use version <- result.try(
-        db.connect(config.repo, account_store.version(_, entry.user_id)),
-      )
-      use _ <- result.try(case version == entry.version {
-        True -> Ok(Nil)
-        False -> Error(service.Unauthorized)
-      })
       case users {
-        [user] ->
+        [#(user, version)] if version == entry.version ->
           case touch_due(entry.last_seen_at) {
             True ->
               external.touch(
@@ -527,6 +520,8 @@ pub fn suspend(
   use <- common.after_commit(config, fn(external) {
     external.delete_for_user(user_id, None)
   })
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.write_transaction(config.repo, touching: "howdy_auth_users")
   use _ <- result.try(store.require_user(conn, user_id))
@@ -548,6 +543,8 @@ pub fn resume(
       external.delete_for_user(user_id, None)
     }),
   )
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.write_transaction(config.repo, touching: "howdy_auth_users")
   use _ <- result.try(store.require_user(conn, user_id))
@@ -612,26 +609,32 @@ pub fn current_account(
   principal: Principal,
   fresh: Bool,
 ) -> service.Result(#(User, Method)) {
-  use users <- result.try(store.active_user(
+  use users <- result.try(store.active_user_version(
     conn,
     principal.user.id,
     locking: True,
   ))
-  use user <- result.try(case users {
-    [user] -> Ok(user)
+  use #(user, version) <- result.try(case users {
+    [found] -> Ok(found)
     _ -> Error(service.Unauthorized)
   })
   use _ <- result.try(common.in_bound_group(config, user.group_id))
   let now = token.now()
   use row <- result.try(case config.sessions {
     InDatabase -> {
-      use rows <- result.try(store.sessions_for_user(conn, user.id, now))
-      list.find(rows, fn(row) { row.digest == principal.session_id })
-      |> result.replace_error(service.Unauthorized)
+      use rows <- result.try(store.session_for_user(
+        conn,
+        user.id,
+        principal.session_id,
+        now,
+      ))
+      case rows {
+        [row] -> Ok(row)
+        _ -> Error(service.Unauthorized)
+      }
     }
     External(external) -> {
       use found <- result.try(external.get(principal.session_id))
-      use version <- result.try(account_store.version(conn, user.id))
       case found {
         Some(entry) if entry.user_id == user.id && entry.version == version ->
           Ok(store.SessionRow(
@@ -702,10 +705,16 @@ pub fn session_method(
 ) -> service.Result(String) {
   case config.sessions {
     InDatabase -> {
-      use rows <- result.try(store.sessions_for_user(conn, user.id, token.now()))
-      list.find(rows, fn(row) { row.digest == principal.session_id })
-      |> result.map(fn(row) { row.method })
-      |> result.replace_error(service.Unauthorized)
+      use rows <- result.try(store.session_for_user(
+        conn,
+        user.id,
+        principal.session_id,
+        token.now(),
+      ))
+      case rows {
+        [row] -> Ok(row.method)
+        _ -> Error(service.Unauthorized)
+      }
     }
     External(store) -> {
       use entry <- result.try(store.get(principal.session_id))

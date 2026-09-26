@@ -2,6 +2,7 @@ import gleam/erlang/process
 import gleam/list
 import gleam/string
 import howdy/ui
+import howdy/ui/internal/stylesheet
 import howdy/ui/theme/tokens
 import lustre/element
 import lustre/element/html
@@ -53,9 +54,12 @@ pub fn many_processes_register_classes_at_once_test() {
 }
 
 pub fn a_class_is_rendered_once_test() {
-  let _ = badge(1)
-  let _ = badge(1)
-  let css = ui.styles() |> element.to_string
+  // A render scope sees only the classes used inside it, so this holds
+  // whatever other tests have registered in the shared registry.
+  let #(_, css) =
+    stylesheet.scoped(fn() {
+      [badge(1), badge(1)] |> element.fragment |> element.to_string
+    })
   let occurrences = string.split(css, "--badge-index: 1;") |> list.length
   assert occurrences == 2
 }

@@ -275,12 +275,18 @@ fn subscribe(
   use dispatch <- effect.from
   let name = table.name
   let subscribed =
-    notify.subscribe(repo, listen, process.self(), fn(changed) {
-      case changed == name {
-        True -> dispatch(Changed)
-        False -> Nil
-      }
-    })
+    notify.subscribe(
+      repo,
+      listen,
+      process.self(),
+      fn(changed) {
+        case changed == name {
+          True -> dispatch(Changed)
+          False -> Nil
+        }
+      },
+      fn() { dispatch(Subscribed(False)) },
+    )
   dispatch(Subscribed(subscribed == Ok(Nil)))
 }
 

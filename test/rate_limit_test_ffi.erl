@@ -19,10 +19,10 @@ cleanup_boundaries() ->
         {admitted, 1} = fixed_hit(T, <<"old">>, -2),
         {admitted, 1} = fixed_hit(T, <<"current">>, -1),
         {admitted, 1} = fixed_hit(T, <<"future">>, 0),
-        1 = howdy_ffi:fixed_window_cleanup(T, -1),
+        1 = howdy_rate_limit_ffi:fixed_window_cleanup(T, -1),
         2 = rows(T),
         {admitted, 2} = fixed_hit(T, <<"current">>, -1),
-        1 = howdy_ffi:fixed_window_cleanup(T, 0),
+        1 = howdy_rate_limit_ffi:fixed_window_cleanup(T, 0),
         {admitted, 2} = fixed_hit(T, <<"future">>, 0)
     end),
     with_table(fun(T) ->
@@ -33,29 +33,29 @@ cleanup_boundaries() ->
          || I <- lists:seq(1, 2000)],
         {admitted, 2000} = bucket_hit(T, <<"active">>, 2000, 3, -500),
         {admitted, 1000} = bucket_hit(T, <<"active">>, 2000, 3, -500),
-        0 = howdy_ffi:token_bucket_cleanup(T, 2000, 3, -667),
+        0 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 2000, 3, -667),
         %% Well inside the old idle horizon, yet lossless to evict.
-        2000 = howdy_ffi:token_bucket_cleanup(T, 2000, 3, -666),
+        2000 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 2000, 3, -666),
         1 = rows(T),
         %% The depleted bucket survives every later sweep until it refills.
-        0 = howdy_ffi:token_bucket_cleanup(T, 2000, 3, 100),
+        0 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 2000, 3, 100),
         {admitted, 300} = bucket_hit(T, <<"active">>, 2000, 3, -400),
         {admitted, 2000} = bucket_hit(T, <<"1">>, 2000, 3, 0),
         {admitted, 1000} = bucket_hit(T, <<"1">>, 2000, 3, 0),
         {admitted, 0} = bucket_hit(T, <<"1">>, 2000, 3, 0),
         %% "active" (300 tokens at -400) is full from 167; "1" (empty at 0)
         %% needs 1000/3 ms, so it is full at 667 and not before.
-        1 = howdy_ffi:token_bucket_cleanup(T, 2000, 3, 666),
-        1 = howdy_ffi:token_bucket_cleanup(T, 2000, 3, 667),
+        1 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 2000, 3, 666),
+        1 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 2000, 3, 667),
         0 = rows(T)
     end),
     nil.
 
 fixed_hit(T, Key, Window) ->
-    howdy_ffi:fixed_window_hit(T, Key, Window, infinity).
+    howdy_rate_limit_ffi:fixed_window_hit(T, Key, Window, infinity).
 
 bucket_hit(T, Key, Capacity, Rate, Now) ->
-    howdy_ffi:token_bucket_hit(T, Key, Capacity, Rate, infinity, Now).
+    howdy_rate_limit_ffi:token_bucket_hit(T, Key, Capacity, Rate, infinity, Now).
 
 cleanup_races() ->
     with_table(fun(T) ->
@@ -68,7 +68,7 @@ cleanup_races() ->
                 bucket_hit(T, <<"k">>, 2000, 1, 0)
             end),
             Results = howdy_test_ffi:parallel_at_once(
-                [fun() -> howdy_ffi:token_bucket_cleanup(T, 2000, 1, 0), skipped end | Hits]),
+                [fun() -> howdy_rate_limit_ffi:token_bucket_cleanup(T, 2000, 1, 0), skipped end | Hits]),
             2 = length([N || {admitted, N} <- Results, N >= 1000]),
             [{_, 0, 0}] = [R || {_, _, _} = R <- ets:tab2list(T)]
         end || _ <- lists:seq(1, 100)]
@@ -92,45 +92,45 @@ scheduled_cleanup() ->
 identity_cap() ->
     %% Fixed window: the cap counts rows, never touches existing rows.
     with_table(fun(T) ->
-        [{admitted, 1} = howdy_ffi:fixed_window_hit(T, integer_to_binary(I), 0, 3)
+        [{admitted, 1} = howdy_rate_limit_ffi:fixed_window_hit(T, integer_to_binary(I), 0, 3)
          || I <- lists:seq(1, 3)],
-        refused = howdy_ffi:fixed_window_hit(T, <<"4">>, 0, 3),
-        {admitted, 2} = howdy_ffi:fixed_window_hit(T, <<"1">>, 0, 3),
+        refused = howdy_rate_limit_ffi:fixed_window_hit(T, <<"4">>, 0, 3),
+        {admitted, 2} = howdy_rate_limit_ffi:fixed_window_hit(T, <<"1">>, 0, 3),
         %% The same key in a new window is a new row.
-        refused = howdy_ffi:fixed_window_hit(T, <<"1">>, 1, 3),
+        refused = howdy_rate_limit_ffi:fixed_window_hit(T, <<"1">>, 1, 3),
         3 = rows(T),
         3 = counter(T),
-        3 = howdy_ffi:fixed_window_cleanup(T, 1),
+        3 = howdy_rate_limit_ffi:fixed_window_cleanup(T, 1),
         0 = counter(T),
-        {admitted, 1} = howdy_ffi:fixed_window_hit(T, <<"4">>, 1, 3)
+        {admitted, 1} = howdy_rate_limit_ffi:fixed_window_hit(T, <<"4">>, 1, 3)
     end),
     %% Token bucket: depleted buckets keep denying while the table is full,
     %% and a refused hit leaves no trace.
     with_table(fun(T) ->
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, <<"b">>, 1000, 1, 2, 0),
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, 2, 500),
-        refused = howdy_ffi:token_bucket_hit(T, <<"c">>, 1000, 1, 2, 500),
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, <<"b">>, 1000, 1, 2, 0),
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, 2, 500),
+        refused = howdy_rate_limit_ffi:token_bucket_hit(T, <<"c">>, 1000, 1, 2, 500),
         2 = rows(T),
         2 = counter(T),
-        {admitted, 0} = howdy_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, 2, 500),
+        {admitted, 0} = howdy_rate_limit_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, 2, 500),
         %% Nothing has refilled, so the sweep frees nothing.
-        0 = howdy_ffi:token_bucket_cleanup(T, 1000, 1, 999),
-        refused = howdy_ffi:token_bucket_hit(T, <<"c">>, 1000, 1, 2, 999),
+        0 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 1000, 1, 999),
+        refused = howdy_rate_limit_ffi:token_bucket_hit(T, <<"c">>, 1000, 1, 2, 999),
         %% "b" is back at capacity at 1000ms and gets evicted; "a" is not.
-        1 = howdy_ffi:token_bucket_cleanup(T, 1000, 1, 1000),
+        1 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 1000, 1, 1000),
         1 = counter(T),
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, <<"c">>, 1000, 1, 2, 1000),
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, 2, 1500)
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, <<"c">>, 1000, 1, 2, 1000),
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, 2, 1500)
     end),
     %% Unbounded tables never grow a counter row.
     with_table(fun(T) ->
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, infinity, 0),
-        1 = howdy_ffi:token_bucket_cleanup(T, 1000, 1, 1000),
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, <<"a">>, 1000, 1, infinity, 0),
+        1 = howdy_rate_limit_ffi:token_bucket_cleanup(T, 1000, 1, 1000),
         false = ets:member(T, '$howdy_identities')
     end),
     %% Concurrent first hits never exceed the cap, for either store.
     with_table(fun(T) ->
-        Hits = [fun() -> howdy_ffi:token_bucket_hit(T, integer_to_binary(I), 1000, 1, 10, 0) end
+        Hits = [fun() -> howdy_rate_limit_ffi:token_bucket_hit(T, integer_to_binary(I), 1000, 1, 10, 0) end
                 || I <- lists:seq(1, 100)],
         Results = howdy_test_ffi:parallel_at_once(Hits),
         Admitted = length([ok || {admitted, _} <- Results]),
@@ -142,7 +142,7 @@ identity_cap() ->
     with_table(fun(T) ->
         [begin
             ets:delete_all_objects(T),
-            Hits = [fun() -> howdy_ffi:fixed_window_hit(T, integer_to_binary(I), 0, 1) end
+            Hits = [fun() -> howdy_rate_limit_ffi:fixed_window_hit(T, integer_to_binary(I), 0, 1) end
                     || I <- lists:seq(1, 100)],
             Results = howdy_test_ffi:parallel_at_once(Hits),
             Admitted = length([ok || {admitted, _} <- Results]),
@@ -153,7 +153,7 @@ identity_cap() ->
     %% Losing an insert race gives the slot back, and a hit that saw the
     %% reservation fail while the same key was being inserted still counts.
     with_table(fun(T) ->
-        Hits = [fun() -> howdy_ffi:token_bucket_hit(T, <<"same">>, 5000, 1, 1, 0) end
+        Hits = [fun() -> howdy_rate_limit_ffi:token_bucket_hit(T, <<"same">>, 5000, 1, 1, 0) end
                 || _ <- lists:seq(1, 50)],
         Results = howdy_test_ffi:parallel_at_once(Hits),
         Admitted = length([ok || {admitted, _} <- Results]),
@@ -167,13 +167,13 @@ identity_cap() ->
     %% Long keys are stored hashed, so row bytes are bounded.
     with_table(fun(T) ->
         Long = binary:copy(<<"x">>, 10000),
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, Long, 1000, 1, infinity, 0),
-        {admitted, 0} = howdy_ffi:token_bucket_hit(T, Long, 1000, 1, infinity, 0),
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, Long, 1000, 1, infinity, 0),
+        {admitted, 0} = howdy_rate_limit_ffi:token_bucket_hit(T, Long, 1000, 1, infinity, 0),
         [{Stored, 0, 0}] = ets:tab2list(T),
         32 = byte_size(Stored),
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, <<Long/binary, "y">>, 1000, 1, infinity, 0),
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, <<Long/binary, "y">>, 1000, 1, infinity, 0),
         Short = binary:copy(<<"x">>, 64),
-        {admitted, 1000} = howdy_ffi:token_bucket_hit(T, Short, 1000, 1, infinity, 0),
+        {admitted, 1000} = howdy_rate_limit_ffi:token_bucket_hit(T, Short, 1000, 1, infinity, 0),
         true = ets:member(T, Short)
     end),
     nil.
@@ -182,7 +182,7 @@ owner_lifecycle() ->
     Parent = self(),
     [begin
         {Owner, Ref} = spawn_monitor(fun() ->
-            {T, _} = howdy_ffi:fixed_window_new(1000),
+            {T, _} = howdy_rate_limit_ffi:fixed_window_new(1000),
             %% The janitor owns the table and is not linked to us.
             Janitor = ets:info(T, owner),
             true = Janitor =/= self(),
@@ -235,7 +235,7 @@ sample(N) ->
         Keys = [integer_to_binary(I) || I <- lists:seq(1, N)],
         {reductions, Before} = process_info(self(), reductions),
         {Us, _} = timer:tc(fun() ->
-            [{admitted, 1} = howdy_ffi:fixed_window_hit(T, K, 0, 100000) || K <- Keys]
+            [{admitted, 1} = howdy_rate_limit_ffi:fixed_window_hit(T, K, 0, 100000) || K <- Keys]
         end),
         {reductions, After} = process_info(self(), reductions),
         N = rows(T),

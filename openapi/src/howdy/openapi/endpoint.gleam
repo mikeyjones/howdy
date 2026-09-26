@@ -146,9 +146,18 @@ pub fn delete(
 }
 
 /// Run middleware around one endpoint, like `middleware.wrap` for a
-/// handler. It runs after the controller guard.
-pub fn wrap(endpoint: Endpoint(Nil), middleware: Middleware) -> Endpoint(Nil) {
-  Endpoint(..endpoint, handler: controller.wrap(endpoint.handler, middleware))
+/// handler. It runs after the controller guard. Middleware sees the request
+/// without the guard's value, as middleware always does, and the endpoint
+/// gets the value back with whatever the middleware changed.
+pub fn wrap(
+  endpoint: Endpoint(guarded),
+  middleware: Middleware,
+) -> Endpoint(guarded) {
+  Endpoint(..endpoint, handler: fn(ctx) {
+    middleware(context.Context(..ctx, guard: Nil), fn(plain) {
+      endpoint.handler(context.Context(..plain, guard: ctx.guard))
+    })
+  })
 }
 
 // -- Building ----------------------------------------------------------------

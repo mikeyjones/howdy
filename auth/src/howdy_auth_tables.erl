@@ -15,7 +15,7 @@
 %% is being restarted makes its cache miss, never crash.
 -module(howdy_auth_tables).
 -behaviour(gen_server).
--export([start_link/0, ensure/1, versions/0]).
+-export([start_link/0, ensure/1, versions/0, counter/1]).
 -export([init/1, handle_call/3, handle_cast/2]).
 
 -define(VERSIONS, howdy_auth_cache_versions).
@@ -38,6 +38,15 @@ versions() ->
         Versions -> Versions
     end.
 
+%% One `counters` reference under `Key` for the life of the VM, such as the
+%% SAML atom budget. Created by the owner, so two callers racing on first
+%% use share one counter rather than each starting their own.
+counter(Key) ->
+    case persistent_term:get(Key, undefined) of
+        undefined -> call({counter, Key});
+        Counter -> Counter
+    end.
+
 call(Request) -> call(Request, 3).
 
 call(Request, Attempts) ->
@@ -57,6 +66,16 @@ handle_call({ensure, Name}, _From, State) ->
         Existing -> Existing
     end,
     {reply, Table, State};
+handle_call({counter, Key}, _From, State) ->
+    Counter = case persistent_term:get(Key, undefined) of
+        undefined ->
+            Created = counters:new(1, []),
+            persistent_term:put(Key, Created),
+            Created;
+        Existing ->
+            Existing
+    end,
+    {reply, Counter, State};
 handle_call(versions, _From, State) ->
     Versions = case persistent_term:get(?VERSIONS, undefined) of
         undefined ->

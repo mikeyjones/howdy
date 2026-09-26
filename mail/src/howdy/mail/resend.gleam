@@ -21,8 +21,10 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
+import howdy/env
 import howdy/mail.{type Adapter, type Outgoing}
 import howdy/mail/internal/http as mail_http
+import howdy/mail/internal/json as mail_json
 
 pub opaque type Config {
   Config(api_key: String, base_url: String, timeout: Int)
@@ -34,10 +36,7 @@ pub fn new(api_key: String) -> Config {
 
 /// Read the API key from `RESEND_API_KEY`.
 pub fn from_env() -> Result(Config, Nil) {
-  case mail_http.getenv("RESEND_API_KEY") {
-    Ok(key) if key != "" -> Ok(new(key))
-    _ -> Error(Nil)
-  }
+  env.get("RESEND_API_KEY") |> result.map(new)
 }
 
 /// Where the API is, without a trailing slash. Default
@@ -109,8 +108,8 @@ fn body(outgoing: Outgoing) -> Json {
         #("to", addresses(outgoing.to)),
         #("subject", json.string(outgoing.subject)),
       ],
-      present("cc", outgoing.cc, addresses),
-      present("bcc", outgoing.bcc, addresses),
+      mail_json.present("cc", outgoing.cc, addresses),
+      mail_json.present("bcc", outgoing.bcc, addresses),
       case outgoing.reply_to {
         Some(address) -> [#("reply_to", addresses([address]))]
         None -> []
@@ -132,7 +131,7 @@ fn body(outgoing: Outgoing) -> Json {
           ),
         ]
       },
-      present("attachments", outgoing.attachments, fn(attachments) {
+      mail_json.present("attachments", outgoing.attachments, fn(attachments) {
         json.array(attachments, fn(attachment: mail.Attachment) {
           json.object(
             list.flatten([
@@ -152,7 +151,7 @@ fn body(outgoing: Outgoing) -> Json {
           )
         })
       }),
-      present("tags", outgoing.tags, fn(tags) {
+      mail_json.present("tags", outgoing.tags, fn(tags) {
         json.array(tags, fn(tag) {
           json.object([
             #("name", json.string(tag_name(tag))),
@@ -162,17 +161,6 @@ fn body(outgoing: Outgoing) -> Json {
       }),
     ]),
   )
-}
-
-fn present(
-  name: String,
-  values: List(a),
-  encode: fn(List(a)) -> Json,
-) -> List(#(String, Json)) {
-  case values {
-    [] -> []
-    values -> [#(name, encode(values))]
-  }
 }
 
 /// Letters, digits, `_` and `-`, at most 256 characters.

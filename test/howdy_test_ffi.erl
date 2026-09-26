@@ -1,19 +1,11 @@
 -module(howdy_test_ffi).
 -include_lib("public_key/include/public_key.hrl").
 -export([spawn_task/1, await/1, catch_panic/1, channel_member/1, stop_member/1]).
--export([parallel_at_once/1, await/2, await_no_connections/1, scope_pid/0]).
+-export([parallel_at_once/1, await/2, await_no_connections/1, scope_pid/0, putenv/2, unsetenv/1]).
 -export([with_static_tree/1]).
 -export([with_http_server/2, http_status/3]).
--export([free_port/0, test_certificate/0, tls_probe/2, h2c_probe/1]).
+-export([test_certificate/0, tls_probe/2, h2c_probe/1]).
 -export([open_websocket/1, receive_close_frame/1, socket_closed/1, tcp_connect/1, single_child/1]).
-
-%% A port nobody is listening on right now. `howdy.start` does not report
-%% the port it chose, so tests pick one first.
-free_port() ->
-    {ok, L} = gen_tcp:listen(0, [{ip, {127,0,0,1}}]),
-    {ok, Port} = inet:port(L),
-    gen_tcp:close(L),
-    Port.
 
 %% A throwaway self-signed chain as PEM {Cert, Key}.
 test_certificate() ->
@@ -62,7 +54,7 @@ exchange(Mod, S, _Http1) ->
     <<"HTTP/1.1 ", Status:3/binary, _/binary>> = Data,
     binary_to_integer(Status).
 
-recv_at_least(Mod, S, N, Acc) when byte_size(Acc) >= N -> {ok, Acc};
+recv_at_least(_Mod, _S, N, Acc) when byte_size(Acc) >= N -> {ok, Acc};
 recv_at_least(Mod, S, N, Acc) ->
     case Mod:recv(S, 0, 5000) of
         {ok, More} -> recv_at_least(Mod, S, N, <<Acc/binary, More/binary>>);
@@ -156,7 +148,7 @@ catch_panic(Fun) ->
 channel_member(Topics) ->
     Parent = self(),
     Pid = spawn(fun() ->
-        [howdy_ffi:channel_join(T, self()) || T <- Topics],
+        [howdy_channel_ffi:channel_join(T, self()) || T <- Topics],
         Parent ! {joined, self()},
         receive stop -> ok end
     end),
@@ -255,3 +247,11 @@ scope_pid() ->
         undefined -> {error, nil};
         Pid -> {ok, Pid}
     end.
+
+putenv(Name, Value) ->
+    true = os:putenv(unicode:characters_to_list(Name), unicode:characters_to_list(Value)),
+    nil.
+
+unsetenv(Name) ->
+    true = os:unsetenv(unicode:characters_to_list(Name)),
+    nil.

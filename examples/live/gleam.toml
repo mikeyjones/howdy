@@ -1,5 +1,6 @@
 name = "howdy_live_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "Themed pages and live server components with howdy_ui"
 
 [dependencies]

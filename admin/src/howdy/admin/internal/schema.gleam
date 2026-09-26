@@ -318,7 +318,14 @@ fn contains(table: Table, column: Column, placeholder: String) -> String {
   case table.backend {
     Postgres ->
       "CAST(" <> quote(column.name) <> " AS text) ILIKE " <> placeholder
-    Sqlite -> "CAST(" <> quote(column.name) <> " AS text) LIKE " <> placeholder
+    // SQLite has no default escape character, so the backslashes
+    // `escape_like` adds mean nothing without this.
+    Sqlite ->
+      "CAST("
+      <> quote(column.name)
+      <> " AS text) LIKE "
+      <> placeholder
+      <> " ESCAPE '\\'"
   }
 }
 

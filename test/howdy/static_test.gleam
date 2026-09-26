@@ -1,6 +1,8 @@
 import gleam/http
+import gleam/http/request
 import gleam/http/response
 import gleam/json
+import gleam/string
 import howdy
 import howdy/controller
 import howdy/static
@@ -203,4 +205,37 @@ pub fn content_type_test() {
   assert static.content_type("a/b.png") == "image/png"
   assert static.content_type("a/b.json") == "application/json; charset=utf-8"
   assert static.content_type("Makefile") == "application/octet-stream"
+}
+
+pub fn static_files_carry_validators_and_answer_304_test() {
+  let res = testing.get("/index.html") |> testing.send(app())
+  assert res.status == 200
+  let assert Ok(etag) = response.get_header(res, "etag")
+  let assert Ok(modified) = response.get_header(res, "last-modified")
+  assert string.ends_with(modified, " GMT")
+
+  let res =
+    testing.get("/index.html")
+    |> request.set_header("if-none-match", etag)
+    |> testing.send(app())
+  assert res.status == 304
+  assert response.get_header(res, "etag") == Ok(etag)
+
+  let res =
+    testing.get("/index.html")
+    |> request.set_header("if-modified-since", modified)
+    |> testing.send(app())
+  assert res.status == 304
+
+  let res =
+    testing.get("/index.html")
+    |> request.set_header("if-modified-since", "Thu, 01 Jan 1970 00:00:00 GMT")
+    |> testing.send(app())
+  assert res.status == 200
+
+  let res =
+    testing.get("/index.html")
+    |> request.set_header("if-none-match", "\"nope\"")
+    |> testing.send(app())
+  assert res.status == 200
 }

@@ -71,26 +71,36 @@ pub fn with_mfa_template(
 /// The function `auth.new` and `auth.with_email_tokens` take.
 pub fn deliver(emails: Emails) -> fn(Delivery) -> Result(Nil, Nil) {
   fn(delivery: Delivery) {
-    send(emails, message(emails, delivery), delivery.email)
+    send(
+      emails,
+      message(emails, delivery),
+      "auth." <> purpose_name(delivery.purpose),
+    )
   }
 }
 
 /// The function `mfa.with_delivery` takes.
 pub fn deliver_mfa(emails: Emails) -> fn(User, Secret) -> Result(Nil, Nil) {
   fn(user: User, code: Secret) {
-    send(emails, mfa_message(emails, user.email, code), user.email)
+    send(
+      emails,
+      mfa_message(emails, user.email, code),
+      "auth.mfa for user " <> user.id,
+    )
   }
 }
 
-fn send(emails: Emails, message: Message, email: String) -> Result(Nil, Nil) {
+/// `about` names the message by purpose (and user id when there is one),
+/// never by address: a recipient's email must not end up in the log.
+fn send(emails: Emails, message: Message, about: String) -> Result(Nil, Nil) {
   case mail.send(emails.mailer, message) {
     Ok(_) -> Ok(Nil)
     Error(error) -> {
       logging.log(
         logging.Error,
-        "howdy/auth/emails: not sent to "
-          <> email
-          <> ": "
+        "howdy/auth/emails: "
+          <> about
+          <> " not sent: "
           <> mail.error_to_string(error),
       )
       Error(Nil)

@@ -11,7 +11,7 @@ import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
 import gleam/httpc
 import gleam/json
-import gleam/option.{None}
+import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import gleam/uri
@@ -43,6 +43,10 @@ pub fn with_transport(
   send: fn(Request(String)) -> service.Result(Response(String)),
 ) -> Provider {
   let client_secret = secret.wrap(client_secret)
+  // Fixed URLs parse once here, at installation, so no sign-in can fail on
+  // building a request from a constant.
+  let assert Ok(token_request) = request.to(token_url)
+  let assert Ok(profile_request) = request.to(profile_url)
   let valid = case
     string.trim(client_id) != "" && secret.reveal(client_secret) != ""
   {
@@ -69,7 +73,7 @@ pub fn with_transport(
     },
     fn(exchange) {
       use response <- result.try(
-        post(send, [
+        post(send, token_request, [
           #("client_id", client_id),
           #("client_secret", secret.reveal(client_secret)),
           #("code", secret.reveal(exchange.code)),
@@ -89,7 +93,12 @@ pub fn with_transport(
       })
       use profile <- result.try(get(
         send,
-        profile_url <> "&access_token=" <> uri.percent_encode(access),
+        request.Request(
+          ..profile_request,
+          query: Some(
+            "fields=id,email&access_token=" <> uri.percent_encode(access),
+          ),
+        ),
       ))
       use subject <- result.try(
         json.parse(profile, decode.field("id", decode.string, decode.success))
@@ -127,9 +136,8 @@ pub fn with_transport(
 
 fn get(
   send: fn(Request(String)) -> service.Result(Response(String)),
-  url: String,
+  req: Request(String),
 ) -> service.Result(String) {
-  let assert Ok(req) = request.to(url)
   use response <- result.try(send(req))
   case response.status == 200 && string.byte_size(response.body) <= 1_048_576 {
     True -> Ok(response.body)
@@ -157,8 +165,7 @@ fn send(req: Request(String)) -> service.Result(Response(String)) {
   )
 }
 
-fn post(send, fields) {
-  let assert Ok(req) = request.to(token_url)
+fn post(send, req: Request(String), fields) {
   let response =
     send(
       req

@@ -62,6 +62,8 @@ pub fn with_cache(
 /// inside the callback. Without this wrapper, direct SQL/external transactions
 /// have the same bounded TTL as remote nodes.
 pub fn with_changes(run: fn() -> a) -> a {
+  // The flag it sets is process-local: `run` must do its writing in this
+  // process, not in one it spawns (see `cache.changing`).
   cache.changing(run)
 }
 
@@ -76,6 +78,8 @@ pub fn define_role(
 ) -> service.Result(Nil) {
   use scope <- result.try(scope_key(scope))
   use _ <- result.try(valid_names([name, ..permissions]))
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.transaction(access.repo)
   use _ <- result.try(
@@ -111,6 +115,8 @@ pub fn assign(
   by actor: Actor,
 ) -> service.Result(Nil) {
   use scope <- result.try(scope_key(scope))
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.write_transaction(access.repo, touching: "howdy_auth_users")
   use _ <- result.try(store.require_user(conn, user_id))
@@ -144,6 +150,8 @@ pub fn revoke(
   by actor: Actor,
 ) -> service.Result(Nil) {
   use scope <- result.try(scope_key(scope))
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.write_transaction(access.repo, touching: "howdy_auth_users")
   use _ <- result.try(store.require_user(conn, user_id))
@@ -214,6 +222,8 @@ pub fn delete_role(
   by actor: Actor,
 ) -> service.Result(Nil) {
   use scope <- result.try(scope_key(scope))
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.transaction(access.repo)
   use roles <- result.try(db.query(

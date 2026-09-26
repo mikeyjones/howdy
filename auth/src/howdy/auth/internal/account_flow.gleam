@@ -425,6 +425,8 @@ pub fn delete_account(
   use <- common.after_commit(config, fn(external) {
     external.delete_for_user(principal.user.id, None)
   })
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.write_transaction(config.repo, touching: "howdy_auth_users")
   use #(user, _) <- result.try(session_flow.current_account(
@@ -456,6 +458,8 @@ pub fn delete_user(
   use <- common.after_commit(config, fn(external) {
     external.delete_for_user(user_id, None)
   })
+  // Runs in the process holding the transaction: the dirty flag is
+  // process-local (see `cache.changing`).
   use <- cache.changing
   use conn <- db.write_transaction(config.repo, touching: "howdy_auth_users")
   use users <- result.try(store.find_user(conn, user_id))

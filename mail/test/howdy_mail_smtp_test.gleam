@@ -1,4 +1,3 @@
-import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import howdy/mail
@@ -197,5 +196,22 @@ pub fn unreachable_server_test() {
   let assert Error(mail.Unavailable(reason)) =
     mail.send(mailer(config), message())
   assert string.contains(reason, "econnrefused")
-  assert list.length([reason]) == 1
 }
+
+pub fn from_env_treats_an_empty_variable_as_unset_test() {
+  unsetenv("SMTP_URL")
+  assert smtp.from_env() == Error(smtp.MissingUrl("SMTP_URL"))
+  putenv("SMTP_URL", "")
+  assert smtp.from_env() == Error(smtp.MissingUrl("SMTP_URL"))
+  putenv("SMTP_URL", "smtp://mailpit:1025")
+  let assert Ok(config) = smtp.from_env()
+  assert smtp.host(config) == "mailpit"
+  assert smtp.port_of(config) == 1025
+  unsetenv("SMTP_URL")
+}
+
+@external(erlang, "howdy_mail_test_ffi", "putenv")
+fn putenv(name: String, value: String) -> Nil
+
+@external(erlang, "howdy_mail_test_ffi", "unsetenv")
+fn unsetenv(name: String) -> Nil

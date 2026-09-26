@@ -1,5 +1,6 @@
 name = "howdy_example"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "A minimal howdy application with a single controller"
 
 [dependencies]

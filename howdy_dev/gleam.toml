@@ -1,5 +1,6 @@
 name = "howdy_dev"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "Hot reload for howdy apps in development"
 licences = ["Apache-2.0"]
 target = "erlang"

@@ -1,5 +1,14 @@
 -module(howdy_ui_cli_ffi).
--export([fetch/1, run/2]).
+-export([fetch/1, run/2, version/0]).
+
+%% The version from the application resource file, which Gleam writes
+%% from gleam.toml. `undefined` only when the application was never loaded.
+version() ->
+    _ = application:load(howdy_ui),
+    case application:get_key(howdy_ui, vsn) of
+        {ok, Vsn} -> {ok, unicode:characters_to_binary(Vsn)};
+        undefined -> {error, nil}
+    end.
 
 %% GET a URL with OTP's httpc, verifying the server's certificate against
 %% the system's trusted roots.

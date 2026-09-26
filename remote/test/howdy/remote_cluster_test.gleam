@@ -5,6 +5,7 @@ import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/erlang/process.{type Pid}
 import gleam/list
+import gleam/otp/static_supervisor
 import gleam/string
 import howdy/remote
 import howdy/service
@@ -18,6 +19,26 @@ fn start_peer() -> #(Pid, String)
 
 @external(erlang, "howdy_remote_test_ffi", "stop_peer")
 fn stop_peer(peer: Pid) -> Nil
+
+@external(erlang, "howdy_remote_test_ffi", "start_named_peer")
+fn start_named_peer(name: String) -> #(Pid, String)
+
+@external(erlang, "howdy_remote_test_ffi", "connected_nodes")
+fn connected_nodes() -> List(String)
+
+@external(erlang, "howdy_remote_test_ffi", "connector_supervised")
+fn connector_supervised() -> Bool
+
+fn await(attempts: Int, every: Int, check: fn() -> Bool) -> Bool {
+  case check(), attempts {
+    True, _ -> True
+    False, 0 -> False
+    False, _ -> {
+      process.sleep(every)
+      await(attempts - 1, every, check)
+    }
+  }
+}
 
 fn with_peer(prefix: String, test_body: fn(String) -> Nil) -> Nil {
   start_distribution()
@@ -117,7 +138,7 @@ pub fn stopped_node_test() {
     )
   assert fixtures.await_provider(fixtures.whoami("peer_gone"), node, 100)
   stop_peer(peer)
-  process.sleep(50)
+  assert fixtures.await_no_provider(fixtures.whoami("peer_gone"), node, 100)
   assert remote.providers(fixtures.whoami("peer_gone")) == []
   assert remote.call(
       remote.cluster(),
@@ -133,4 +154,39 @@ pub fn stopped_node_test() {
       Nil,
       timeout: 1000,
     )
+}
+
+pub fn a_connector_keeps_a_node_connected_test() {
+  start_distribution()
+  // Controlled over standard io, so only the connector links the nodes.
+  let #(peer, node) = start_named_peer("howdy_remote_kept")
+  assert !list.contains(connected_nodes(), node)
+  assert remote.connect_to([node]) == Ok(Nil)
+  assert connector_supervised()
+  assert await(100, 20, fn() { list.contains(connected_nodes(), node) })
+  // Naming it again is fine; so is adding another.
+  assert remote.connect_to([node, "howdy_remote_absent@localhost"]) == Ok(Nil)
+
+  stop_peer(peer)
+  assert await(100, 20, fn() { !list.contains(connected_nodes(), node) })
+
+  // Back under the same name: the connector notices and reconnects, after
+  // its first backoff of a second.
+  let #(peer, again) = start_named_peer("howdy_remote_kept")
+  assert again == node
+  assert await(100, 50, fn() { list.contains(connected_nodes(), node) })
+  stop_peer(peer)
+}
+
+pub fn a_connector_can_live_in_the_apps_own_tree_test() {
+  start_distribution()
+  let #(peer, node) = start_named_peer("howdy_remote_own_tree")
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(remote.connector_supervised([node]))
+    |> static_supervisor.start
+  assert await(100, 20, fn() { list.contains(connected_nodes(), node) })
+  process.unlink(supervisor.pid)
+  process.send_exit(supervisor.pid)
+  stop_peer(peer)
 }

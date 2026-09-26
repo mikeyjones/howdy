@@ -1,5 +1,5 @@
 -module(howdy_mail_ffi).
--export([smtp_send/10, rescue/1, getenv/1]).
+-export([smtp_send/10, rescue/1]).
 
 %% Send one message through gen_smtp and sort the outcome into
 %% {ok, Receipt}, {error, {temporary, Reason}} or {error, {permanent, Reason}}.
@@ -108,10 +108,4 @@ rescue(Fun) ->
     catch
         Class:Reason ->
             {error, describe({Class, Reason})}
-    end.
-
-getenv(Name) ->
-    case os:getenv(unicode:characters_to_list(Name)) of
-        false -> {error, nil};
-        Value -> {ok, unicode:characters_to_binary(Value)}
     end.

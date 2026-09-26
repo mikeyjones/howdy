@@ -32,9 +32,13 @@ pub fn routes(
       True -> answer
       False -> response.set_header(answer, "cache-control", "no-store")
     }
+    // Provider buttons are forms whose handler redirects to the identity
+    // provider, and browsers apply `form-action` to that redirect too, so
+    // any HTTPS origin is allowed there: the destinations come from the
+    // configured providers, never from the request.
     |> response.set_header(
       "content-security-policy",
-      "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self' https://accounts.google.com; base-uri 'none'; frame-ancestors 'none'",
+      "default-src 'none'; script-src 'self'; connect-src 'self'; form-action 'self' https:; base-uri 'none'; frame-ancestors 'none'",
     )
     |> response.set_header("referrer-policy", "no-referrer")
     |> response.set_header("x-content-type-options", "nosniff")

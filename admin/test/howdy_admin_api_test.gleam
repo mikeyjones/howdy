@@ -3,12 +3,14 @@
 
 import gleam/http/request
 import gleam/list
+import gleam/option.{Some}
 import gleam/string
 import gleam/uri
 import gloo/adapter/sqlite
 import gloo/repo
 import howdy
 import howdy/admin
+import howdy/admin/internal/api_spec
 import howdy/auth
 import howdy/auth/secret
 import howdy/auth/user.{type Principal}
@@ -225,12 +227,24 @@ pub fn calls_a_guarded_endpoint_as_a_user_test() {
   let assert Ok(sessions) = auth.sessions_of(identity, id)
   assert list.length(sessions) == 1
 
-  // Revoked behind the admin's back, it is replaced on the next call.
+  // Revoked behind the admin's back, the kept token gets 401: it is
+  // forgotten, a fresh session opened, and the call sent again with that,
+  // so the page shows 200 rather than the 401.
+  let assert Ok(stale) = cached_token(identity, id)
   let assert [session] = sessions
   let assert Ok(Nil) =
     auth.revoke_session_of(identity, id, session.id, by: user.System)
   let page = call(app, at, [#("as", id)])
   assert string.contains(page, ">200<")
+  assert string.contains(page, "as ada@example.com")
+  let assert Ok(fresh) = cached_token(identity, id)
+  assert fresh != stale
+  let assert Ok([replacement]) = auth.sessions_of(identity, id)
+  assert replacement.id != session.id
+  // The fresh token is the one kept for the call after that.
+  let _ = call(app, at, [#("as", id)])
+  assert cached_token(identity, id) == Ok(fresh)
+  let assert Ok([_]) = auth.sessions_of(identity, id)
 }
 
 @external(erlang, "howdy_admin_ffi", "cached_token")
@@ -346,4 +360,98 @@ pub fn offers_each_version_test() {
       #("path:id", "3"),
     ])
   assert string.contains(page, "Note 3")
+}
+
+// -- Samples -----------------------------------------------------------------
+
+const sample_document = "{
+  \"openapi\": \"3.1.0\",
+  \"info\": {\"title\": \"Samples\", \"version\": \"1\"},
+  \"paths\": {
+    \"/orders\": {
+      \"post\": {
+        \"requestBody\": {\"content\": {\"application/json\": {
+          \"schema\": {\"$ref\": \"#/components/schemas/Order\"}
+        }}},
+        \"responses\": {\"201\": {\"description\": \"Made\"}}
+      }
+    }
+  },
+  \"components\": {\"schemas\": {
+    \"Order\": {
+      \"type\": \"object\",
+      \"properties\": {
+        \"id\": {\"type\": \"string\", \"format\": \"uuid\"},
+        \"email\": {\"type\": \"string\", \"format\": \"email\"},
+        \"placed\": {\"type\": \"string\", \"format\": \"date-time\"},
+        \"day\": {\"type\": \"string\", \"format\": \"date\"},
+        \"note\": {\"type\": \"string\", \"examples\": [\"gift wrap\"]},
+        \"status\": {\"type\": \"string\", \"enum\": [\"open\", \"paid\"]},
+        \"quantity\": {\"type\": \"integer\", \"minimum\": 1},
+        \"count\": {\"type\": \"integer\"},
+        \"total\": {\"type\": \"number\"},
+        \"rush\": {\"type\": \"boolean\"},
+        \"coupon\": {\"anyOf\": [{\"type\": \"null\"}, {\"type\": \"string\"}]},
+        \"lines\": {\"type\": \"array\", \"items\": {\"$ref\": \"#/components/schemas/Line\"}},
+        \"tags\": {\"type\": \"array\"},
+        \"parent\": {\"$ref\": \"#/components/schemas/Order\"},
+        \"anything\": {}
+      }
+    },
+    \"Line\": {
+      \"type\": \"object\",
+      \"properties\": {\"sku\": {\"type\": \"string\"}}
+    }
+  }}
+}"
+
+pub fn a_sample_body_is_made_from_the_schema_test() {
+  let assert Ok(document) = api_spec.parse(sample_document)
+  let assert [operation] = document.operations
+  let assert Some(schema) = operation.body
+  let assert api_spec.Object(fields) = api_spec.example(document, schema)
+  let field = fn(name) { list.key_find(fields, name) }
+  // Formats, an example given, the first enum value, the minimum, and the
+  // plain kinds.
+  assert field("id")
+    == Ok(api_spec.String("00000000-0000-0000-0000-000000000000"))
+  assert field("email") == Ok(api_spec.String("user@example.com"))
+  assert field("placed") == Ok(api_spec.String("2026-01-01T00:00:00Z"))
+  assert field("day") == Ok(api_spec.String("2026-01-01"))
+  assert field("note") == Ok(api_spec.String("gift wrap"))
+  assert field("status") == Ok(api_spec.String("open"))
+  assert field("quantity") == Ok(api_spec.Int(1))
+  assert field("count") == Ok(api_spec.Int(0))
+  assert field("total") == Ok(api_spec.Float(0.0))
+  assert field("rush") == Ok(api_spec.Bool(False))
+  // anyOf picks the first non-null option; an untyped schema is null.
+  assert field("coupon") == Ok(api_spec.String("string"))
+  assert field("anything") == Ok(api_spec.Null)
+  // Arrays hold one sample item, or nothing without a schema for them.
+  assert field("lines")
+    == Ok(
+      api_spec.Array([api_spec.Object([#("sku", api_spec.String("string"))])]),
+    )
+  assert field("tags") == Ok(api_spec.Array([]))
+  // A schema that refers to itself is followed a few levels, then given
+  // up on with null rather than recursing forever.
+  let assert Ok(parent) = field("parent")
+  assert ancestors(parent, 0) > 1
+  assert string.contains(
+    api_spec.pretty(api_spec.example(document, schema)),
+    "\"sku\": \"string\"",
+  )
+}
+
+/// How many nested `parent` objects `value` holds before ending in null.
+fn ancestors(value: api_spec.Value, depth: Int) -> Int {
+  case value {
+    api_spec.Object(fields) ->
+      case list.key_find(fields, "parent") {
+        Ok(inner) -> ancestors(inner, depth + 1)
+        Error(Nil) -> panic as "an Order sample always has a parent"
+      }
+    api_spec.Null -> depth
+    _ -> panic as "a parent is an object or null"
+  }
 }

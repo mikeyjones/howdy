@@ -109,6 +109,27 @@ pub fn a_trace_page_shows_the_timeline_repeats_and_logs_test() {
   assert string.contains(page, "slow notes")
   assert string.contains(page, trace.root.trace_id)
 
+  // The timeline is the tree: a row per span, the root first and unindented,
+  // the queries below it indented one level.
+  let assert Ok(spans) = recorder.trace(recorder, trace.root.trace_id)
+  let tree = shared.tree(spans)
+  assert list.length(tree) == list.length(spans)
+  let assert [#(root, 0), ..rest] = tree
+  assert root.span_id == trace.root.span_id
+  assert list.all(rest, fn(pair) { pair.1 == 1 })
+  assert list.length(rest) == 7
+  list.each(spans, fn(span) {
+    assert string.contains(page, "data-span=\"" <> span.span_id <> "\"")
+  })
+  assert string.contains(page, "padding-left:0.0rem")
+  assert string.contains(page, "padding-left:1.25rem")
+  assert !string.contains(page, "padding-left:2.5rem")
+  let assert Ok(#(before_root, _)) =
+    string.split_once(page, "data-span=\"" <> root.span_id <> "\"")
+  assert !list.any(rest, fn(pair) {
+    string.contains(before_root, "data-span=\"" <> { pair.0 }.span_id <> "\"")
+  })
+
   let summary = shared.summarise(recorder, trace)
   assert summary.status == Some(200)
   assert summary.queries == 7
@@ -146,15 +167,18 @@ pub fn overview_and_navigation_list_telemetry_test() {
   assert status == 404
 }
 
-pub fn a_dropped_trace_says_so_test() {
+pub fn a_dropped_or_unknown_trace_says_so_test() {
   let recorder = recording()
-  let page =
-    get(
-      app(notes_db(), recorder),
-      "/_howdy/telemetry/trace/" <> "0af7651916cd43dd8448eb211c80319c",
-    )
-  telemetry.stop()
+  let app = app(notes_db(), recorder)
+  let _ = get(app, "/notes")
+  // A well-formed id the recorder never saw, and one that is not an id at
+  // all, both get the notice rather than a crash.
+  use id <- list.each(["0af7651916cd43dd8448eb211c80319c", "nonsense", "%20"])
+  let page = get(app, "/_howdy/telemetry/trace/" <> id)
   assert string.contains(page, "Trace not found")
+  assert string.contains(page, "All traces")
+  assert !string.contains(page, "Timeline")
+  telemetry.stop()
 }
 
 pub fn clearing_forgets_every_trace_test() {

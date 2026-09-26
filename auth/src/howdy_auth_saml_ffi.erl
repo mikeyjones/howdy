@@ -1,5 +1,5 @@
 -module(howdy_auth_saml_ffi).
--export([request/4, response/6, metadata/2]).
+-export([request/4, response/6, metadata/2, atoms_spent/0]).
 -include_lib("xmerl/include/xmerl.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
@@ -75,7 +75,17 @@ response(Encoded, Certificates, AcsUrl, Audience, Issuer, Now)
         true = byte_size(Xml) =< ?MAX_BYTES,
         %% No DTD means no entities to expand and nothing external to fetch.
         nomatch = binary:match(Xml, [<<"<!DOCTYPE">>, <<"<!ENTITY">>]),
-        ok = spend_atoms(Xml),
+        case spend_atoms(Xml) of
+            ok -> verified(Xml, Certificates, Acs, Audience, Issuer, Now);
+            %% Over budget is a refusal like any other, never a crash: the
+            %% caller maps {error, nil} to an unauthorized sign-in.
+            {error, atom_budget} -> {error, nil}
+        end
+    catch _:_ -> {error, nil} end;
+response(_, _, _, _, _, _) -> {error, nil}.
+
+verified(Xml, Certificates, Acs, Audience, Issuer, Now) ->
+    try
         Keys = [key(Pem) || Pem <- Certificates],
         true = Keys =/= [],
         %% Comments are dropped at parse: canonical XML omits them, and a
@@ -123,8 +133,7 @@ response(Encoded, Certificates, AcsUrl, Audience, Issuer, Now)
                end, Restrictions),
         {ok, {unicode:characters_to_binary(InResponseTo), NameId,
               email(Assertion, NameId)}}
-    catch _:_ -> {error, nil} end;
-response(_, _, _, _, _, _) -> {error, nil}.
+    catch _:_ -> {error, nil} end.
 
 bearer(Confirmation, Acs, InResponseTo, Now) ->
     try
@@ -203,7 +212,7 @@ verify(Element, Signature, Keys) ->
     Stripped = Element#xmlElement{
         content = [K || K <- Element#xmlElement.content, K =/= Signature]},
     Digest = crypto:hash(DigestHash, canonical(Stripped, Prefixes)),
-    true = Digest =:= base64:decode(text(DigestValue)),
+    true = howdy_auth_ffi:constant_time_equal(Digest, base64:decode(text(DigestValue))),
     [Value] = children(Signature, {?DS, 'SignatureValue'}),
     Proof = base64:decode(text(Value)),
     Data = canonical(Info, prefixes(Canonical)),
@@ -270,9 +279,16 @@ spend_atoms(Xml) ->
                                                    {encoding, utf8}]),
     Fresh = [N || N <- lists:usort(Names), N =/= [], not known(N)],
     Counter = counter(),
-    true = counters:get(Counter, 1) + length(Fresh) =< ?ATOM_BUDGET,
-    counters:add(Counter, 1, length(Fresh)),
-    ok.
+    case counters:get(Counter, 1) + length(Fresh) =< ?ATOM_BUDGET of
+        true ->
+            counters:add(Counter, 1, length(Fresh)),
+            ok;
+        false ->
+            {error, atom_budget}
+    end.
+
+%% How many atoms SAML names have cost this node so far.
+atoms_spent() -> counters:get(counter(), 1).
 
 qualified([], Local) -> Local;
 qualified(Prefix, Local) -> Prefix ++ ":" ++ Local.
@@ -281,11 +297,7 @@ known(Name) ->
     try list_to_existing_atom(Name) of _ -> true
     catch error:badarg -> false end.
 
-counter() ->
-    case persistent_term:get(?MODULE, undefined) of
-        undefined ->
-            Counter = counters:new(1, []),
-            persistent_term:put(?MODULE, Counter),
-            Counter;
-        Counter -> Counter
-    end.
+%% One counter for the life of the VM. The table owner decides the race to
+%% create it, as it does for cache generations: two request processes racing
+%% to create their own would each start a fresh budget.
+counter() -> howdy_auth_tables:counter(howdy_auth_saml_atoms).

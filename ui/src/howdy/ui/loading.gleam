@@ -19,6 +19,7 @@ import sketch/css/length.{rem}
 /// loading.skeleton([attribute.style("height", "1rem"), attribute.style("width", "12rem")])
 /// ```
 pub fn skeleton(attributes: List(Attribute(msg))) -> Element(msg) {
+  animations()
   html.div(
     [
       class(skeleton_class()),
@@ -26,7 +27,7 @@ pub fn skeleton(attributes: List(Attribute(msg))) -> Element(msg) {
       attribute.aria_hidden(True),
       ..attributes
     ],
-    [animations()],
+    [],
   )
 }
 
@@ -36,6 +37,7 @@ pub fn spinner(
   label: String,
   attributes: List(Attribute(msg)),
 ) -> Element(msg) {
+  animations()
   html.span(
     [
       class(spinner_class()),
@@ -45,7 +47,6 @@ pub fn spinner(
       ..attributes
     ],
     [
-      animations(),
       html.svg(
         [
           attribute.attribute("viewBox", "0 0 24 24"),
@@ -65,6 +66,11 @@ pub fn spinner(
 /// Every class this module uses, for `howdy/ui/export`.
 pub fn classes() -> List(Class) {
   [skeleton_class(), spinner_class()]
+}
+
+/// The CSS this module registers with `style.rule`, for `howdy/ui/export`.
+pub fn rules() -> List(#(String, String)) {
+  [#(animation_rule, animation_css)]
 }
 
 pub fn skeleton_class() -> Class {
@@ -87,11 +93,14 @@ pub fn spinner_class() -> Class {
   ])
 }
 
-// Sketch classes cannot carry `@keyframes`, so the animations travel with
-// the elements that use them. That keeps them working in a page, in a live
-// view's shadow root and with a published stylesheet alike.
-fn animations() -> Element(msg) {
-  html.style([], animation_css)
+// Sketch classes cannot carry `@keyframes`, so the animations are
+// registered as a rule when an element that uses them is drawn. The rule
+// is emitted once per document, in a live view's shadow root when its view
+// uses it, and in a published stylesheet through `rules`.
+fn animations() -> Nil {
+  style.rule(animation_rule, animation_css)
 }
+
+const animation_rule = "howdy-loading"
 
 const animation_css = "@keyframes howdy-spin{to{transform:rotate(360deg)}}@keyframes howdy-pulse{50%{opacity:.5}}[data-howdy-spinner]>svg{animation:howdy-spin .8s linear infinite}[data-howdy-skeleton]{animation:howdy-pulse 2s ease-in-out infinite}@media (prefers-reduced-motion:reduce){[data-howdy-spinner]>svg{animation-duration:2.4s}[data-howdy-skeleton]{animation:none}}"

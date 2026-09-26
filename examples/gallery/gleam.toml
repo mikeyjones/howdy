@@ -1,5 +1,6 @@
 name = "howdy_gallery"
 version = "0.1.0"
+gleam = ">= 1.18.0"
 description = "howdy_ui components and blocks: a dashboard, sign-in and sign-up screens, and a live orders table"
 
 [dependencies]

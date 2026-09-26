@@ -14,18 +14,34 @@ import gloo/repo.{type Repo}
 import gloo/value
 import howdy/database
 import howdy/database/postgres
+import howdy/env
 import howdy/migration
 import howdy/service
 import pog
-
-@external(erlang, "howdy_database_ffi", "getenv")
-fn getenv(name: String) -> Result(String, Nil)
 
 @external(erlang, "howdy_database_ffi", "monotonic_ms")
 fn now() -> Int
 
 @external(erlang, "howdy_database_test_ffi", "children")
 fn children(supervisor: process.Pid) -> List(process.Pid)
+
+@external(erlang, "howdy_database_test_ffi", "putenv")
+fn putenv(name: String, value: String) -> Nil
+
+@external(erlang, "howdy_database_test_ffi", "unsetenv")
+fn unsetenv(name: String) -> Nil
+
+pub fn from_env_treats_an_empty_variable_as_unset_test() {
+  unsetenv("DATABASE_URL")
+  assert postgres.from_env() == Error(postgres.MissingUrl("DATABASE_URL"))
+  putenv("DATABASE_URL", "")
+  assert postgres.from_env() == Error(postgres.MissingUrl("DATABASE_URL"))
+  putenv("DATABASE_URL", "postgres://app:pw@db/app")
+  let assert Ok(config) = postgres.from_env()
+  let assert #("db", 5432, "app", "app", Some("pw"), postgres.SslDisabled, _) =
+    postgres.inspect(config)
+  unsetenv("DATABASE_URL")
+}
 
 fn parsed(url: String) {
   postgres.from_url(url) |> result.map(postgres.inspect)
@@ -98,7 +114,7 @@ pub fn every_connection_starts_with_the_defaults_test() {
 /// Live tests run when HOWDY_DATABASE_TEST_POSTGRES_URL names a server whose
 /// user may create databases.
 fn with_postgres(run: fn(postgres.Config) -> Nil) -> Nil {
-  case getenv("HOWDY_DATABASE_TEST_POSTGRES_URL") {
+  case env.get("HOWDY_DATABASE_TEST_POSTGRES_URL") {
     Error(Nil) -> Nil
     Ok(url) -> {
       let assert Ok(config) = postgres.from_url(url)
@@ -220,7 +236,7 @@ pub fn migrators_wait_for_each_other_despite_the_lock_timeout_test() {
   let assert Ok(admin) = postgres.start(config)
   let name = "howdy_database_test_" <> int_id()
   let assert Ok(_) = repo.execute(admin, "CREATE DATABASE " <> name, [])
-  let assert Ok(url) = getenv("HOWDY_DATABASE_TEST_POSTGRES_URL")
+  let assert Ok(url) = env.get("HOWDY_DATABASE_TEST_POSTGRES_URL")
   let assert Ok(config) = postgres.from_url(replace_database(url, name))
   let assert Ok(db) =
     config

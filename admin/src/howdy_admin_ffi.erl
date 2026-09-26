@@ -1,5 +1,5 @@
 -module(howdy_admin_ffi).
--export([cells/1, postgres_pool/1, listen/4, listen_via/11, cached_token/2, cache_token/3, forget_token/2]).
+-export([cells/1, postgres_pool/1, listen/5, listen_via/12, cached_token/2, cache_token/3, forget_token/2]).
 
 %% A database row as it came from the driver, as a list of optional strings.
 %% pog rows are tuples and sqlight rows are lists; every value becomes text
@@ -143,16 +143,16 @@ ssl_options(Host, ssl_verified) ->
     ]}.
 
 %% Listen through the pool's own settings, found by the fallback above.
-listen(Pool, Channel, Owner, Notify) ->
+listen(Pool, Channel, Owner, Notify, Lost) ->
     case pool_config(Pool) of
         {error, nil} -> {error, nil};
-        {ok, Config} -> listen_with(Config, Channel, Owner, Notify)
+        {ok, Config} -> listen_with(Config, Channel, Owner, Notify, Lost)
     end.
 
 %% Listen with settings the app gave.
-listen_via(Host, Port, Database, User, Password, Ssl, Parameters, IpVersion, Channel, Owner, Notify) ->
+listen_via(Host, Port, Database, User, Password, Ssl, Parameters, IpVersion, Channel, Owner, Notify, Lost) ->
     Config = listener_config(Host, Port, Database, User, Password, Ssl, Parameters, IpVersion),
-    listen_with(Config, Channel, Owner, Notify).
+    listen_with(Config, Channel, Owner, Notify, Lost).
 
 %% Open one more connection to the server and LISTEN on Channel, calling
 %% Notify with each payload, until Owner exits. The connection is pgo's own
@@ -160,10 +160,10 @@ listen_via(Host, Port, Database, User, Password, Ssl, Parameters, IpVersion, Cha
 %% to the caller, the grid's runtime, so neither outlives the other, and its
 %% answer carries a reference of this call's own so a late one can never be
 %% mistaken for anything else in the caller's mailbox.
-listen_with(Config, Channel, Owner, Notify) ->
+listen_with(Config, Channel, Owner, Notify, Lost) ->
     Parent = self(),
     Ref = make_ref(),
-    Pid = spawn_link(fun() -> start_listener(Parent, Ref, Config, Channel, Owner, Notify) end),
+    Pid = spawn_link(fun() -> start_listener(Parent, Ref, Config, Channel, Owner, Notify, Lost) end),
     receive
         {howdy_admin_listening, Ref, ok} -> {ok, nil};
         {howdy_admin_listening, Ref, error} -> {error, nil}
@@ -178,7 +178,7 @@ listen_with(Config, Channel, Owner, Notify) ->
         {error, nil}
     end.
 
-start_listener(Parent, Ref, Config, Channel, Owner, Notify) ->
+start_listener(Parent, Ref, Config, Channel, Owner, Notify, Lost) ->
     process_flag(trap_exit, true),
     Monitor = monitor(process, Owner),
     Started = try pgo_notifications:start_link(Config) catch _:_ -> error end,
@@ -188,7 +188,7 @@ start_listener(Parent, Ref, Config, Channel, Owner, Notify) ->
             case Listening of
                 {Tag, _} when Tag =:= ok; Tag =:= eventually ->
                     Parent ! {howdy_admin_listening, Ref, ok},
-                    listener_loop(Listener, Monitor, Notify);
+                    listener_loop(Listener, Monitor, Notify, Lost);
                 _ ->
                     stop_listener(Listener),
                     Parent ! {howdy_admin_listening, Ref, error}
@@ -197,19 +197,21 @@ start_listener(Parent, Ref, Config, Channel, Owner, Notify) ->
             Parent ! {howdy_admin_listening, Ref, error}
     end.
 
-listener_loop(Listener, Monitor, Notify) ->
+listener_loop(Listener, Monitor, Notify, Lost) ->
     receive
         {notification, _, _, _, Payload} ->
             Notify(Payload),
-            listener_loop(Listener, Monitor, Notify);
+            listener_loop(Listener, Monitor, Notify, Lost);
         {'DOWN', Monitor, process, _, _} ->
             stop_listener(Listener);
         {'EXIT', Listener, _} ->
+            %% The connection went; tell the owner so it stops expecting us.
+            Lost(),
             ok;
         {'EXIT', _Parent, _} ->
             stop_listener(Listener);
         _ ->
-            listener_loop(Listener, Monitor, Notify)
+            listener_loop(Listener, Monitor, Notify, Lost)
     end.
 
 stop_listener(Listener) ->
