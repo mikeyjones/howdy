@@ -105,7 +105,9 @@ pub fn sized_submit(
 
 /// A button that switches the document between two named themes and
 /// remembers the choice in a `theme` cookie, which the page can read back
-/// with `howdy/cookie`. Works in server-rendered pages and live views.
+/// with `howdy/cookie`. Works in server-rendered pages and live views. The
+/// switch is made by `howdy/ui/behaviour`, and the theme names stay in
+/// HTML-escaped data attributes, never executable code.
 pub fn theme_toggle(
   children: List(Element(msg)),
   from a: String,
@@ -114,9 +116,9 @@ pub fn theme_toggle(
   button(
     Outline,
     [
+      attribute.data("howdy-theme-toggle", ""),
       attribute.data("howdy-theme-from", a),
       attribute.data("howdy-theme-to", b),
-      attribute.attribute("onclick", toggle_script),
     ],
     children,
   )
@@ -209,7 +211,7 @@ pub fn sized_class(variant: Variant, size: Size) -> Class {
         css.align_items("center"),
         css.gap(rem(0.5)),
         css.border("1px solid transparent"),
-        css.property("border-radius", tokens.radius_medium),
+        style.radius(tokens.radius_medium),
         css.font_family(tokens.font_body),
         css.font_weight("500"),
         css.line_height("1.25"),
@@ -221,16 +223,10 @@ pub fn sized_class(variant: Variant, size: Size) -> Class {
           css.cursor("default"),
           css.property("pointer-events", "none"),
         ]),
-        css.focus_visible([
-          css.outline("2px solid " <> tokens.focus),
-          css.property("outline-offset", "2px"),
-        ]),
+        style.focus_ring(),
       ],
       dimensions,
       colours,
     ]),
   )
 }
-
-// Theme names stay in HTML-escaped data attributes, never executable code.
-const toggle_script = "(function(r,a,b){var c=r.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var n=c===a?b:a;r.dataset.theme=n;document.cookie='theme='+encodeURIComponent(n)+';path=/;max-age=31536000;samesite=lax'})(document.documentElement,this.dataset.howdyThemeFrom,this.dataset.howdyThemeTo)"

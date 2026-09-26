@@ -4,6 +4,9 @@ description = "Package-owned migrations and portable transactions over Gloo for 
 licences = ["Apache-2.0"]
 target = "erlang"
 
+[erlang]
+application_start_module = "howdy_database_app"
+
 [dependencies]
 gleam_stdlib = ">= 1.0.0 and < 2.0.0"
 gleam_erlang = ">= 1.3.0 and < 2.0.0"

@@ -6,7 +6,7 @@ import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http/request
 import gleam/list
-import gleam/option.{Some}
+import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import gleam/uri
@@ -17,6 +17,8 @@ import gloo/repo.{type Repo}
 import gloo/sql
 import howdy
 import howdy/admin
+import howdy/admin/internal/config
+import howdy/admin/internal/data/grid
 import howdy/admin/internal/notify
 import howdy/admin/internal/schema
 import howdy/auth
@@ -29,6 +31,10 @@ import howdy/database/postgres
 import howdy/migration
 import howdy/service
 import howdy/testing
+import lustre
+import lustre/runtime/transport
+import lustre/server_component
+import pog
 
 pub fn main() {
   gleeunit.main()
@@ -142,6 +148,7 @@ fn post(
   let res =
     testing.post_form(path, fields)
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 303
     as {
@@ -232,6 +239,73 @@ pub fn refuses_other_hosts_test() {
   assert res.status == 200
 }
 
+pub fn refuses_writes_from_other_origins_test() {
+  use db <- with_database
+  let app = app(admin.database(_, db))
+  let insert = [#("value-title", "Kept"), #("value-body", "")]
+  let write = fn(path, fields) {
+    testing.post_form(path, fields) |> request.set_host("localhost")
+  }
+
+  // A form post from a page on another site is refused before it runs.
+  let res =
+    write("/_howdy/data/notes_notes", insert)
+    |> testing.header("sec-fetch-site", "cross-site")
+    |> testing.send(app)
+  assert res.status == 403
+  assert string.contains(testing.text(res), "own origin")
+  assert titles(db) == []
+
+  // A foreign Origin without fetch metadata is refused too, as is neither.
+  let res =
+    write("/_howdy/data/notes_notes", insert)
+    |> testing.header("origin", "http://evil.example")
+    |> testing.send(app)
+  assert res.status == 403
+  let res = write("/_howdy/data/notes_notes", insert) |> testing.send(app)
+  assert res.status == 403
+  assert titles(db) == []
+
+  // The admin's own forms say same-origin, and older clients say where the
+  // request came from with Origin alone.
+  let res =
+    write("/_howdy/data/notes_notes", insert)
+    |> testing.header("sec-fetch-site", "same-origin")
+    |> testing.send(app)
+  assert res.status == 303
+  assert titles(db) == ["Kept"]
+  let res =
+    write("/_howdy/data/notes_notes/row/delete?k=1", [])
+    |> testing.header("host", "localhost:8787")
+    |> testing.header("origin", "http://localhost:8787")
+    |> testing.send(app)
+  assert res.status == 303
+  assert titles(db) == []
+
+  // An Origin on an allowed host still has to be the host asked for, with
+  // its port.
+  let res =
+    write("/_howdy/data/notes_notes", insert)
+    |> testing.header("host", "localhost:8787")
+    |> testing.header("origin", "http://localhost:9999")
+    |> testing.send(app)
+  assert res.status == 403
+  let res =
+    write("/_howdy/data/notes_notes", insert)
+    |> testing.header("origin", "http://127.0.0.1")
+    |> testing.send(app)
+  assert res.status == 403
+  assert titles(db) == []
+
+  // Reads are not checked.
+  let res =
+    testing.get("/_howdy/data/notes_notes")
+    |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "cross-site")
+    |> testing.send(app)
+  assert res.status == 200
+}
+
 // -- Data --------------------------------------------------------------------
 
 pub fn lists_tables_and_columns_test() {
@@ -305,6 +379,7 @@ pub fn shows_the_database_error_when_a_write_is_refused_test() {
   let res =
     testing.post_form("/_howdy/data/notes_notes", [#("value-body", "no title")])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 200
   assert string.contains(string.lowercase(testing.text(res)), "null")
@@ -362,12 +437,20 @@ pub fn postgres_announces_changes_and_sqlite_does_not_test() {
   let assert Ok(table) = schema.table(db, "notes_notes")
   case on_postgres(db) {
     False -> {
-      assert !notify.available(db)
+      assert !notify.available(db, None)
+      assert !notify.available(
+        db,
+        Some(pog.default_config(process.new_name("x"))),
+      )
       assert notify.install(db, table) != Ok(Nil)
       assert notify.uninstall(db) == Ok(Nil)
+      // Without a pool to look inside, subscribing fails softly.
+      let assert Error(Nil) =
+        notify.subscribe(db, None, process.self(), fn(_) { Nil })
+      Nil
     }
     True -> {
-      assert notify.available(db)
+      assert notify.available(db, None)
       let assert Ok(Nil) = notify.install(db, table)
       // Installing twice leaves one trigger, and the package check still
       // passes with it there.
@@ -379,10 +462,17 @@ pub fn postgres_announces_changes_and_sqlite_does_not_test() {
         == 1
       assert migration.check(db, notes()) == Ok(Nil)
 
+      // Once through the pool's own settings, found inside pgo, and once
+      // through settings the app gives with `notify_via`.
+      let assert Ok(url) = getenv("HOWDY_ADMIN_TEST_POSTGRES_URL")
+      let assert Ok(settings) = pog.url_config(process.new_name("listen"), url)
+      use settings <- list.each([None, Some(settings)])
       let heard = process.new_subject()
       let owner = process.spawn_unlinked(fn() { process.sleep(30_000) })
       let assert Ok(Nil) =
-        notify.subscribe(db, owner, fn(name) { process.send(heard, name) })
+        notify.subscribe(db, settings, owner, fn(name) {
+          process.send(heard, name)
+        })
       let assert Ok(_) =
         repo.execute(db, "INSERT INTO notes_notes (title) VALUES ('hello')", [])
       assert process.receive(heard, 5000) == Ok("notes_notes")
@@ -437,6 +527,7 @@ pub fn creates_lists_and_manages_users_test() {
   let res =
     testing.post_form("/_howdy/users", [#("email", "ada@example.com")])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 200
   assert string.contains(testing.text(res), "already exists")
@@ -450,6 +541,7 @@ pub fn signing_in_as_a_user_sets_the_session_cookie_test() {
   let res =
     testing.post_form("/_howdy/users/" <> id <> "/impersonate", [])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 303
   assert list.key_find(res.headers, "location") == Ok("/")
@@ -496,8 +588,61 @@ pub fn manages_groups_test() {
   let res =
     testing.post_form("/_howdy/groups/default/delete", [])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert string.contains(testing.text(res), "default group cannot be deleted")
+}
+
+/// The grid runs in Lustre's server component runtime and polls on timers
+/// sent to a subject of the runtime's own, so a row that appears behind its
+/// back shows up on the next tick without a browser.
+pub fn the_live_grid_polls_on_its_own_clock_test() {
+  use db <- with_database
+  let assert Ok(table) = schema.table(db, "notes_notes")
+  let config =
+    config.Config(
+      prefix: "/_howdy",
+      name: "test",
+      database: Some(db),
+      identity: None,
+      authorization: None,
+      outbox: None,
+      previews: [],
+      mailer: None,
+      recorder: None,
+      flags: None,
+      api: None,
+      hosts: ["localhost"],
+      listen: None,
+    )
+  let assert Ok(runtime) =
+    lustre.start_server_component(
+      grid.grid(),
+      with: grid.Args(config, db, table),
+    )
+  let client = process.new_subject()
+  lustre.send(runtime, server_component.register_subject(client))
+  let assert Ok(transport.Mount(..)) = process.receive(client, 2000)
+  let assert Ok(_) =
+    repo.execute(db, "INSERT INTO notes_notes (title) VALUES ('polled in')", [])
+  assert shows(client, "polled in", tries: 5)
+  lustre.send(runtime, lustre.shutdown())
+}
+
+/// Whether one of the next few patches the runtime sends carries `text`.
+fn shows(
+  client: process.Subject(transport.ClientMessage(msg)),
+  text: String,
+  tries tries: Int,
+) -> Bool {
+  case tries, process.receive(client, 3000) {
+    0, _ -> False
+    _, Ok(transport.Reconcile(patch:, ..)) ->
+      string.contains(string.inspect(patch), text)
+      || shows(client, text, tries: tries - 1)
+    _, Ok(_) -> shows(client, text, tries: tries - 1)
+    _, Error(Nil) -> False
+  }
 }
 
 pub fn the_live_grid_serves_a_socket_route_test() {
@@ -594,6 +739,7 @@ pub fn defines_lists_edits_and_deletes_roles_test() {
   let res =
     testing.post_form("/_howdy/roles", [#("name", ""), #("organization", "")])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 200
   assert string.contains(testing.text(res), "nonempty")
@@ -653,6 +799,7 @@ pub fn assigns_and_revokes_roles_from_both_sides_test() {
       #("role", "nonsense"),
     ])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert string.contains(testing.text(res), "choose a role")
 }
@@ -709,6 +856,7 @@ pub fn deletes_an_account_after_confirmation_test() {
       #("confirm", "ada@example.com"),
     ])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(before)
   assert string.contains(testing.text(res), "Forbidden")
 
@@ -735,6 +883,7 @@ pub fn deletes_an_account_after_confirmation_test() {
       #("confirm", "grace@example.com"),
     ])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(after)
   assert string.contains(testing.text(res), "to confirm")
   assert count(db, "SELECT COUNT(*) FROM howdy_auth_users") == 1

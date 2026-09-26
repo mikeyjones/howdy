@@ -3,9 +3,10 @@
 //// beside it. The browser tests in `ui/browser_test` drive it.
 
 import gleam/erlang/atom
-import gleam/erlang/process
+import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
 import howdy/ui
 import howdy/ui/button.{Outline}
@@ -14,6 +15,7 @@ import howdy/ui/command
 import howdy/ui/live
 import howdy/ui/questionnaire
 import howdy/ui/toast
+import howdy_gallery/timer
 import lustre
 import lustre/attribute
 import lustre/effect.{type Effect}
@@ -31,10 +33,13 @@ pub type Model {
     asked: questionnaire.Questionnaire,
     /// Added to the clock, so a test can skip ahead of the toasts.
     skipped: Int,
+    /// Where the toasts' timers are delivered.
+    timers: Option(Subject(Msg)),
   )
 }
 
 pub type Msg {
+  Timers(Subject(Msg))
   Toppings(List(String))
   Plan(String)
   Tab(String)
@@ -65,8 +70,9 @@ fn init(_) -> #(Model, Effect(Msg)) {
       oldest: 31,
       asked: questionnaire.start(questions()),
       skipped: 0,
+      timers: None,
     ),
-    later(Sweep, 1000),
+    timer.subscribe(Timers),
   )
 }
 
@@ -88,6 +94,11 @@ pub fn questions() -> List(questionnaire.Question) {
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
+    // The sweep starts once there is somewhere to deliver it.
+    Timers(timers) -> {
+      let model = Model(..model, timers: Some(timers))
+      #(model, later(model, Sweep, 1000))
+    }
     Toppings(toppings) -> #(Model(..model, toppings:), effect.none())
     Plan(plan) -> #(Model(..model, plan:), effect.none())
     Tab(tab) -> #(Model(..model, tab:), effect.none())
@@ -99,7 +110,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     Save -> {
       let #(toasts, id) =
         toast.push(model.toasts, toast.Loading, "Saving…", "", clock(model))
-      #(Model(..model, toasts:), later(Saved(id), 800))
+      #(Model(..model, toasts:), later(model, Saved(id), 800))
     }
     Saved(id) -> #(
       Model(
@@ -118,7 +129,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     Remind -> {
       let #(toasts, id) =
         toast.push(model.toasts, toast.Success, "Reminder", "", clock(model))
-      #(Model(..model, toasts:), later(Reminded(id), 2500))
+      #(Model(..model, toasts:), later(model, Reminded(id), 2500))
     }
     Reminded(id) -> #(
       Model(
@@ -141,7 +152,7 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
     // The fallback cleanup, run as an application would.
     Sweep -> #(
       Model(..model, toasts: toast.expire(model.toasts, clock(model))),
-      later(Sweep, 1000),
+      later(model, Sweep, 1000),
     )
     SkipAhead -> {
       let model = Model(..model, skipped: model.skipped + 120_000)
@@ -170,13 +181,12 @@ fn clock(model: Model) -> Int {
   now() + model.skipped
 }
 
-fn later(msg: Msg, milliseconds: Int) -> Effect(Msg) {
-  use dispatch <- effect.from
-  process.spawn(fn() {
-    process.sleep(milliseconds)
-    dispatch(msg)
-  })
-  Nil
+/// `msg`, `milliseconds` from now, as a timer on the runtime.
+fn later(model: Model, msg: Msg, milliseconds: Int) -> Effect(Msg) {
+  case model.timers {
+    Some(timers) -> timer.after(timers, milliseconds, msg)
+    None -> effect.none()
+  }
 }
 
 @external(erlang, "erlang", "monotonic_time")

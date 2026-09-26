@@ -14,18 +14,25 @@
 //// a `.json` file the outbox reads back after a restart. Add the directory
 //// to `.gitignore`: it holds sign-in tokens and whatever else was sent.
 ////
+//// In an app with a supervision tree, `supervised` and `supervised_in`
+//// give the outbox as a child instead, so it is restarted if it crashes.
+//// While it is not running, sending to it is `Unavailable`, like any other
+//// adapter whose provider is away, and reading it is an error rather than
+//// a crash.
+////
 //// Only the newest 500 messages are kept; older ones and their files are
 //// removed.
 
 import gleam/bit_array
 import gleam/dynamic/decode
-import gleam/erlang/process.{type Pid, type Subject}
+import gleam/erlang/process.{type Name, type Pid, type Subject}
 import gleam/int
 import gleam/io
 import gleam/json.{type Json}
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import gleam/time/timestamp
@@ -39,7 +46,7 @@ pub const capacity = 500
 const timeout = 5000
 
 pub opaque type Outbox {
-  Outbox(subject: Subject(Command), directory: Option(String))
+  Outbox(name: Name(Command), directory: Option(String))
 }
 
 type Command {
@@ -62,9 +69,12 @@ type State {
 @external(erlang, "howdy_mail_ffi", "rescue")
 fn rescue(run: fn() -> a) -> Result(a, String)
 
-/// An outbox in memory: its messages are gone when the VM stops.
+/// An outbox in memory: its messages are gone when the VM stops. It is
+/// linked to the caller; see `supervised` for an app with a supervision
+/// tree.
 pub fn start() -> Outbox {
-  let assert Ok(box) = begin(None, [])
+  let box = new_handle(None)
+  let assert Ok(_) = launch(box)
     as "howdy/mail/outbox: the outbox process did not start"
   box
 }
@@ -72,34 +82,83 @@ pub fn start() -> Outbox {
 /// An outbox that also writes each message to `directory`, creating it if
 /// needed, and starts with the messages already there.
 pub fn start_in(directory: String) -> Result(Outbox, String) {
-  use _ <- result.try(
-    simplifile.create_directory_all(directory)
-    |> result.map_error(fn(error) {
-      "cannot create " <> directory <> ": " <> simplifile.describe_error(error)
-    }),
-  )
-  use messages <- result.try(load(directory))
-  begin(Some(directory), messages)
+  let box = new_handle(Some(directory))
+  case launch(box) {
+    Ok(_) -> Ok(box)
+    Error(actor.InitFailed(reason)) -> Error(reason)
+    Error(error) -> Error(string.inspect(error))
+  }
 }
 
-fn begin(
-  directory: Option(String),
-  messages: List(Outgoing),
-) -> Result(Outbox, String) {
+/// `start` as a child of a supervisor, with the handle to use it by. The
+/// handle is made here, before the outbox starts, so it can be given to the
+/// app while the supervisor owns the outbox:
+///
+/// ```gleam
+/// let #(box, child) = outbox.supervised()
+/// static_supervisor.new(static_supervisor.OneForOne)
+/// |> static_supervisor.add(child)
+/// |> static_supervisor.add(howdy.supervised(app(outbox.adapter(box))))
+/// ```
+///
+/// A restarted outbox in memory starts empty, and its subscribers have to
+/// subscribe again.
+pub fn supervised() -> #(Outbox, supervision.ChildSpecification(Outbox)) {
+  child(new_handle(None))
+}
+
+/// `start_in` as a child of a supervisor. A restarted outbox reads the
+/// directory again, so its messages are kept.
+pub fn supervised_in(
+  directory: String,
+) -> #(Outbox, supervision.ChildSpecification(Outbox)) {
+  child(new_handle(Some(directory)))
+}
+
+fn child(box: Outbox) -> #(Outbox, supervision.ChildSpecification(Outbox)) {
+  let child =
+    supervision.worker(fn() { launch(box) })
+    |> supervision.map_data(fn(_) { box })
+  #(box, child)
+}
+
+fn new_handle(directory: Option(String)) -> Outbox {
+  Outbox(name: process.new_name(prefix: "howdy_mail_outbox"), directory:)
+}
+
+/// Start the process for this handle: prepare the directory, read what it
+/// holds and register under the handle's name.
+fn launch(box: Outbox) -> actor.StartResult(Subject(Command)) {
   actor.new_with_initialiser(timeout, fn(subject) {
+    use messages <- result.try(case box.directory {
+      None -> Ok([])
+      Some(directory) -> {
+        use _ <- result.try(
+          simplifile.create_directory_all(directory)
+          |> result.map_error(fn(error) {
+            "cannot create "
+            <> directory
+            <> ": "
+            <> simplifile.describe_error(error)
+          }),
+        )
+        load(directory)
+      }
+    })
     let selector =
       process.new_selector()
       |> process.select(subject)
       |> process.select_monitors(Down)
-    actor.initialised(State(messages:, directory:, subscribers: []))
+    actor.initialised(
+      State(messages:, directory: box.directory, subscribers: []),
+    )
     |> actor.selecting(selector)
     |> actor.returning(subject)
     |> Ok
   })
   |> actor.on_message(handle)
+  |> actor.named(box.name)
   |> actor.start
-  |> result.map(fn(started) { Outbox(started.data, directory) })
-  |> result.map_error(fn(error) { string.inspect(error) })
 }
 
 fn handle(state: State, command: Command) -> actor.Next(State, Command) {
@@ -159,27 +218,34 @@ fn notify(state: State) -> Nil {
   })
 }
 
-/// Keep messages given to this adapter in the outbox.
+/// Keep messages given to this adapter in the outbox. While the outbox is
+/// not running, sending is `Unavailable`.
 pub fn adapter(box: Outbox) -> mail.Adapter {
   mail.adapter(named: "outbox", send: fn(outgoing: Outgoing) {
-    process.call(box.subject, timeout, Deliver(outgoing, _))
+    use _ <- result.try(ask(box, Deliver(outgoing, _)))
     Ok(mail.Receipt(outgoing.id, None))
   })
 }
 
-/// Every message kept, newest first.
-pub fn messages(box: Outbox) -> List(Outgoing) {
-  process.call(box.subject, timeout, All)
+/// Every message kept, newest first, or `Unavailable` while the outbox is
+/// not running.
+pub fn messages(box: Outbox) -> Result(List(Outgoing), mail.Error) {
+  ask(box, All)
 }
 
+/// The message with this id. `Error(Nil)` when there is none, or the
+/// outbox is not running.
 pub fn get(box: Outbox, id: String) -> Result(Outgoing, Nil) {
-  list.find(messages(box), fn(outgoing) { outgoing.id == id })
+  use messages <- result.try(messages(box) |> result.replace_error(Nil))
+  list.find(messages, fn(outgoing) { outgoing.id == id })
 }
 
-/// The newest message with this address among its recipients.
+/// The newest message with this address among its recipients. `Error(Nil)`
+/// when there is none, or the outbox is not running.
 pub fn latest_to(box: Outbox, email: String) -> Result(Outgoing, Nil) {
   let email = string.lowercase(email)
-  list.find(messages(box), fn(outgoing) {
+  use messages <- result.try(messages(box) |> result.replace_error(Nil))
+  list.find(messages, fn(outgoing) {
     list.any(mail.recipients(outgoing), fn(address) {
       string.lowercase(address.email) == email
     })
@@ -187,20 +253,62 @@ pub fn latest_to(box: Outbox, email: String) -> Result(Outgoing, Nil) {
 }
 
 /// Forget every message, and delete their files.
-pub fn clear(box: Outbox) -> Nil {
-  process.call(box.subject, timeout, Clear)
+pub fn clear(box: Outbox) -> Result(Nil, mail.Error) {
+  ask(box, Clear)
 }
 
 /// Call `notify` whenever a message arrives or the outbox is cleared, until
 /// the calling process exits. It runs in the outbox's process, so it should
-/// only send a message, as a live component's `dispatch` does.
+/// only send a message, as a live component's `dispatch` does. Nothing is
+/// subscribed while the outbox is not running, and a restarted outbox
+/// starts without subscribers.
 pub fn subscribe(box: Outbox, notify: fn() -> Nil) -> Nil {
-  process.send(box.subject, Subscribe(process.self(), notify))
+  case process.named(box.name) {
+    Ok(_) ->
+      process.send(
+        process.named_subject(box.name),
+        Subscribe(process.self(), notify),
+      )
+    Error(Nil) -> Nil
+  }
+}
+
+/// Ask the outbox process and wait for its reply, without crashing the
+/// caller when it is not running, exits meanwhile, or does not answer in
+/// time.
+fn ask(
+  box: Outbox,
+  make_request: fn(Subject(reply)) -> Command,
+) -> Result(reply, mail.Error) {
+  case process.named(box.name) {
+    Error(Nil) -> Error(mail.Unavailable("the outbox is not running"))
+    Ok(pid) -> {
+      let reply = process.new_subject()
+      let monitor = process.monitor(pid)
+      process.send(process.named_subject(box.name), make_request(reply))
+      let answer =
+        process.new_selector()
+        |> process.select_map(reply, Ok)
+        |> process.select_specific_monitor(monitor, fn(_) { Error(Nil) })
+        |> process.selector_receive(timeout)
+      process.demonitor_process(monitor)
+      case answer {
+        Ok(Ok(value)) -> Ok(value)
+        Ok(Error(Nil)) -> Error(mail.Unavailable("the outbox stopped"))
+        Error(Nil) -> Error(mail.Unavailable("the outbox did not answer"))
+      }
+    }
+  }
 }
 
 /// Where messages are written, if anywhere.
 pub fn directory(box: Outbox) -> Option(String) {
   box.directory
+}
+
+/// The outbox process, while it is running.
+pub fn pid(box: Outbox) -> Result(Pid, Nil) {
+  process.named(box.name)
 }
 
 // -- Files ---------------------------------------------------------------------

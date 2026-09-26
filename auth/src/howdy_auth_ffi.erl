@@ -1,74 +1,82 @@
 -module(howdy_auth_ffi).
 -export([now/0, normalize_password/1, canonical_host/1, cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1,
-         sessions_new/0, sessions_put/5, sessions_get/2, sessions_list/2, sessions_delete/3, sessions_delete_user/3, sessions_prune/2]).
+         sessions_put/5, sessions_get/2, sessions_list/2, sessions_delete/3, sessions_delete_user/3, sessions_prune/2]).
 
-now() -> erlang:system_time(second).
+%% Seconds since the epoch. Tests may skew every clock in their own process
+%% through `howdy_auth_test_ffi:advance_clock/2` instead of sleeping; nothing
+%% else sets the offset.
+now() -> erlang:system_time(second) + clock_offset_ms() div 1000.
+
+clock_offset_ms() ->
+    case get(howdy_auth_clock_offset_ms) of
+        undefined -> 0;
+        Offset -> Offset
+    end.
 
 normalize_password(Value) -> unicode:characters_to_nfc_binary(Value).
 
 
-%% Caches belong to the process constructing Authorization (normally the app
-%% supervisor). Generation changes bracket grant/suspension mutations, so a
-%% slow read cannot install a stale grant after a mutation has committed.
-cache_new() -> ets:new(howdy_auth_cache, [public, set, {read_concurrency, true}]).
+%% The authorization cache is one named public table owned by
+%% howdy_auth_tables, partitioned between Authorization instances by the
+%% reference each `new` returns. Generation changes bracket grant/suspension
+%% mutations, so a slow read cannot install a stale grant after a mutation has
+%% committed.
+-define(CACHE, howdy_auth_cache).
 
-%% One counter for the life of the VM, so a generation is never reused. The
-%% shared lock decides the race to create it.
-cache_versions() ->
-    case persistent_term:get(howdy_auth_cache_versions, undefined) of
-        undefined ->
-            howdy_database_ffi:with_lock(howdy_auth_cache_versions, fun() ->
-                case persistent_term:get(howdy_auth_cache_versions, undefined) of
-                    undefined ->
-                        Versions = atomics:new(1, []),
-                        persistent_term:put(howdy_auth_cache_versions, Versions),
-                        Versions;
-                    Versions ->
-                        Versions
-                end
-            end);
-        Versions ->
-            Versions
-    end.
+cache_new() ->
+    _ = howdy_auth_tables:ensure(?CACHE),
+    make_ref().
 
-cache_generation() -> atomics:get(cache_versions(), 1).
+cache_generation() -> atomics:get(howdy_auth_tables:versions(), 1).
 
 cache_invalidate() ->
-    atomics:add(cache_versions(), 1, 1),
+    atomics:add(howdy_auth_tables:versions(), 1, 1),
     nil.
 
-cache_run(Table, Key, Seconds, Run) ->
+cache_now() -> erlang:monotonic_time(millisecond) + clock_offset_ms().
+
+cache_run(Ref, Key, Seconds, Run) ->
     case get(howdy_auth_cache_dirty) of
         true -> Run();
-        _ -> cache_read(Table, Key, Seconds, Run)
+        _ -> cache_read(Ref, Key, Seconds, Run)
     end.
 
-cache_read(Table, Key, Seconds, Run) ->
+cache_read(Ref, Key, Seconds, Run) ->
     Generation = cache_generation(),
-    Now = erlang:monotonic_time(millisecond),
-    Cached = try ets:lookup(Table, Key) catch error:badarg -> unavailable end,
+    Now = cache_now(),
+    Cached = try ets:lookup(?CACHE, {Ref, Key}) catch error:badarg -> unavailable end,
     case Cached of
-        unavailable -> Run();
-        [{Key, Generation, Until, Value}] when Until > Now -> {ok, Value};
+        unavailable ->
+            %% The owner is down or restarting: answer from the database and
+            %% have the table back for the next request.
+            _ = howdy_auth_tables:ensure(?CACHE),
+            Run();
+        [{_, Generation, Until, Value}] when Until > Now -> {ok, Value};
         _ ->
             Result = Run(),
             case Result of
-                {ok, Value} ->
-                    %% Bound memory independently of the number of distinct
-                    %% sessions/permissions an application asks about.
-                    try
-                        howdy_database_ffi:with_lock({auth_cache, Table}, fun() ->
-                            case ets:info(Table, size) >= 10000 of
-                                true -> ets:delete_all_objects(Table);
-                                false -> ok
-                            end,
-                            ets:insert(Table, {Key, Generation, Now + Seconds * 1000, Value})
-                        end)
-                    catch error:badarg -> ok end;
+                {ok, Value} -> cache_store({Ref, Key}, Generation, Now + Seconds * 1000, Value);
                 _ -> ok
             end,
             Result
     end.
+
+%% Bound memory independently of the number of distinct sessions/permissions
+%% an application asks about. Deliberately unlocked: two writers may both see
+%% the table full and both clear it, or an insert may land between another's
+%% check and its clear, so the bound is exceeded by at most the number of
+%% concurrent writers and a few freshly cached rows may be dropped. Both are
+%% harmless for a cache whose every row is recomputable and whose safety
+%% comes from generations, not from row counts; a round trip to a lock
+%% process on every miss is not.
+cache_store(Key, Generation, Until, Value) ->
+    try
+        case ets:info(?CACHE, size) >= 10000 of
+            true -> ets:delete_all_objects(?CACHE);
+            false -> ok
+        end,
+        ets:insert(?CACHE, {Key, Generation, Until, Value})
+    catch error:badarg -> ok end.
 
 
 canonical_host(Host) ->
@@ -117,30 +125,50 @@ cache_changing(Run) ->
     end).
 
 %% The in-memory session store: one public ETS table of
-%% {Digest, UserId, ExpiresAt, Record}, owned by the process that made it.
-sessions_new() -> ets:new(howdy_auth_sessions, [public, set, {read_concurrency, true}]).
-
-sessions_put(Table, Digest, UserId, ExpiresAt, Record) ->
-    ets:insert(Table, {Digest, UserId, ExpiresAt, Record}),
-    nil.
-
-sessions_get(Table, Digest) ->
-    case ets:lookup(Table, Digest) of
-        [{_, _, _, Record}] -> {some, Record};
-        [] -> none
+%% {Digest, UserId, ExpiresAt, Record}, owned by a howdy_auth_sessions process
+%% and found through its reference on every call. Every operation returns
+%% {ok, _} or {error, nil}: the table is missing while the owner is down or
+%% being restarted, and ets raises badarg once it has been deleted. Either
+%% way the store fails closed rather than crashing the request.
+sessions_run(Ref, Run) ->
+    case howdy_auth_sessions:table(Ref) of
+        undefined -> {error, nil};
+        Table -> try {ok, Run(Table)} catch error:badarg -> {error, nil} end
     end.
 
-sessions_list(Table, UserId) ->
-    [Record || [Record] <- ets:match(Table, {'_', UserId, '_', '$1'})].
+sessions_put(Ref, Digest, UserId, ExpiresAt, Record) ->
+    sessions_run(Ref, fun(Table) ->
+        ets:insert(Table, {Digest, UserId, ExpiresAt, Record}),
+        nil
+    end).
 
-sessions_delete(Table, Digest, UserId) ->
-    ets:match_delete(Table, {Digest, UserId, '_', '_'}),
-    nil.
+sessions_get(Ref, Digest) ->
+    sessions_run(Ref, fun(Table) ->
+        case ets:lookup(Table, Digest) of
+            [{_, _, _, Record}] -> {some, Record};
+            [] -> none
+        end
+    end).
 
-sessions_delete_user(Table, UserId, Keep) ->
-    ets:select_delete(Table, [{{'$1', UserId, '_', '_'}, [{'=/=', '$1', {const, Keep}}], [true]}]),
-    nil.
+sessions_list(Ref, UserId) ->
+    sessions_run(Ref, fun(Table) ->
+        [Record || [Record] <- ets:match(Table, {'_', UserId, '_', '$1'})]
+    end).
 
-sessions_prune(Table, Now) ->
-    ets:select_delete(Table, [{{'_', '_', '$1', '_'}, [{'=<', '$1', Now}], [true]}]),
-    nil.
+sessions_delete(Ref, Digest, UserId) ->
+    sessions_run(Ref, fun(Table) ->
+        ets:match_delete(Table, {Digest, UserId, '_', '_'}),
+        nil
+    end).
+
+sessions_delete_user(Ref, UserId, Keep) ->
+    sessions_run(Ref, fun(Table) ->
+        ets:select_delete(Table, [{{'$1', UserId, '_', '_'}, [{'=/=', '$1', {const, Keep}}], [true]}]),
+        nil
+    end).
+
+sessions_prune(Ref, Now) ->
+    sessions_run(Ref, fun(Table) ->
+        ets:select_delete(Table, [{{'_', '_', '$1', '_'}, [{'=<', '$1', Now}], [true]}]),
+        nil
+    end).

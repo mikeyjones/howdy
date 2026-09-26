@@ -14,12 +14,25 @@
 -include_lib("opentelemetry_api/include/opentelemetry.hrl").
 
 -define(MAX_MESSAGE, 4096).
+-define(MAX_REASON, 512).
+-define(REASON_DEPTH, 5).
 
+%% A crash report carries the process's state, mailbox, dictionary and the
+%% arguments of the call that failed, any of which may hold a secret. The
+%% full text goes only to the recorders, for the dev admin; what reaches a
+%% span, and so an exporter, is the exception class and a shallow print of
+%% the reason.
 log(Event = #{level := Level, meta := Meta}, #{config := #{recorders := Recorders}}) ->
     Message = message(Event),
     {TraceId, SpanId} = case current_ids() of
-        undefined -> crash_span(Meta, Message);
-        Ids -> span_event(Level, Message), Ids
+        undefined ->
+            crash_span(Event);
+        Ids ->
+            span_event(Level, case exception(Event) of
+                                  undefined -> Message;
+                                  {Class, Reason} -> <<Class/binary, ": ", Reason/binary>>
+                              end),
+            Ids
     end,
     At = maps:get(time, Meta, erlang:system_time(microsecond)),
     [howdy_telemetry_recorder:record_log(R, TraceId, SpanId, At, Level, Message) || R <- Recorders],
@@ -54,15 +67,43 @@ span_event(Level, Message) ->
                                   <<"log.message">> => Message})
     end.
 
-crash_span(#{error_logger := #{type := crash_report}}, Message) ->
+crash_span(Event = #{meta := #{error_logger := #{type := crash_report}}}) ->
+    {Class, Reason} = case exception(Event) of
+        undefined -> {<<"exit">>, <<"process crashed">>};
+        Found -> Found
+    end,
     Tracer = opentelemetry:get_application_tracer('howdy@telemetry'),
     SpanCtx = otel_tracer:start_span(otel_ctx:new(), Tracer, <<"process crash">>,
-                                     #{attributes => #{<<"exception.message">> => Message}}),
+                                     #{attributes => #{<<"exception.type">> => Class,
+                                                       <<"exception.message">> => Reason}}),
     otel_span:set_status(SpanCtx, ?OTEL_STATUS_ERROR, <<"process crashed">>),
     otel_span:end_span(SpanCtx),
     case otel_span:is_recording(SpanCtx) orelse SpanCtx#span_ctx.trace_flags band 1 =:= 1 of
         true -> {SpanCtx#span_ctx.trace_id, SpanCtx#span_ctx.span_id};
         false -> {undefined, undefined}
     end;
-crash_span(_Meta, _Message) ->
+crash_span(_Event) ->
     {undefined, undefined}.
+
+%% The class and reason of a `proc_lib` crash report, as short binaries.
+%% The stack trace that `gen_server` and friends fold into the exit reason
+%% is dropped with the rest of the report: its frames carry call arguments.
+exception(#{meta := #{error_logger := #{type := crash_report}},
+            msg := {report, #{report := [Report | _]}}}) when is_list(Report) ->
+    case lists:keyfind(error_info, 1, Report) of
+        {error_info, {Class, Reason, _Stack}} ->
+            {atom_to_binary(Class), reason(Reason)};
+        _ ->
+            undefined
+    end;
+exception(_Event) ->
+    undefined.
+
+reason({Reason, [Frame | _]}) when tuple_size(Frame) =:= 4, is_atom(element(1, Frame)), is_atom(element(2, Frame)) ->
+    reason(Reason);
+reason(Reason) ->
+    Printed = unicode:characters_to_binary(io_lib:format("~0tP", [Reason, ?REASON_DEPTH])),
+    case byte_size(Printed) > ?MAX_REASON of
+        true -> <<(string:slice(Printed, 0, ?MAX_REASON))/binary, "…"/utf8>>;
+        false -> Printed
+    end.

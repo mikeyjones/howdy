@@ -62,8 +62,8 @@ pub fn menubar_class() -> Class {
     css.gap(rem(0.125)),
     css.padding(rem(0.25)),
     css.background(tokens.surface),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
   ])
 }
 
@@ -71,7 +71,7 @@ pub fn button_class() -> Class {
   css.class([
     css.padding_("0.375rem " <> tokens.space_3),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_family(tokens.font_body),
@@ -79,10 +79,7 @@ pub fn button_class() -> Class {
     css.font_weight("500"),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "-2px"),
-    ]),
+    style.focus_ring_offset("-2px"),
     css.selector("[aria-expanded=\"true\"]", [css.background(tokens.muted)]),
   ])
 }

@@ -101,7 +101,7 @@ pub fn prose_class(size: Size) -> Class {
     css.selector(" strong", [css.font_weight("600")]),
     css.selector(" code", [
       css.padding_("0.15em 0.35em"),
-      css.property("border-radius", tokens.radius_small),
+      style.radius(tokens.radius_small),
       css.background(tokens.muted),
       css.font_family(tokens.font_mono),
       css.font_size_("0.875em"),
@@ -110,7 +110,7 @@ pub fn prose_class(size: Size) -> Class {
       css.margin_("1.6em 0 0"),
       css.padding(rem(1.0)),
       css.overflow_x("auto"),
-      css.property("border-radius", tokens.radius_medium),
+      style.radius(tokens.radius_medium),
       css.background(tokens.muted),
       css.font_size_("0.875em"),
       css.line_height("1.6"),
@@ -123,12 +123,12 @@ pub fn prose_class(size: Size) -> Class {
     css.selector(" hr", [
       css.margin_("2.5em 0"),
       css.border("0"),
-      css.property("border-top", "1px solid " <> tokens.border),
+      style.bordered_side("top"),
     ]),
     css.selector(" img", [
       css.margin_("1.6em 0 0"),
       css.property("max-width", "100%"),
-      css.property("border-radius", tokens.radius_medium),
+      style.radius(tokens.radius_medium),
     ]),
     css.selector(" table", [
       css.margin_("1.6em 0 0"),
@@ -140,11 +140,11 @@ pub fn prose_class(size: Size) -> Class {
       css.padding_("0.5em 0.75em"),
       css.text_align("start"),
       css.font_weight("600"),
-      css.property("border-bottom", "1px solid " <> tokens.border),
+      style.bordered_side("bottom"),
     ]),
     css.selector(" td", [
       css.padding_("0.5em 0.75em"),
-      css.property("border-bottom", "1px solid " <> tokens.border),
+      style.bordered_side("bottom"),
     ]),
   ])
 }
@@ -181,9 +181,6 @@ pub fn link_class() -> Class {
     css.color(tokens.primary),
     css.text_decoration("none"),
     css.hover([css.text_decoration("underline")]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }

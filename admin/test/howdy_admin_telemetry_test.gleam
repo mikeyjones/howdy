@@ -11,7 +11,8 @@ import gloo/adapter/sqlite
 import gloo/repo.{type Repo}
 import howdy
 import howdy/admin
-import howdy/admin/internal/telemetry as pages
+import howdy/admin/internal/format
+import howdy/admin/internal/telemetry/shared
 import howdy/controller.{type Context}
 import howdy/database
 import howdy/telemetry
@@ -108,7 +109,7 @@ pub fn a_trace_page_shows_the_timeline_repeats_and_logs_test() {
   assert string.contains(page, "slow notes")
   assert string.contains(page, trace.root.trace_id)
 
-  let summary = pages.summarise(recorder, trace)
+  let summary = shared.summarise(recorder, trace)
   assert summary.status == Some(200)
   assert summary.queries == 7
   assert summary.repeated == [#("SELECT title FROM notes WHERE id = ?", 6)]
@@ -163,6 +164,7 @@ pub fn clearing_forgets_every_trace_test() {
   let res =
     testing.post_form("/_howdy/telemetry/clear", [])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   telemetry.stop()
   assert res.status == 303
@@ -201,13 +203,13 @@ pub fn tree_puts_children_after_their_parent_test() {
     // Its parent is in another service.
     span("x", Some("remote"), 5),
   ]
-  assert list.map(pages.tree(spans), fn(pair) { #({ pair.0 }.span_id, pair.1) })
+  assert list.map(shared.tree(spans), fn(pair) { #({ pair.0 }.span_id, pair.1) })
     == [#("a", 0), #("b1", 1), #("c", 2), #("b2", 1), #("x", 0)]
 }
 
 pub fn durations_read_well_test() {
-  assert pages.duration(420) == "420 µs"
-  assert pages.duration(4200) == "4.2 ms"
-  assert pages.duration(42_000) == "42 ms"
-  assert pages.duration(4_200_000) == "4.2 s"
+  assert format.duration(420) == "420 µs"
+  assert format.duration(4200) == "4.2 ms"
+  assert format.duration(42_000) == "42 ms"
+  assert format.duration(4_200_000) == "4.2 s"
 }

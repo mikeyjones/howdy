@@ -1,5 +1,6 @@
 -module(howdy_telemetry_test_ffi).
--export([rescue/1, websocket_roundtrip/3, crash_process/0, putenv/2]).
+-export([rescue/1, websocket_roundtrip/3, crash_process/1, putenv/2,
+         recorder_owners/0, hold_recorder/1, release/1, default_formatter/0]).
 
 rescue(Run) ->
     try {ok, Run()} catch _:_ -> {error, nil} end.
@@ -24,10 +25,38 @@ websocket_roundtrip(Port, Path, Text) ->
 mask(Data, <<M:4/binary>>) ->
     << <<(B bxor binary:at(M, I rem 4))>> || {B, I} <- lists:zip(binary_to_list(Data), lists:seq(0, byte_size(Data) - 1)) >>.
 
-%% A proc_lib process that crashes outside any span, as a worker would.
-crash_process() ->
-    Pid = proc_lib:spawn(fun() -> error(worker_gave_up) end),
+%% A proc_lib process that crashes outside any span, as a worker would,
+%% with `Secret` everywhere a crash report looks: its dictionary, its
+%% mailbox and the arguments of the call that fails.
+crash_process(Secret) ->
+    Pid = proc_lib:spawn(fun() ->
+        put(password, Secret),
+        self() ! {login, Secret},
+        _ = binary_to_integer(Secret),
+        error(worker_gave_up)
+    end),
     Ref = erlang:monitor(process, Pid),
+    receive {'DOWN', Ref, process, Pid, _} -> ok end,
+    timer:sleep(50),
+    nil.
+
+%% How many recorder owners the package's supervisor holds.
+recorder_owners() ->
+    length(supervisor:which_children(howdy_telemetry_recorder_sup)).
+
+%% A process that makes a recorder and keeps it until `release`.
+hold_recorder(Keep) ->
+    Parent = self(),
+    Pid = spawn(fun() ->
+        _ = howdy_telemetry_recorder:new(Keep),
+        Parent ! {ready, self()},
+        receive release -> ok end
+    end),
+    receive {ready, Pid} -> Pid end.
+
+release(Pid) ->
+    Ref = erlang:monitor(process, Pid),
+    Pid ! release,
     receive {'DOWN', Ref, process, Pid, _} -> ok end,
     timer:sleep(50),
     nil.
@@ -35,3 +64,8 @@ crash_process() ->
 putenv(Name, Value) ->
     os:putenv(binary_to_list(Name), binary_to_list(Value)),
     nil.
+
+%% The module formatting the default handler's output.
+default_formatter() ->
+    {ok, #{formatter := {Module, _}}} = logger:get_handler_config(default),
+    atom_to_binary(Module).

@@ -55,7 +55,7 @@ pub fn empty_class() -> Class {
     css.padding_(tokens.space_8 <> " " <> tokens.space_6),
     css.text_align("center"),
     css.border("1px dashed " <> tokens.border),
-    css.property("border-radius", tokens.radius_large),
+    style.radius(tokens.radius_large),
   ])
 }
 
@@ -67,7 +67,7 @@ pub fn icon_class() -> Class {
     css.property("width", "2.5rem"),
     css.property("height", "2.5rem"),
     css.margin_("0 0 " <> tokens.space_1),
-    css.property("border-radius", tokens.radius_medium),
+    style.radius(tokens.radius_medium),
     css.background(tokens.muted),
     css.color(tokens.text_muted),
     css.font_size(rem(1.25)),

@@ -9,6 +9,7 @@
 
 import ewe
 import gleam/dict
+import gleam/erlang/process.{type Pid}
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -17,6 +18,8 @@ import gleam/io
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import howdy/content.{type Content}
@@ -41,6 +44,8 @@ pub opaque type App {
     bind_address: String,
     port: Int,
     tls: Option(Tls),
+    quiet_disconnects: Bool,
+    shutdown_timeout: Int,
   )
 }
 
@@ -64,6 +69,8 @@ pub fn new() -> App {
     bind_address: "0.0.0.0",
     port: 8787,
     tls: None,
+    quiet_disconnects: True,
+    shutdown_timeout: 15_000,
   )
 }
 
@@ -95,20 +102,142 @@ pub fn tls_pem(app: App, cert cert: BitArray, key key: BitArray) -> App {
   App(..app, tls: Some(CertificatePem(cert:, key:)))
 }
 
+/// Report clients that went away mid write as crashed connections after all.
+///
+/// By default `start` installs a node-wide logger filter that drops the
+/// supervisor and crash reports the server's connection pool emits when a
+/// client hangs up while being written to, such as a browser tab closed mid
+/// WebSocket close handshake. The filter only drops exits raised by the
+/// server's own socket layer with one of its peer-gone reasons; everything
+/// else is reported. Call this to keep those reports, for instance while
+/// debugging a flaky network.
+pub fn log_disconnects(app: App) -> App {
+  App(..app, quiet_disconnects: False)
+}
+
+/// Set how long each open connection gets to finish when the server is
+/// stopped, in milliseconds. 15 seconds by default.
+///
+/// HTTP/1 connections finish the request they are serving, WebSockets are
+/// sent a going-away close frame and HTTP/2 connections send GOAWAY and wait
+/// for their open streams. A connection still open once the time is up is
+/// closed. This applies to `stop` and to a shutdown of the supervision tree
+/// the server runs in; see `supervised`.
+pub fn shutdown_timeout(app: App, milliseconds: Int) -> App {
+  App(..app, shutdown_timeout: milliseconds)
+}
+
 /// Start the app's HTTP server.
 /// Defaults to `0.0.0.0:8787`; override with `bind` and `listening`.
 /// Prints a howdy banner with the framework version and bound URL once listening.
 ///
 /// Returns the server's process and the `Address` it is listening on. The
-/// server is linked to the calling process; keep it alive with
-/// `process.sleep_forever()`. For advanced server configuration or
-/// supervision, use `handler` with ewe directly.
+/// server is linked to the calling process: if that process exits, so does
+/// the server, and if the server exits abnormally, so does the caller. That
+/// is fine for a script that calls `process.sleep_forever()` afterwards, but
+/// an app that also runs a database pool, a mail outbox or feature flags
+/// should put them all under a supervisor with `supervised` instead, so a
+/// crash in one is restarted rather than ending the program.
+///
+/// Stop the server with `stop`, which lets open connections finish.
 ///
 /// Clients that disconnect while the server is still writing to them, such
-/// as a browser tab closed mid WebSocket, are not logged as crashes.
+/// as a browser tab closed mid WebSocket, are not logged as crashes; see
+/// `log_disconnects` to change that.
 pub fn start(app: App) -> Result(actor.Started(Address), actor.StartError) {
   start_with(app, serve(app))
 }
+
+/// A child specification for the app's HTTP server, to add to a supervision
+/// tree with `static_supervisor.add`. The child's data is the `Address` the
+/// server listens on, and the supervisor restarts the server if it exits.
+///
+/// ```gleam
+/// import gleam/otp/static_supervisor as supervisor
+///
+/// let assert Ok(_) =
+///   supervisor.new(supervisor.OneForOne)
+///   |> supervisor.add(howdy.supervised(app))
+///   |> supervisor.start
+/// ```
+///
+/// Connections are drained for `shutdown_timeout` when the supervisor stops
+/// the server, which happens when the tree is stopped explicitly or, for a
+/// tree started by an OTP application, when the node shuts down. A tree
+/// started from `main` and left running with `process.sleep_forever()` is
+/// killed with the VM instead, so an app that wants a clean stop on SIGTERM
+/// should start its tree from an application module; see the supervision
+/// guide.
+pub fn supervised(app: App) -> supervision.ChildSpecification(Address) {
+  supervision.supervisor(fn() { start(app) })
+}
+
+/// Start a supervision tree as an OTP application called `name`, and return
+/// the pid of its root supervisor.
+///
+/// This is how a howdy app should run in production. The tree holds the
+/// server from `supervised` alongside anything else the app keeps running,
+/// such as a database pool, feature flags or a mail outbox, each restarted
+/// on its own if it crashes. Because the tree belongs to an application, the
+/// node's own shutdown stops it in order: on `SIGTERM`, or `init:stop()`,
+/// the server stops listening and gives open connections `shutdown_timeout`
+/// to finish before the VM halts. A tree started from `main` without this is
+/// simply killed with the VM.
+///
+/// `name` must not be the name of a package the app already loads, so pick
+/// one like `"my_app_server"`. Keep the calling process alive afterwards,
+/// with `process.sleep_forever()` from `main`.
+///
+/// ```gleam
+/// import gleam/otp/static_supervisor as supervisor
+///
+/// pub fn main() -> Nil {
+///   let assert Ok(_) =
+///     supervisor.new(supervisor.OneForOne)
+///     |> supervisor.add(howdy.supervised(app()))
+///     |> howdy.start_application(name: "my_app_server")
+///   process.sleep_forever()
+/// }
+/// ```
+///
+/// Stop it again with `stop_application`.
+pub fn start_application(
+  tree: static_supervisor.Builder,
+  name name: String,
+) -> Result(Pid, String) {
+  load_and_start(name, fn() { static_supervisor.start(tree) })
+}
+
+/// Stop an application started with `start_application` and wait for its
+/// tree to finish, draining the server's connections on the way.
+pub fn stop_application(name: String) -> Nil {
+  stop_application_now(name)
+}
+
+@external(erlang, "howdy_application", "load_and_start")
+fn load_and_start(
+  name: String,
+  start: fn() ->
+    Result(actor.Started(static_supervisor.Supervisor), actor.StartError),
+) -> Result(Pid, String)
+
+@external(erlang, "howdy_application", "stop_application")
+fn stop_application_now(name: String) -> Nil
+
+/// Stop a server started with `start` and wait for it to finish.
+///
+/// The listener closes first so no new connections arrive, then each open
+/// connection gets `shutdown_timeout` to finish: HTTP/1 requests complete,
+/// WebSockets are sent a going-away close frame and HTTP/2 streams are told
+/// GOAWAY. Returns once every connection is gone and the port is free. The
+/// calling process is unlinked from the server first, so it is not taken
+/// down by the stop.
+pub fn stop(server: Pid) -> Nil {
+  stop_server(server)
+}
+
+@external(erlang, "howdy_ffi", "stop_server")
+fn stop_server(server: Pid) -> Nil
 
 /// Start a server for `app` that answers requests with `handler` instead of
 /// the app's own. The address, port and banner come from `app`. This is
@@ -117,10 +246,14 @@ pub fn start_with(
   app: App,
   handler: fn(Request(Body)) -> Response(Content),
 ) -> Result(actor.Started(Address), actor.StartError) {
-  quiet_disconnects()
+  case app.quiet_disconnects {
+    True -> quiet_disconnects()
+    False -> log_disconnects_now()
+  }
   ewe.new(handler: to_ewe(handler))
   |> ewe.bind(to: app.bind_address)
   |> ewe.listening(on: app.port)
+  |> ewe.shutdown_timeout(app.shutdown_timeout)
   |> with_tls(app.tls)
   |> ewe.on_start(fn(scheme, address) {
     startup_banner(scheme, to_address(address))
@@ -135,6 +268,9 @@ pub fn start_with(
 /// connection. Installed once per node; other reports are untouched.
 @external(erlang, "howdy_ffi", "quiet_disconnects")
 fn quiet_disconnects() -> Nil
+
+@external(erlang, "howdy_ffi", "log_disconnects")
+fn log_disconnects_now() -> Nil
 
 fn with_tls(builder: ewe.Builder, tls: Option(Tls)) -> ewe.Builder {
   case tls {

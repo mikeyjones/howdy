@@ -183,7 +183,10 @@ owner_lifecycle() ->
     [begin
         {Owner, Ref} = spawn_monitor(fun() ->
             {T, _} = howdy_ffi:fixed_window_new(1000),
-            {links, [Janitor]} = process_info(self(), links),
+            %% The janitor owns the table and is not linked to us.
+            Janitor = ets:info(T, owner),
+            true = Janitor =/= self(),
+            {links, []} = process_info(self(), links),
             Parent ! {self(), T, Janitor},
             receive stop -> ok end
         end),

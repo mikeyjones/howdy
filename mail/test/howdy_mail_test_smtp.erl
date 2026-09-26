@@ -1,6 +1,7 @@
 %% A gen_smtp server session for tests: accepts everything except a few
 %% magic recipients, checks one set of credentials when AUTH is offered, and
-%% sends each message to the collector process.
+%% sends each message to the collector process. flaky@example.com is refused
+%% with a temporary error on the first attempt through the server only.
 -module(howdy_mail_test_smtp).
 -export([
     init/4, handle_HELO/2, handle_EHLO/3, handle_MAIL/2, handle_MAIL_extension/2,
@@ -20,11 +21,18 @@ handle_EHLO(_Hostname, Extensions, State) ->
         false -> {ok, Extensions, State}
     end.
 
-handle_MAIL(_From, State) -> {ok, State}.
+handle_MAIL(_From, State) ->
+    atomics:add(proplists:get_value(attempts, State), 1, 1),
+    {ok, State}.
 handle_MAIL_extension(_Extension, State) -> {ok, State}.
 
 handle_RCPT(<<"refused@example.com">>, State) -> {error, "550 No such recipient", State};
 handle_RCPT(<<"later@example.com">>, State) -> {error, "451 Try again later", State};
+handle_RCPT(<<"flaky@example.com">>, State) ->
+    case atomics:get(proplists:get_value(attempts, State), 1) of
+        1 -> {error, "451 Try again later", State};
+        _ -> {ok, State}
+    end;
 handle_RCPT(_To, State) -> {ok, State}.
 handle_RCPT_extension(_Extension, State) -> {ok, State}.
 

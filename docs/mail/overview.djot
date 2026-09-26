@@ -153,8 +153,28 @@ case mail.send(mailer, welcome(user)) {
 ```
 
 `send` waits for the provider to accept or refuse the message, so a refusal
-comes back as an error rather than a bounce. There is no queue yet: the
-request that sends the mail waits for it.
+comes back as an error rather than a bounce.
+
+### Sending is synchronous
+
+`send` runs in the calling process. It opens the SMTP connection or makes
+the HTTP request, and returns when the provider answers or the adapter's
+timeout passes. A request handler that sends mail is held for that long,
+and there is no queue in the package: an `Unavailable` error is returned to
+the caller, not tried again later. That is fine for a sign-in link, where
+the person is waiting for it anyway, and for a local Mailpit.
+
+Where the wait matters, or a temporary failure must not lose the message,
+you have two choices:
+
+- The SMTP adapter can try again itself: `smtp.retries(config, 2)` retries
+  a temporary failure twice, waiting `smtp.backoff` (500 ms by default,
+  doubling each time) in between. The caller is held for every attempt,
+  so this suits a job or a background process better than a request.
+- Record the message in a table of your own and send it from a job that
+  runs outside the request, using `mail.retryable(error)` to decide what
+  to try again. The [outbox](/docs/mail/development) is a sink for
+  reading mail in development and tests, not that queue.
 
 The `Receipt` holds the message's own `id`, which is also in its
 `Message-ID` header, and the `provider_id` the provider gave it, if any.

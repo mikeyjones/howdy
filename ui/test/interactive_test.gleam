@@ -63,10 +63,10 @@ pub fn floating_elements_share_an_anchor_with_their_trigger_test() {
   let anchor = style.anchor_name("filters")
   let trigger = attributes(ui.popover_trigger("filters"))
   assert string.contains(trigger, "popovertarget=\"filters\"")
-  assert string.contains(trigger, "anchor-name:" <> anchor)
+  assert string.contains(trigger, "data-howdy-anchor=\"" <> anchor <> "\"")
   let html = render(ui.popover("filters", [], []))
   assert string.contains(html, "popover=\"auto\"")
-  assert string.contains(html, "position-anchor:" <> anchor)
+  assert string.contains(html, "data-howdy-anchored=\"" <> anchor <> "\"")
 
   let trigger = attributes(ui.tooltip_trigger("tip"))
   assert string.contains(trigger, "data-howdy-tooltip=\"tip\"")

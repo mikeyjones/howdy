@@ -38,7 +38,6 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
-import gleam/uri
 import howdy/content.{type Content}
 import howdy/context
 import howdy/controller.{type Controller, type GuardedContext}
@@ -162,27 +161,23 @@ fn respond(
   }
 }
 
-/// The decoded segments of a request path, or `Error` if any of them could
-/// move outside the root directory or fail to decode.
+/// The segments of a request path, or `Error` if any of them could move
+/// outside the root directory. The router has already percent-decoded the
+/// capture and refused escapes that hide a `/` or a NUL, so the checks here
+/// are on plain text.
 fn safe_segments(path: String) -> Result(List(String), Nil) {
   path
   |> string.split("/")
   |> list.filter(fn(segment) { segment != "" && segment != "." })
   |> list.try_map(fn(segment) {
-    case uri.percent_decode(segment) {
-      Ok(decoded) ->
-        case
-          decoded == ".."
-          || decoded == ""
-          || string.contains(decoded, "/")
-          || string.contains(decoded, "\\")
-          || string.contains(decoded, "\u{0}")
-          || string.contains(decoded, ":")
-        {
-          True -> Error(Nil)
-          False -> Ok(decoded)
-        }
-      Error(Nil) -> Error(Nil)
+    case
+      segment == ".."
+      || string.contains(segment, "\\")
+      || string.contains(segment, "\u{0}")
+      || string.contains(segment, ":")
+    {
+      True -> Error(Nil)
+      False -> Ok(segment)
     }
   })
 }

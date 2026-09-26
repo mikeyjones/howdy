@@ -44,6 +44,8 @@ packages=(
   "howdy_admin:admin"
   "howdy_remote:remote"
   "howdy_telemetry:telemetry"
+  "howdy_openapi:openapi"
+  "howdy_flags:flags"
 )
 for entry in "${packages[@]}"; do
   name="${entry%%:*}"

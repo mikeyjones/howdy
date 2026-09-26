@@ -11,9 +11,15 @@
 ////
 //// Each send opens a connection, delivers one message and closes it. The
 //// call waits for the server to accept the message, so a refusal comes
-//// back as an error rather than a bounce.
+//// back as an error rather than a bounce. That wait happens in the calling
+//// process: a request handler that sends mail is held until the server
+//// answers, or the `timeout` passes. A failure the server calls temporary,
+//// such as a `4xx` reply or an unreachable host, is tried again when
+//// `retries` allows it, with `backoff` between attempts; by default it is
+//// not, and the error is returned to the caller.
 
 import gleam/bool
+import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
@@ -55,6 +61,8 @@ pub opaque type Config {
     tls: Tls,
     timeout: Int,
     helo: Option(String),
+    retries: Int,
+    backoff: Int,
   )
 }
 
@@ -73,6 +81,8 @@ pub fn new(host: String) -> Config {
     tls: default_tls(host),
     timeout: 10_000,
     helo: None,
+    retries: 0,
+    backoff: 500,
   )
 }
 
@@ -181,6 +191,28 @@ pub fn helo(config: Config, name: String) -> Config {
   Config(..config, helo: Some(name))
 }
 
+/// How many more times to try a send whose failure was temporary: the
+/// server could not be reached, timed out, or answered `4xx`. Default 0,
+/// so a temporary failure comes straight back as `Unavailable`. A refusal
+/// is never tried again. Every attempt happens in the calling process, so
+/// a send can take up to `retries + 1` times `timeout`, plus the backoff.
+pub fn retries(config: Config, count: Int) -> Config {
+  Config(..config, retries: int_max(count, 0))
+}
+
+/// How long to wait before the first retry, in milliseconds; each retry
+/// after it waits twice as long as the one before. Default 500.
+pub fn backoff(config: Config, milliseconds: Int) -> Config {
+  Config(..config, backoff: int_max(milliseconds, 0))
+}
+
+fn int_max(a: Int, b: Int) -> Int {
+  case a > b {
+    True -> a
+    False -> b
+  }
+}
+
 pub fn host(config: Config) -> String {
   config.host
 }
@@ -245,7 +277,7 @@ fn send(
     mail.recipients(outgoing)
     |> list.map(fn(address) { "<" <> address.email <> ">" })
     |> list.unique
-  case
+  let attempt = fn() {
     smtp_send(
       config.host,
       config.port,
@@ -258,10 +290,27 @@ fn send(
       recipients,
       mime.encode(outgoing),
     )
-  {
+  }
+  case attempts(attempt, config.retries, config.backoff) {
     Ok(reply) -> Ok(mail.Receipt(outgoing.id, queued_as(reply)))
     Error(Temporary(reason)) -> Error(mail.Unavailable(reason))
     Error(Permanent(reason)) -> Error(mail.Refused(reason))
+  }
+}
+
+/// Try again after a temporary failure while retries remain, waiting
+/// `wait` before the next attempt and twice that before the one after.
+fn attempts(
+  attempt: fn() -> Result(String, Failure),
+  remaining: Int,
+  wait: Int,
+) -> Result(String, Failure) {
+  case attempt() {
+    Error(Temporary(_)) if remaining > 0 -> {
+      process.sleep(wait)
+      attempts(attempt, remaining - 1, wait * 2)
+    }
+    outcome -> outcome
   }
 }
 

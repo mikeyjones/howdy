@@ -1,4 +1,5 @@
-//// Run with `gleam run` from the `examples/simple` directory, then try:
+//// Run with `gleam run` from the `examples/simple` directory. It listens on
+//// 127.0.0.1:8787, so try:
 ////
 //// ```sh
 //// curl http://localhost:8787/                 # index.html from priv/public
@@ -15,6 +16,7 @@
 //// ```
 
 import gleam/erlang/process
+import gleam/otp/static_supervisor as supervisor
 import howdy
 import howdy/cors
 import howdy/logger
@@ -55,7 +57,13 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Info)
 
-  let assert Ok(_) = app() |> howdy.start
+  // The server runs under a supervisor inside an OTP application, so a
+  // crash restarts it and SIGTERM lets open requests finish before exit.
+  // A local demo, so it listens on 127.0.0.1:8787 only.
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(app() |> howdy.bind(to: "127.0.0.1")))
+    |> howdy.start_application(name: "howdy_example_server")
 
   process.sleep_forever()
 }

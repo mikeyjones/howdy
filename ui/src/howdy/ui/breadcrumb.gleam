@@ -82,9 +82,9 @@ pub fn link_class() -> Class {
     css.text_decoration("none"),
     css.hover([css.color(tokens.text)]),
     css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
+      style.focus_outline(),
       css.property("outline-offset", "2px"),
-      css.property("border-radius", tokens.radius_small),
+      style.radius(tokens.radius_small),
     ]),
   ])
 }

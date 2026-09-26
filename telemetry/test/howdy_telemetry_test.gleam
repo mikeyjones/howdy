@@ -204,6 +204,20 @@ pub fn old_traces_are_dropped_test() {
   assert recorder.traces(recorder, limit: 10) == []
 }
 
+pub fn stop_puts_the_log_formatter_back_test() {
+  let before = default_formatter()
+  let assert Ok(Nil) =
+    telemetry.new("howdy-telemetry-test")
+    |> telemetry.json_logs
+    |> telemetry.start
+  assert default_formatter() == "howdy_telemetry_json"
+  telemetry.stop()
+  assert default_formatter() == before
+}
+
+@external(erlang, "howdy_telemetry_test_ffi", "default_formatter")
+fn default_formatter() -> String
+
 pub fn stop_goes_back_to_idle_test() {
   let recorder = recording()
   telemetry.stop()
@@ -255,20 +269,67 @@ fn websocket_roundtrip(port: Int, path: String, text: String) -> BitArray
 
 pub fn a_crash_outside_a_span_is_recorded_test() {
   let recorder = recording()
-  crash_process()
+  crash_process("hunter2")
   let assert Ok(crash) =
     recorder.traces(recorder, limit: 10)
     |> list.find(fn(t) { t.root.name == "process crash" })
   assert crash.root.status == recorder.Failed("process crashed")
+  assert recorder.attribute(crash.root, "exception.type")
+    == Some(recorder.Text("error"))
   let assert Some(recorder.Text(message)) =
     recorder.attribute(crash.root, "exception.message")
-  assert string.contains(message, "worker_gave_up")
+  assert string.contains(message, "badarg")
   let assert [log] = recorder.logs(recorder, crash.root.trace_id)
   assert log.level == "error"
 }
 
+pub fn a_crash_report_keeps_its_secrets_off_the_span_test() {
+  let recorder = recording()
+  crash_process("s3cret-token")
+  let assert Ok(crash) =
+    recorder.traces(recorder, limit: 10)
+    |> list.find(fn(t) { t.root.name == "process crash" })
+  let assert Ok(spans) = recorder.trace(recorder, crash.root.trace_id)
+  list.each(spans, fn(span) {
+    list.each(span.attributes, fn(attribute) {
+      assert !string.contains(
+        recorder.value_to_string(attribute.1),
+        "s3cret-token",
+      )
+    })
+    list.each(span.events, fn(event) {
+      list.each(event.attributes, fn(attribute) {
+        assert !string.contains(
+          recorder.value_to_string(attribute.1),
+          "s3cret-token",
+        )
+      })
+    })
+  })
+  // The full report still reaches the dev admin's log, as the console gets.
+  let assert [log] = recorder.logs(recorder, crash.root.trace_id)
+  assert string.contains(log.message, "s3cret-token")
+}
+
 @external(erlang, "howdy_telemetry_test_ffi", "crash_process")
-fn crash_process() -> Nil
+fn crash_process(secret: String) -> Nil
+
+pub fn a_recorder_is_owned_by_a_supervised_process_test() {
+  let before = recorder_owners()
+  let holder = hold_recorder(10)
+  assert recorder_owners() == before + 1
+  release(holder)
+  assert recorder_owners() == before
+}
+
+@external(erlang, "howdy_telemetry_test_ffi", "recorder_owners")
+fn recorder_owners() -> Int
+
+@external(erlang, "howdy_telemetry_test_ffi", "hold_recorder")
+fn hold_recorder(keep: Int) -> process.Pid
+
+@external(erlang, "howdy_telemetry_test_ffi", "release")
+fn release(holder: process.Pid) -> Nil
 
 pub fn from_env_needs_a_collector_test() {
   putenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")

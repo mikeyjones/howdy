@@ -258,3 +258,33 @@ pub fn bad_input_is_explained_test() {
     cli.execute(["add", "x", "--to=" <> dir, "--registry=build/nowhere"])
   assert string.contains(message, "could not read build/nowhere/x.json")
 }
+
+/// A diff over a few hundred lines with changes spread through the file.
+pub fn diff_handles_a_long_file_test() {
+  reset()
+  let assert Ok(_) = cli.execute(["add", "data_table", "--to=" <> dir])
+  let path = dir <> "/data_table.gleam"
+  let assert Ok(copy) = simplifile.read(path)
+  let lines = string.split(copy, "\n")
+  assert list.length(lines) > 300
+  let edited =
+    lines
+    |> list.index_map(fn(line, i) {
+      case i {
+        100 -> []
+        300 -> ["// a local change", line]
+        _ -> [line]
+      }
+    })
+    |> list.flatten
+    |> string.join("\n")
+  let assert Ok(Nil) = simplifile.write(path, edited)
+  let assert Ok(dropped) = list.first(list.drop(lines, 100))
+
+  let assert Ok(output) = cli.execute(["diff", "data_table", "--to=" <> dir])
+  assert string.contains(output, "--- " <> path)
+  assert string.contains(output, "\n+" <> dropped <> "\n")
+  assert string.contains(output, "\n-// a local change\n")
+  // Only the changed regions and their context are shown.
+  assert list.length(string.split(output, "\n")) < 30
+}

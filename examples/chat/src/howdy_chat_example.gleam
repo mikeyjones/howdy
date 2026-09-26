@@ -1,5 +1,5 @@
-//// A chat server. Run with `gleam run` from `examples/chat`, then open
-//// http://localhost:8789 in two browser tabs.
+//// A chat server. Run with `gleam run` from `examples/chat`; it listens on
+//// 127.0.0.1:8789. Open http://localhost:8789 in two browser tabs.
 ////
 //// Every room is a channel topic. A socket joins its room on open and
 //// leaves when it closes; anything with the room name can broadcast to it,
@@ -14,6 +14,7 @@
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/json
+import gleam/otp/static_supervisor as supervisor
 import howdy
 import howdy/body
 import howdy/controller.{type Context}
@@ -37,7 +38,15 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Info)
 
-  let assert Ok(_) = app() |> howdy.listening(on: 8789) |> howdy.start
+  // Under a supervisor inside an OTP application: a crash restarts the
+  // server, and SIGTERM sends every socket a going-away frame before exit.
+  // A local demo, so it listens on 127.0.0.1:8789 only.
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(
+      app() |> howdy.bind(to: "127.0.0.1") |> howdy.listening(on: 8789),
+    ))
+    |> howdy.start_application(name: "howdy_chat_server")
 
   process.sleep_forever()
 }

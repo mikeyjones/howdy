@@ -418,8 +418,8 @@ pub fn scroll_class() -> Class {
   css.class([
     css.width(percent(100)),
     css.overflow_x("auto"),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
   ])
 }
 
@@ -437,7 +437,7 @@ pub fn caption_class() -> Class {
     css.property("caption-side", "bottom"),
     css.padding(rem(0.75)),
     css.color(tokens.text_muted),
-    css.property("border-top", "1px solid " <> tokens.border),
+    style.bordered_side("top"),
   ])
 }
 
@@ -447,7 +447,7 @@ pub fn head_class() -> Class {
     css.text_align("start"),
     css.font_weight("500"),
     css.white_space("nowrap"),
-    css.property("border-bottom", "1px solid " <> tokens.border),
+    style.bordered_side("bottom"),
     css.selector("[data-numeric]", [css.text_align("end")]),
   ])
 }
@@ -460,17 +460,14 @@ pub fn sort_class() -> Class {
     css.margin_("0 -" <> tokens.space_2),
     css.padding_(tokens.space_1 <> " " <> tokens.space_2),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color("inherit"),
     css.font("inherit"),
     css.text_decoration("none"),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }
 
@@ -480,7 +477,7 @@ pub fn indicator_class() -> Class {
 
 pub fn row_class() -> Class {
   css.class([
-    css.property("border-bottom", "1px solid " <> tokens.border),
+    style.bordered_side("bottom"),
     css.last_child([css.property("border-bottom", "0")]),
     css.hover([css.background(tokens.muted)]),
     css.selector("[aria-selected=\"true\"]", [css.background(tokens.muted)]),
@@ -504,7 +501,7 @@ pub fn check_cell_class() -> Class {
     css.padding_(
       tokens.space_2 <> " 0 " <> tokens.space_2 <> " " <> tokens.space_3,
     ),
-    css.property("border-bottom", "1px solid " <> tokens.border),
+    style.bordered_side("bottom"),
     css.vertical_align("middle"),
   ])
 }

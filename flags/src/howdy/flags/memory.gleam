@@ -7,19 +7,24 @@
 //// let assert Ok(features) =
 ////   flags.new(store) |> flags.register(my_app.all_flags()) |> flags.start
 //// ```
+////
+//// `stop` ends the process. Every call to the store, from then on or from
+//// a store that stops answering, returns `Error(service.Internal)` rather
+//// than crashing the caller.
 
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
 import gleam/result
 import gleam/string
-import gleam/time/timestamp
 import howdy/flags.{
   type Change, type Setting, type Snapshot, type Target, type Update, Change,
   Delete, GroupSummary, Save, Snapshot, Unchanged,
 }
+import howdy/flags/internal/time
 import howdy/service
 
 /// An empty store, in a process linked to the caller.
@@ -48,32 +53,93 @@ pub fn from(snapshot: Snapshot) -> flags.Store {
   let subject = started.data
   flags.store(
     named: "memory",
-    load: fn() { Ok(ask(subject, Load)) },
-    version: fn() { Ok(ask(subject, Version)) },
-    history: fn(flag, limit) { Ok(ask(subject, History(flag, limit, _))) },
+    load: fn() { ask(subject, Load) },
+    version: fn() { ask(subject, Version) },
+    history: fn(flag, limit) { ask(subject, History(flag, limit, _)) },
   )
   |> flags.with_writer(
     flags.Writer(
       update: fn(key, by, decide) {
-        ask(subject, UpdateFlag(key, by, decide, _))
+        ask(subject, UpdateFlag(key, by, decide, _)) |> result.flatten
       },
-      find_change: fn(id) { ask(subject, FindChange(id, _)) },
+      find_change: fn(id) { ask(subject, FindChange(id, _)) |> result.flatten },
       create_group: fn(name, description, by) {
-        ask(subject, CreateGroup(name, description, by, _))
+        ask(subject, CreateGroup(name, description, by, _)) |> result.flatten
       },
-      delete_group: fn(name, by) { ask(subject, DeleteGroup(name, by, _)) },
+      delete_group: fn(name, by) {
+        ask(subject, DeleteGroup(name, by, _)) |> result.flatten
+      },
       add_member: fn(group, member, by) {
-        ask(subject, AddMember(group, member, by, _))
+        ask(subject, AddMember(group, member, by, _)) |> result.flatten
       },
       remove_member: fn(group, member, by) {
-        ask(subject, RemoveMember(group, member, by, _))
+        ask(subject, RemoveMember(group, member, by, _)) |> result.flatten
       },
     ),
   )
+  |> flags.with_stop(fn() { stop_process(subject) })
 }
 
-fn ask(subject: Subject(Message), make: fn(Subject(a)) -> Message) -> a {
-  actor.call(subject, waiting: 5000, sending: make)
+/// End the store's process. Everything it held is gone, and every later
+/// call to it, including from flags still running on it, returns an error.
+/// Stopping a store that has already stopped does nothing.
+pub fn stop(store: flags.Store) -> Nil {
+  flags.stop_store(store)
+}
+
+fn stop_process(subject: Subject(Message)) -> Nil {
+  case process.subject_owner(subject) {
+    Ok(pid) ->
+      case process.is_alive(pid) {
+        True -> {
+          let _ = ask(subject, Stop)
+          Nil
+        }
+        False -> Nil
+      }
+    Error(Nil) -> Nil
+  }
+}
+
+/// How long a call to the store waits before giving up. Its work is a
+/// dictionary lookup, so this is only ever reached by a store that is
+/// wedged or gone.
+const timeout_ms = 5000
+
+/// Ask the store's process and wait for the answer, without crashing the
+/// caller when there is none: a store that has stopped, exits while
+/// answering, or does not answer in time is an error to whoever asked.
+fn ask(
+  subject: Subject(Message),
+  make: fn(Subject(a)) -> Message,
+) -> service.Result(a) {
+  case process.subject_owner(subject) {
+    Error(Nil) -> Error(gone())
+    Ok(pid) -> {
+      let reply = process.new_subject()
+      let monitor = process.monitor(pid)
+      process.send(subject, make(reply))
+      let outcome =
+        process.new_selector()
+        |> process.select_map(reply, Ok)
+        |> process.select_specific_monitor(monitor, fn(_) { Error(gone()) })
+        |> process.selector_receive(within: timeout_ms)
+      process.demonitor_process(monitor)
+      case outcome {
+        Ok(answer) -> answer
+        Error(Nil) ->
+          Error(service.Internal(
+            "the memory flag store did not answer within "
+            <> int.to_string(timeout_ms)
+            <> "ms",
+          ))
+      }
+    }
+  }
+}
+
+fn gone() -> service.Error {
+  service.Internal("the memory flag store has stopped")
 }
 
 type State {
@@ -87,6 +153,7 @@ type State {
 }
 
 type Message {
+  Stop(reply: Subject(Nil))
   Load(reply: Subject(Snapshot))
   Version(reply: Subject(Int))
   History(flag: Option(String), limit: Int, reply: Subject(List(Change)))
@@ -122,6 +189,10 @@ type Message {
 /// atomic.
 fn handle(state: State, message: Message) -> actor.Next(State, Message) {
   case message {
+    Stop(reply) -> {
+      process.send(reply, Nil)
+      actor.stop()
+    }
     Load(reply) -> {
       process.send(reply, snapshot(state))
       actor.continue(state)
@@ -292,8 +363,7 @@ fn record(
   after: Option(Setting),
 ) -> State {
   let version = state.version + 1
-  let #(at, _) =
-    timestamp.to_unix_seconds_and_nanoseconds(timestamp.system_time())
+  let at = time.now()
   State(..state, version:, changes: [
     Change(id: version, flag:, at:, by:, summary:, before:, after:),
     ..state.changes

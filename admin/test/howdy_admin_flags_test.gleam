@@ -55,6 +55,7 @@ fn post(
   let res =
     testing.post_form(path, fields)
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 303
     as {
@@ -118,6 +119,7 @@ pub fn kill_and_undo_from_the_flag_page_test() {
       #("rollout", "50"),
     ])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 404
 
@@ -169,6 +171,7 @@ pub fn groups_are_created_filled_and_used_test() {
   let res =
     testing.post_form("/_howdy/flags/groups/group/delete?name=beta", [])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert string.contains(testing.text(res), "new_checkout")
   let _ = act(app, "unlist", [#("target", "group:beta")])
@@ -234,6 +237,7 @@ pub fn read_only_flags_are_shown_without_controls_test() {
   let res =
     testing.post_form("/_howdy/flags/flag/kill?key=new_checkout", [])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert string.contains(testing.text(res), "read-only")
   flags.stop(features)

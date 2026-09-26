@@ -109,8 +109,8 @@ pub fn classes() -> List(Class) {
 pub fn card_class() -> Class {
   css.class([
     css.background(tokens.surface),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_large),
+    style.bordered(),
+    style.radius(tokens.radius_large),
     css.padding(rem(1.5)),
     css.property("--howdy-card-gap", tokens.space_4),
   ])
@@ -119,8 +119,8 @@ pub fn card_class() -> Class {
 pub fn compact_class() -> Class {
   css.class([
     css.background(tokens.surface),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.padding(rem(1.0)),
     css.property("--howdy-card-gap", tokens.space_3),
   ])

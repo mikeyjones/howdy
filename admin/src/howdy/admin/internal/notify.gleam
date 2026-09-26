@@ -13,6 +13,7 @@
 import gleam/dynamic/decode
 import gleam/erlang/atom.{type Atom}
 import gleam/erlang/process.{type Pid}
+import gleam/option.{type Option, None, Some}
 import gleam/result
 import gloo/repo.{type Repo}
 import gloo/sql
@@ -20,6 +21,8 @@ import gloo/value.{type GlooValue}
 import howdy/admin/internal/schema
 import howdy/database.{Postgres, Sqlite}
 import howdy/service
+import logging
+import pog
 
 /// The channel every notification arrives on. The payload is the table.
 pub const channel = "howdy_admin"
@@ -38,10 +41,27 @@ fn listen(
   notify: fn(String) -> Nil,
 ) -> Result(Nil, Nil)
 
-/// Whether this Repo is a PostgreSQL pool the admin can listen through.
-pub fn available(repo: Repo) -> Bool {
+@external(erlang, "howdy_admin_ffi", "listen_via")
+fn listen_via(
+  host: String,
+  port: Int,
+  database: String,
+  user: String,
+  password: Option(String),
+  ssl: pog.Ssl,
+  parameters: List(#(String, String)),
+  ip_version: pog.IpVersion,
+  channel: String,
+  owner: Pid,
+  notify: fn(String) -> Nil,
+) -> Result(Nil, Nil)
+
+/// Whether this Repo is on PostgreSQL and the admin has a way to listen:
+/// settings the app gave, or a pgo pool it can look inside.
+pub fn available(repo: Repo, settings: Option(pog.Config)) -> Bool {
   case database.backend(repo) {
-    Ok(Postgres) -> result.is_ok(postgres_pool(repo))
+    Ok(Postgres) ->
+      option.is_some(settings) || result.is_ok(postgres_pool(repo))
     _ -> False
   }
 }
@@ -106,14 +126,51 @@ pub fn uninstall(repo: Repo) -> service.Result(Nil) {
 }
 
 /// Call `notify` with each table name announced on the channel, from a
-/// process of its own, until `owner` exits.
+/// process linked to `owner`, until `owner` exits. Connects with the
+/// settings the app gave, or else with those found inside the pool. An
+/// `Error` means no notifications will come, and says why in the log.
 pub fn subscribe(
   repo: Repo,
+  settings: Option(pog.Config),
   owner: Pid,
   notify: fn(String) -> Nil,
 ) -> Result(Nil, Nil) {
-  use pool <- result.try(postgres_pool(repo))
-  listen(pool, channel, owner, notify)
+  let outcome = case settings {
+    Some(config) ->
+      listen_via(
+        config.host,
+        config.port,
+        config.database,
+        config.user,
+        config.password,
+        config.ssl,
+        config.connection_parameters,
+        config.ip_version,
+        channel,
+        owner,
+        notify,
+      )
+    None -> {
+      use pool <- result.try(postgres_pool(repo))
+      listen(pool, channel, owner, notify)
+    }
+  }
+  case outcome {
+    Ok(Nil) -> Ok(Nil)
+    Error(Nil) -> {
+      logging.log(
+        logging.Warning,
+        "howdy/admin: could not listen for changes on PostgreSQL"
+          <> case settings {
+          Some(_) -> " with the settings given to notify_via"
+          None ->
+            " because the pool's settings could not be found; pass them with howdy/admin.notify_via"
+        }
+          <> "; the grid polls instead",
+      )
+      Error(Nil)
+    }
+  }
 }
 
 fn execute(

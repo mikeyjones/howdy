@@ -9,6 +9,7 @@ import envoy
 import gleam/erlang/process
 import gleam/io
 import gleam/list
+import gleam/otp/static_supervisor as supervisor
 import gleam/result
 import howdy
 import howdy/remote
@@ -30,20 +31,29 @@ pub fn server() -> remote.Server {
 
 pub fn main() -> Nil {
   let server = server()
-  let assert Ok(_) = remote.start(server)
-  io.println("Serving users procedures as " <> remote.self())
-
-  case envoy.get("RPC_TOKEN") {
-    Ok(token) -> {
-      let assert Ok(_) =
+  // The procedure directory and, with a token, the HTTP transport run under
+  // one supervisor inside an OTP application, so each is restarted on a
+  // crash and SIGTERM stops them in order.
+  let tree =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(remote.supervised(server))
+  let tree = case envoy.get("RPC_TOKEN") {
+    Ok(token) ->
+      supervisor.add(
+        tree,
         howdy.new()
-        |> howdy.controller(remote.controller(server, at: "/rpc", token:))
-        |> howdy.listening(on: 8788)
-        |> howdy.start
-      Nil
+          |> howdy.controller(remote.controller(server, at: "/rpc", token:))
+          |> howdy.bind(to: "127.0.0.1")
+          |> howdy.listening(on: 8788)
+          |> howdy.supervised,
+      )
+    Error(Nil) -> {
+      io.println("Set RPC_TOKEN to serve over HTTP as well")
+      tree
     }
-    Error(Nil) -> io.println("Set RPC_TOKEN to serve over HTTP as well")
   }
+  let assert Ok(_) = howdy.start_application(tree, name: "howdy_remote_users")
+  io.println("Serving users procedures as " <> remote.self())
 
   process.sleep_forever()
 }

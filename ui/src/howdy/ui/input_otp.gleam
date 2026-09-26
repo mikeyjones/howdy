@@ -119,7 +119,7 @@ pub fn frame_class() -> Class {
     // Clip rather than hide: a hidden overflow can still be scrolled, and
     // focusing the input would scroll the digits out of their boxes.
     css.overflow("clip"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.selector(":has(> :focus-visible)", [
       css.property("box-shadow", "0 0 0 2px " <> tokens.focus),
     ]),
@@ -148,7 +148,7 @@ pub fn otp_class() -> Class {
     ),
     css.property("letter-spacing", "calc(var(--cell) - 1ch)"),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.color(tokens.text),
     css.font_family(tokens.font_mono),
     css.font_size(rem(1.25)),
@@ -170,6 +170,6 @@ pub fn otp_class() -> Class {
       "calc(var(--cell) * var(--howdy-otp-length)) 100%",
     ),
     css.outline("none"),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
+    style.disabled_look(),
   ])
 }

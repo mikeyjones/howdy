@@ -73,10 +73,7 @@ pub fn accordion_class() -> Class {
 }
 
 pub fn item_class() -> Class {
-  css.class([
-    css.property("border-bottom", "1px solid " <> tokens.border),
-    ..summary(tokens.space_4 <> " 0")
-  ])
+  css.class([style.bordered_side("bottom"), ..summary(tokens.space_4 <> " 0")])
 }
 
 pub fn content_class() -> Class {
@@ -102,12 +99,12 @@ fn summary(padding: String) -> List(css.Style) {
       css.font_weight("500"),
       css.cursor("pointer"),
       css.list_style("none"),
-      css.property("border-radius", tokens.radius_small),
+      style.radius(tokens.radius_small),
     ]),
     css.selector(" > summary::-webkit-details-marker", [css.display("none")]),
     css.selector(" > summary:hover", [css.text_decoration("underline")]),
     css.selector(" > summary:focus-visible", [
-      css.outline("2px solid " <> tokens.focus),
+      style.focus_outline(),
       css.property("outline-offset", "2px"),
     ]),
     css.selector(" > summary::after", [

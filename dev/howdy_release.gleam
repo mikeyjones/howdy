@@ -39,6 +39,8 @@ pub const packages = [
   #("howdy_admin", "admin"),
   #("howdy_remote", "remote"),
   #("howdy_telemetry", "telemetry"),
+  #("howdy_openapi", "openapi"),
+  #("howdy_flags", "flags"),
 ]
 
 const releases_path = "releases/releases.json"

@@ -50,7 +50,7 @@ pub fn badge_class(variant: Variant) -> Class {
     css.gap(rem(0.25)),
     css.padding_("0.125rem " <> tokens.space_2),
     css.border("1px solid transparent"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.font_size(rem(0.75)),
     css.font_weight("500"),
     css.line_height("1.25"),

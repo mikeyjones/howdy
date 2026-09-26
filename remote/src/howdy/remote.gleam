@@ -619,9 +619,13 @@ fn cast_node(
   trace_headers: List(#(String, String)),
 ) -> Nil
 
+@external(erlang, "howdy_remote_ffi", "spawn_cast")
+fn spawn_cast(run: fn() -> a) -> Nil
+
 /// Call a procedure without waiting for, or learning about, the outcome.
 /// Over distribution nothing waits at all; over HTTP the request is made
-/// from a new process with a 30 second timeout.
+/// from a new process with a 30 second timeout. At most 64 casts are in
+/// flight at once; beyond that they are dropped with a warning.
 pub fn cast(
   target: Target,
   procedure: Procedure(input, output),
@@ -634,12 +638,10 @@ pub fn cast(
     case target {
       Cluster -> cast_cluster(procedure.name, payload, headers)
       OnNode(name:) -> cast_node(name, procedure.name, payload, headers)
-      Http(url:, token:) -> {
-        process.spawn_unlinked(fn() {
+      Http(url:, token:) ->
+        spawn_cast(fn() {
           call_http(url, token, procedure.name, payload, headers, 30_000)
         })
-        Nil
-      }
     }
     Ok(Nil)
   }

@@ -275,10 +275,18 @@ pub fn check_at(limiter: Limiter, key: String, now_ms: Int) -> Decision {
           Allowed(limit:, remaining: limit - count, reset_seconds:)
         Ok(_) -> Denied(limit:, retry_after_seconds: reset_seconds)
         Error(Nil) -> {
-          logging.log(
-            logging.Warning,
-            "rate limit store failed for " <> name <> "; allowing the request",
-          )
+          // Once per window per limiter, not once per request: an outage
+          // would otherwise write a line for every request behind it.
+          case warn_at_most_every(name, window_ms) {
+            True ->
+              logging.log(
+                logging.Warning,
+                "rate limit store failed for "
+                  <> name
+                  <> "; allowing requests until it recovers",
+              )
+            False -> Nil
+          }
           Allowed(limit:, remaining: limit, reset_seconds:)
         }
       }
@@ -406,3 +414,6 @@ pub fn by(limiter: Limiter, key: fn(Context) -> Option(String)) -> Middleware {
     }
   }
 }
+
+@external(erlang, "howdy_ffi", "warn_at_most_every")
+fn warn_at_most_every(key: String, interval_ms: Int) -> Bool

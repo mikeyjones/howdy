@@ -67,7 +67,7 @@ pub fn sweep_class() -> Class {
   css.class([
     css.width(percent(40)),
     css.height(percent(100)),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.primary),
   ])
 }
@@ -81,7 +81,7 @@ pub fn track_class() -> Class {
     css.width(percent(100)),
     css.property("height", "0.5rem"),
     css.overflow("hidden"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.muted),
   ])
 }
@@ -89,7 +89,7 @@ pub fn track_class() -> Class {
 pub fn bar_class() -> Class {
   css.class([
     css.height(percent(100)),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.primary),
     css.transition("width 200ms"),
   ])

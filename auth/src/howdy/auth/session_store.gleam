@@ -8,9 +8,13 @@
 //// suspension stay in the database: every request still confirms there that
 //// the session's user is active.
 
+import gleam/dynamic.{type Dynamic}
+import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import howdy/service
@@ -66,59 +70,111 @@ pub type SessionStore {
   )
 }
 
-type Table
+/// A reference under which the owner process publishes its table.
+type Handle
 
-@external(erlang, "howdy_auth_ffi", "sessions_new")
-fn table_new() -> Table
+@external(erlang, "howdy_auth_sessions", "new_ref")
+fn handle_new() -> Handle
+
+@external(erlang, "howdy_auth_sessions", "start")
+fn owner_start() -> Handle
+
+@external(erlang, "howdy_auth_sessions", "start_link")
+fn owner_start_link(handle: Handle) -> Result(process.Pid, Dynamic)
 
 @external(erlang, "howdy_auth_ffi", "sessions_put")
 fn table_put(
-  table: Table,
+  handle: Handle,
   digest: String,
   user_id: String,
   expires_at: Int,
   record: Entry,
-) -> Nil
+) -> Result(Nil, Nil)
 
 @external(erlang, "howdy_auth_ffi", "sessions_get")
-fn table_get(table: Table, digest: String) -> Option(Entry)
+fn table_get(handle: Handle, digest: String) -> Result(Option(Entry), Nil)
 
 @external(erlang, "howdy_auth_ffi", "sessions_list")
-fn table_list(table: Table, user_id: String) -> List(Entry)
+fn table_list(handle: Handle, user_id: String) -> Result(List(Entry), Nil)
 
 @external(erlang, "howdy_auth_ffi", "sessions_delete")
-fn table_delete(table: Table, digest: String, user_id: String) -> Nil
+fn table_delete(
+  handle: Handle,
+  digest: String,
+  user_id: String,
+) -> Result(Nil, Nil)
 
 @external(erlang, "howdy_auth_ffi", "sessions_delete_user")
-fn table_delete_user(table: Table, user_id: String, keep: String) -> Nil
+fn table_delete_user(
+  handle: Handle,
+  user_id: String,
+  keep: String,
+) -> Result(Nil, Nil)
 
 @external(erlang, "howdy_auth_ffi", "sessions_prune")
-fn table_prune(table: Table, now: Int) -> Nil
+fn table_prune(handle: Handle, now: Int) -> Result(Nil, Nil)
 
 /// Sessions in this node's memory: a reference implementation, and useful in
 /// tests and single-node development. Sessions are lost on restart and are
-/// not shared between nodes. The table belongs to the calling process, so
-/// create it once from one that lives as long as the application.
+/// not shared between nodes. The table belongs to a small process of its own,
+/// started here unlinked, so it outlives the caller and neither takes the
+/// other down; it runs until the VM stops. Use `memory_supervised` instead
+/// when the application has a supervision tree to own it.
 pub fn memory() -> SessionStore {
-  let table = table_new()
+  store(owner_start())
+}
+
+/// `memory`, with the table's owner as a child for the application's
+/// supervisor. The store may be used as soon as the child has started, and
+/// again after the supervisor restarts it, when it starts empty: sessions
+/// die with the owner. Until then, and while the owner is down, every
+/// operation returns `Error(service.Internal(_))`.
+pub fn memory_supervised() -> #(
+  supervision.ChildSpecification(Nil),
+  SessionStore,
+) {
+  let handle = handle_new()
+  let child =
+    supervision.worker(fn() {
+      case owner_start_link(handle) {
+        Ok(pid) -> Ok(actor.Started(pid:, data: Nil))
+        Error(reason) -> Error(actor.InitFailed(string.inspect(reason)))
+      }
+    })
+  #(child, store(handle))
+}
+
+fn store(handle: Handle) -> SessionStore {
   let put = fn(record: Entry) {
-    table_put(table, record.digest, record.user_id, record.expires_at, record)
+    table_put(handle, record.digest, record.user_id, record.expires_at, record)
+    |> unavailable
   }
   SessionStore(
-    insert: fn(record) { Ok(put(record)) },
-    get: fn(digest) { Ok(table_get(table, digest)) },
+    insert: put,
+    get: fn(digest) { table_get(handle, digest) |> unavailable },
     touch: fn(digest, now, expires_at) {
-      case table_get(table, digest) {
-        Some(record) -> Ok(put(Entry(..record, last_seen_at: now, expires_at:)))
-        None -> Ok(Nil)
+      case table_get(handle, digest) |> unavailable {
+        Ok(Some(record)) -> put(Entry(..record, last_seen_at: now, expires_at:))
+        Ok(None) -> Ok(Nil)
+        Error(failure) -> Error(failure)
       }
     },
-    list: fn(user_id) { Ok(table_list(table, user_id)) },
-    delete: fn(digest, user_id) { Ok(table_delete(table, digest, user_id)) },
-    delete_for_user: fn(user_id, keep) {
-      Ok(table_delete_user(table, user_id, option.unwrap(keep, "")))
+    list: fn(user_id) { table_list(handle, user_id) |> unavailable },
+    delete: fn(digest, user_id) {
+      table_delete(handle, digest, user_id) |> unavailable
     },
-    prune: fn(now) { Ok(table_prune(table, now)) },
+    delete_for_user: fn(user_id, keep) {
+      table_delete_user(handle, user_id, option.unwrap(keep, "")) |> unavailable
+    },
+    prune: fn(now) { table_prune(handle, now) |> unavailable },
+  )
+}
+
+/// The table is gone: its owner is down, or it was deleted. Fail closed.
+fn unavailable(answer: Result(a, Nil)) -> service.Result(a) {
+  result.replace_error(
+    answer,
+    service.Internal("in-memory session store is unavailable"),
   )
 }
 

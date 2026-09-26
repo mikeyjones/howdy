@@ -19,8 +19,9 @@ curl -i http://localhost:8787/users/9  # 404, the users service's own NotFound
 curl http://localhost:8787/users
 ```
 
-Stop `users` and the same requests return a logged `500`. Start it again and
-`web` reconnects within five seconds.
+`web` listens on 127.0.0.1:8787. Stop `users` and the same requests return a
+logged `500`. Start it again and `web` reconnects within five seconds: a
+supervised actor retries the connection on a timer.
 
 Over HTTP instead, with `users` still running:
 

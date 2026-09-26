@@ -64,8 +64,8 @@ pub fn alert_class(variant: Variant) -> Class {
     css.padding_(tokens.space_3 <> " " <> tokens.space_4),
     css.background(tokens.surface),
     css.color(colour),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_large),
+    style.bordered(),
+    style.radius(tokens.radius_large),
     css.font_size(rem(0.875)),
     css.selector(":has(> svg)", [
       css.grid_template_columns("1rem 1fr"),

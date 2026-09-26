@@ -1,7 +1,8 @@
 //// A gallery of howdy_ui: a dashboard with charts and a live orders table,
 //// a live chat, a page of components, sign-in and sign-up screens, and the
 //// howdy_ui reference at `/ui`. Run with `gleam run` from
-//// `examples/gallery`, then open http://localhost:8791.
+//// `examples/gallery`; it listens on 127.0.0.1:8791. Open
+//// http://localhost:8791.
 ////
 //// The screens use howdy_ui's blocks: the application shell, stat cards,
 //// and the sign-in and sign-up cards. `gleam run -m howdy/ui add sign_up`
@@ -12,6 +13,7 @@ import gleam/http/response
 import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/static_supervisor as supervisor
 import gleam/string
 import gleam/uri
 import howdy
@@ -43,10 +45,14 @@ import lustre/element.{type Element, text}
 import lustre/element/html
 
 pub fn main() -> Nil {
+  // Supervised inside an OTP application: restarted on a crash, drained on
+  // SIGTERM. A local demo, so it listens on 127.0.0.1:8791 only.
   let assert Ok(_) =
-    app()
-    |> howdy.listening(on: 8791)
-    |> howdy.start
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(
+      app() |> howdy.bind(to: "127.0.0.1") |> howdy.listening(on: 8791),
+    ))
+    |> howdy.start_application(name: "howdy_gallery_server")
 
   process.sleep_forever()
 }

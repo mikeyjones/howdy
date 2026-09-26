@@ -170,7 +170,7 @@ fn surface() -> List(css.Style) {
     css.padding(rem(1.5)),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
+    style.bordered(),
     css.box_shadow("0 20px 50px -12px rgb(0 0 0 / 0.35)"),
     css.overflow("auto"),
     css.property("overscroll-behavior", "contain"),
@@ -184,7 +184,7 @@ pub fn dialog_class() -> Class {
     css.width(percent(100)),
     css.property("max-width", "min(32rem, calc(100% - 2rem))"),
     css.property("max-height", "calc(100% - 2rem)"),
-    css.property("border-radius", tokens.radius_large),
+    style.radius(tokens.radius_large),
     ..surface()
   ])
 }
@@ -221,7 +221,7 @@ pub fn sheet_class(side: Side) -> Class {
       css.inset("0"),
       css.property("max-width", "none"),
       css.property("max-height", "none"),
-      css.property("border-radius", "0"),
+      style.radius("0"),
       ..surface()
     ]
     |> list.append(placement),

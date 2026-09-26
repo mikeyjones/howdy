@@ -5,6 +5,7 @@ import gleam/option.{type Option}
 import gloo/repo.{type Repo}
 import howdy.{type App}
 import howdy/auth.{type Auth}
+import howdy/auth/user
 import howdy/authorization.{type Authorization}
 import howdy/flags.{type Flags}
 import howdy/mail.{type Mailer}
@@ -12,6 +13,7 @@ import howdy/mail/outbox.{type Outbox}
 import howdy/mail/preview.{type Preview}
 import howdy/openapi
 import howdy/telemetry/recorder.{type Recorder}
+import pog
 
 pub type Config {
   Config(
@@ -32,8 +34,14 @@ pub type Config {
     api: Option(Api),
     /// Exact request hostnames the pages answer.
     hosts: List(String),
+    /// How to open the connection that listens for `NOTIFY` on PostgreSQL,
+    /// when the app said. Otherwise the grid looks for the pool's settings.
+    listen: Option(pog.Config),
   )
 }
+
+/// Who the admin's changes to accounts are recorded as.
+pub const actor = user.SystemFrom("howdy_admin")
 
 /// A path under the mount point. `rest` starts with `/`, or is empty for
 /// the mount point itself.

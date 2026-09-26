@@ -15,6 +15,11 @@
           "description": "Build a themed page with Howdy UI, add a theme toggle, and bring it to life with a live component."
         },
         {
+          "slug": "supervision",
+          "title": "Supervision and shutdown",
+          "description": "Run the server and everything else your app keeps alive under a supervisor, as an OTP application, so crashes are restarted and SIGTERM lets requests finish."
+        },
+        {
           "slug": "testing",
           "title": "Testing",
           "description": "Test a Howdy app by sending it requests with howdy/testing, without starting a server."

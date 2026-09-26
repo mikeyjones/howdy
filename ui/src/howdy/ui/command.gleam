@@ -233,7 +233,7 @@ pub fn multiple_combobox(
         html.div(
           [
             class(chips_class()),
-            attribute.style("anchor-name", anchor_name(popover)),
+            attribute.data("howdy-anchor", anchor_name(popover)),
           ],
           list.append(
             list.map(options, fn(option) {
@@ -311,7 +311,7 @@ pub fn multiple_combobox(
             class(popover_class()),
             attribute.id(popover),
             attribute.popover("auto"),
-            attribute.style("position-anchor", anchor_name(popover)),
+            attribute.data("howdy-anchored", anchor_name(popover)),
           ],
           [
             search_list(
@@ -365,7 +365,7 @@ fn picker(
         attribute.attribute("popovertarget", popover),
         attribute.aria_haspopup("listbox"),
         attribute.data("howdy-select-trigger", ""),
-        attribute.style("anchor-name", anchor_name(popover)),
+        attribute.data("howdy-anchor", anchor_name(popover)),
         ..list.append(mark, attributes)
       ],
       [
@@ -394,7 +394,7 @@ fn picker(
         class(popover_class()),
         attribute.id(popover),
         attribute.popover("auto"),
-        attribute.style("position-anchor", anchor_name(popover)),
+        attribute.data("howdy-anchored", anchor_name(popover)),
       ],
       [
         search_list(id <> "-search", search, [], options, []),
@@ -455,7 +455,7 @@ pub fn input_class() -> Class {
     css.width(percent(100)),
     css.padding_(tokens.space_3),
     css.border("0"),
-    css.property("border-bottom", "1px solid " <> tokens.border),
+    style.bordered_side("bottom"),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_family(tokens.font_body),
@@ -495,7 +495,7 @@ pub fn item_class() -> Class {
     css.position("relative"),
     css.padding_("0.375rem " <> tokens.space_2),
     css.property("padding-inline-end", "2rem"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.font_size(rem(0.875)),
     css.color(tokens.text),
     css.text_decoration("none"),
@@ -548,8 +548,8 @@ pub fn dialog_class() -> Class {
     css.padding(rem(0.0)),
     css.overflow("hidden"),
     css.background(tokens.surface),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_large),
+    style.bordered(),
+    style.radius(tokens.radius_large),
     css.box_shadow("0 20px 50px -12px rgb(0 0 0 / 0.35)"),
     css.backdrop([css.background("rgb(0 0 0 / 0.5)")]),
   ])
@@ -573,8 +573,8 @@ pub fn trigger_class() -> Class {
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.font_family(tokens.font_body),
     css.font_size(rem(1.0)),
     css.line_height("1.5"),
@@ -584,11 +584,8 @@ pub fn trigger_class() -> Class {
     css.selector("[aria-invalid=\"true\"]", [
       css.property("border-color", tokens.danger),
     ]),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.disabled_look(),
+    style.focus_ring(),
     css.after([
       css.content("\"\""),
       css.flex_shrink(0.0),
@@ -624,16 +621,13 @@ pub fn clear_class() -> Class {
     css.property("height", "1.5rem"),
     css.padding(rem(0.0)),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text_muted),
     css.font_size(rem(1.0)),
     css.cursor("pointer"),
     css.hover([css.color(tokens.text), css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "1px"),
-    ]),
+    style.focus_ring_offset("1px"),
     css.selector("[hidden]", [css.display("none")]),
   ])
 }
@@ -648,8 +642,8 @@ pub fn popover_class() -> Class {
     css.padding(rem(0.0)),
     css.overflow("hidden"),
     css.background(tokens.surface),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
   ])
 }
@@ -666,8 +660,8 @@ pub fn chips_class() -> Class {
     css.padding_(tokens.space_1),
     css.property("padding-inline-end", "3.75rem"),
     css.background(tokens.surface),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.selector(":has([aria-invalid=\"true\"])", [
       css.property("border-color", tokens.danger),
     ]),
@@ -682,7 +676,7 @@ pub fn chip_class() -> Class {
     css.gap(rem(0.125)),
     css.property("padding-block", "0.125rem"),
     css.property("padding-inline", tokens.space_2 <> " 0.125rem"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background(tokens.muted),
     css.color(tokens.text),
     css.font_size(rem(0.875)),
@@ -700,15 +694,12 @@ pub fn chip_remove_class() -> Class {
     css.property("height", "1.25rem"),
     css.padding(rem(0.0)),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text_muted),
     css.cursor("pointer"),
     css.hover([css.color(tokens.text), css.background(tokens.border)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "1px"),
-    ]),
+    style.focus_ring_offset("1px"),
   ])
 }
 
@@ -725,7 +716,7 @@ pub fn chips_trigger_class() -> Class {
     css.background("transparent"),
     css.color(tokens.text),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.font_family(tokens.font_body),
     css.font_size(rem(1.0)),
     css.line_height("1.5"),
@@ -733,10 +724,7 @@ pub fn chips_trigger_class() -> Class {
     css.cursor("pointer"),
     css.selector("[data-placeholder]", [css.color(tokens.text_muted)]),
     css.disabled([css.cursor("not-allowed")]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
     css.after([
       css.content("\"\""),
       css.flex_shrink(0.0),

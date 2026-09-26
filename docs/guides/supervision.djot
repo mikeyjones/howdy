@@ -1,0 +1,131 @@
+# Supervision and shutdown
+
+A howdy app is a tree of processes: the HTTP server, and often a database
+pool, feature flags, a mail outbox or a remote procedure directory. This
+guide shows how to run that tree the way the Erlang runtime expects, so a
+crash in one part is restarted on its own, and stopping the node lets open
+requests finish.
+
+## The script way, and its limits
+
+The smallest howdy program starts the server and sleeps:
+
+```gleam
+pub fn main() -> Nil {
+  let assert Ok(_) = app() |> howdy.start
+  process.sleep_forever()
+}
+```
+
+This is fine for a script. The server is _linked_ to `main`: if either
+exits, so does the other, and nothing is restarted. When the node stops,
+whether from `Ctrl-C`, `SIGTERM` or `init:stop()`, the server is killed
+along with everything else, mid request. That is the trade `howdy.start`
+makes for being one line.
+
+## Put the server under a supervisor
+
+`howdy.supervised` gives you the server as a child specification for a
+supervisor from `gleam_otp`. The supervisor owns the server, restarts it if
+it exits, and the calling process is no longer linked to it:
+
+```gleam
+import gleam/otp/static_supervisor as supervisor
+import howdy
+
+pub fn main() -> Nil {
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(app()))
+    |> supervisor.start
+  process.sleep_forever()
+}
+```
+
+Add every other long-lived process your app has to the same tree. Packages
+that keep a process running offer a child specification for it:
+
+- `howdy/remote`: `remote.supervised(server)` for the procedure directory
+- `howdy/flags`: `flags.supervised(config)` returns the handle and the
+  child that keeps it fresh
+- `howdy/auth/session_store`: `session_store.memory_supervised()` returns
+  the store and the process that owns its table
+- `howdy/database/postgres`: `postgres.supervised(config)` returns the
+  pool handle and the child that runs the pool; starting it waits for the
+  server, so a supervisor whose database is down fails to start clearly
+- `howdy/mail/outbox`: `outbox.supervised()` and
+  `outbox.supervised_in(directory)` return the outbox and the child that
+  keeps it
+
+```gleam
+let #(features, keeper) = flags.supervised(flag_config)
+let #(sessions, session_owner) = session_store.memory_supervised()
+
+supervisor.new(supervisor.OneForOne)
+|> supervisor.add(session_owner)
+|> supervisor.add(keeper)
+|> supervisor.add(howdy.supervised(app(features, sessions)))
+```
+
+Order matters: a supervisor starts children in the order they were added
+and stops them in reverse, so add the server last. Then a stop closes the
+listener first, while the things the handlers depend on are still there.
+
+## Run the tree as an application
+
+A supervisor started from `main` is still killed with the node. To have
+the node stop it in order, the tree has to belong to an OTP application,
+which is what `howdy.start_application` does:
+
+```gleam
+pub fn main() -> Nil {
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(app()))
+    |> howdy.start_application(name: "my_app_server")
+  process.sleep_forever()
+}
+```
+
+Now `SIGTERM`, the signal a container runtime or `systemd` sends to stop
+the program, runs `init:stop()`, which stops applications one by one. Your
+supervisor asks the server to shut down, the server stops listening, and
+every open connection gets `howdy.shutdown_timeout` (15 seconds by default)
+to finish:
+
+- HTTP/1 connections complete the request they are serving
+- WebSockets are sent a going-away close frame (code 1001)
+- HTTP/2 connections send GOAWAY and wait for their open streams
+
+Only then does the VM halt. The name is the application's name inside the
+node, so it must not be the name of a package the app already loads: the
+convention in the examples is `<package>_server`.
+
+`howdy.stop_application(name)` stops the tree the same way from code, for
+instance from a console session, and `howdy.stop(pid)` does it for a
+server started with `howdy.start`.
+
+Every example under `examples/` runs this way; `examples/admin` shows a
+tree with the feature flag keeper and the server, and `examples/remote`
+shows one with the procedure directory and an optional HTTP transport.
+
+## What is restarted, and what is not
+
+A `OneForOne` supervisor restarts only the child that exited. A server
+that crashes on start, for example because its port is taken, is retried
+until the supervisor's limit (three restarts in five seconds by default),
+after which the supervisor itself exits and, under `start_application`,
+the application stops. Watch the log for supervisor reports: the first one
+names the reason.
+
+The server's connection processes are supervised separately by the server
+itself, one per connection, and a crash inside a handler only ends that
+connection with a `500`. The tree above is about the processes that live
+as long as the app.
+
+## Testing with a supervised server
+
+Tests do not need any of this. `howdy/testing` runs requests through the
+app without a server, and a test that needs a real socket can still call
+`howdy.start` on port `0` and `howdy.stop` afterwards; see the testing
+guide.

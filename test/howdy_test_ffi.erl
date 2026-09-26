@@ -1,10 +1,11 @@
 -module(howdy_test_ffi).
 -include_lib("public_key/include/public_key.hrl").
 -export([spawn_task/1, await/1, catch_panic/1, channel_member/1, stop_member/1]).
--export([parallel_at_once/1]).
+-export([parallel_at_once/1, await/2, await_no_connections/1, scope_pid/0]).
 -export([with_static_tree/1]).
 -export([with_http_server/2, http_status/3]).
 -export([free_port/0, test_certificate/0, tls_probe/2, h2c_probe/1]).
+-export([open_websocket/1, receive_close_frame/1, socket_closed/1, tcp_connect/1, single_child/1]).
 
 %% A port nobody is listening on right now. `howdy.start` does not report
 %% the port it chose, so tests pick one first.
@@ -153,15 +154,104 @@ catch_panic(Fun) ->
 %% A process that joins Topics on its own behalf and stays alive until told
 %% to stop. Returns its pid.
 channel_member(Topics) ->
-    spawn(fun() ->
+    Parent = self(),
+    Pid = spawn(fun() ->
         [howdy_ffi:channel_join(T, self()) || T <- Topics],
+        Parent ! {joined, self()},
         receive stop -> ok end
-    end).
+    end),
+    %% pg:join is synchronous, so once the member says so it is a member.
+    receive {joined, Pid} -> Pid after 5000 -> erlang:error(join_timeout) end.
 
 stop_member(Pid) ->
     Pid ! stop,
-    %% Wait until pg has processed the exit so membership is settled.
     Ref = monitor(process, Pid),
     receive {'DOWN', Ref, process, Pid, _} -> ok after 5000 -> erlang:error(timeout) end,
-    timer:sleep(20),
+    %% pg learns of the exit from its own monitor, a moment later.
+    await(fun() -> not lists:member(Pid, all_channel_members()) end, 5000),
     nil.
+
+all_channel_members() ->
+    Scope = howdy_websocket_channels,
+    lists:append([pg:get_members(Scope, G) || G <- pg:which_groups(Scope)]).
+
+%% Poll `Check` until it is true or `Timeout` ms pass.
+await(Check, Timeout) ->
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
+    await_loop(Check, Deadline).
+await_loop(Check, Deadline) ->
+    case Check() of
+        true -> ok;
+        false ->
+            case erlang:monotonic_time(millisecond) < Deadline of
+                true -> timer:sleep(5), await_loop(Check, Deadline);
+                false -> erlang:error(await_timeout)
+            end
+    end.
+
+
+%% -- Supervision and shutdown ------------------------------------------------
+
+%% Open a WebSocket on /ws and return the raw socket, so a shutdown's close
+%% frame can be read without a client library reacting to it.
+open_websocket(Port) ->
+    {ok, S} = gen_tcp:connect("127.0.0.1", Port, [binary, {active, false}]),
+    ok = gen_tcp:send(S, <<"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                           "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                           "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+                           "Sec-WebSocket-Version: 13\r\n\r\n">>),
+    {ok, <<"HTTP/1.1 101", _/binary>>} = gen_tcp:recv(S, 0, 2000),
+    S.
+
+%% The next frame must be a close frame; returns its status code.
+receive_close_frame(S) ->
+    case gen_tcp:recv(S, 0, 5000) of
+        {ok, <<16#88, Len, Rest/binary>>} when Len >= 2 ->
+            <<Code:16, _/binary>> = Rest,
+            {ok, Code};
+        {ok, Other} -> {error, iolist_to_binary(io_lib:format("~p", [Other]))};
+        {error, Reason} -> {error, atom_to_binary(Reason)}
+    end.
+
+socket_closed(S) ->
+    case gen_tcp:recv(S, 0, 2000) of
+        {error, closed} -> true;
+        _ -> false
+    end.
+
+tcp_connect(Port) ->
+    case gen_tcp:connect("127.0.0.1", Port, [binary], 500) of
+        {ok, S} -> gen_tcp:close(S), {ok, S};
+        {error, _} -> {error, nil}
+    end.
+
+%% The pid of a supervisor's only running child.
+single_child(Sup) ->
+    case [Pid || {_, Pid, _, _} <- supervisor:which_children(Sup), is_pid(Pid)] of
+        [Pid] -> {ok, Pid};
+        _ -> {error, nil}
+    end.
+
+%% Wait until every temporary child (a connection) under `Server`'s tree has
+%% gone. `which_children` is a call, so a supervisor that answers has also
+%% processed the exits it reports on, and logged them.
+await_no_connections(Server) ->
+    await(fun() -> temporary_children(Server) =:= [] end, 5000),
+    nil.
+
+temporary_children(Sup) ->
+    lists:append([case Type of
+        supervisor when is_pid(Pid) -> temporary_children(Pid);
+        worker when is_pid(Pid) ->
+            case supervisor:get_childspec(Sup, Pid) of
+                {ok, #{restart := temporary}} -> [Pid];
+                _ -> []
+            end;
+        _ -> []
+    end || {_Id, Pid, Type, _} <- supervisor:which_children(Sup)]).
+
+scope_pid() ->
+    case whereis(howdy_websocket_channels) of
+        undefined -> {error, nil};
+        Pid -> {ok, Pid}
+    end.

@@ -1,5 +1,5 @@
 -module(howdy_dev_ffi).
--export([build/0, reload_modules/0, reload_token/0, token_matches/2, file_hash/1]).
+-export([build/0, reload_modules/0, reload_token/0, token_matches/2, file_hash/1, attempt/1]).
 
 %% CRC32 of the file contents, so edits that keep size and timestamp are
 %% still noticed. Errors leave the file out of the snapshot.
@@ -48,3 +48,11 @@ reload_modules() ->
         {error, _} -> lists:foreach(fun code:load_file/1, Modules)
     end,
     [atom_to_binary(M, utf8) || M <- Modules].
+
+%% Run `Fun`, turning a crash into `{error, Description}`.
+attempt(Fun) ->
+    try
+        {ok, Fun()}
+    catch
+        Class:Reason -> {error, unicode:characters_to_binary(io_lib:format("~p:~0tP", [Class, Reason, 6]))}
+    end.

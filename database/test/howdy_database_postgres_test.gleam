@@ -3,8 +3,12 @@ import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/actor
+import gleam/otp/static_supervisor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
+import gloo/adapter/sqlite
 import gloo/migration as gloo_migration
 import gloo/repo.{type Repo}
 import gloo/value
@@ -19,6 +23,9 @@ fn getenv(name: String) -> Result(String, Nil)
 
 @external(erlang, "howdy_database_ffi", "monotonic_ms")
 fn now() -> Int
+
+@external(erlang, "howdy_database_test_ffi", "children")
+fn children(supervisor: process.Pid) -> List(process.Pid)
 
 fn parsed(url: String) {
   postgres.from_url(url) |> result.map(postgres.inspect)
@@ -131,6 +138,81 @@ pub fn start_fails_clearly_when_the_server_cannot_be_reached_test() {
   assert postgres.start(config |> postgres.startup_timeout(300))
     == Error(postgres.Unreachable)
   assert now() - started < 5000
+}
+
+pub fn supervised_pool_is_a_permanent_supervisor_child_test() {
+  let assert Ok(config) = postgres.from_url("postgres://u@127.0.0.1:1/app")
+  let #(pool, child) = postgres.supervised(config)
+  assert child.child_type == supervision.Supervisor
+  assert child.restart == supervision.Permanent
+  // The handle is usable before the child starts: closing its Repo, which
+  // the supervisor owns, does nothing.
+  assert repo.close(postgres.repo(pool)) == Ok(Nil)
+}
+
+pub fn supervised_pool_fails_to_start_when_the_server_cannot_be_reached_test() {
+  use _ <- with_postgres
+  let assert Ok(config) = postgres.from_url("postgres://u@127.0.0.1:1/app")
+  let #(_, child) = postgres.supervised(config |> postgres.startup_timeout(300))
+  let started = now()
+  let assert Error(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(child)
+    |> static_supervisor.start
+  assert now() - started < 5000
+}
+
+pub fn supervised_pool_answers_and_is_restarted_test() {
+  use config <- with_postgres
+  let #(pool, child) =
+    postgres.supervised(config |> postgres.parameter("search_path", "app"))
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(child)
+    |> static_supervisor.start
+  let db = postgres.repo(pool)
+  assert setting(db, "search_path") == "app"
+  let assert [first] = children(supervisor.pid)
+  process.kill(first)
+  assert eventually(fn() { setting_result(db, "search_path") == Ok("app") })
+  let assert [second] = children(supervisor.pid)
+  assert second != first
+  process.unlink(supervisor.pid)
+  process.send_exit(supervisor.pid)
+  assert eventually(fn() { result.is_error(setting_result(db, "search_path")) })
+}
+
+fn setting_result(db: Repo, name: String) -> Result(String, Nil) {
+  case
+    repo.all(
+      db,
+      "SELECT current_setting('" <> name <> "')",
+      [],
+      decode.field(0, decode.string, decode.success),
+    )
+  {
+    Ok([value]) -> Ok(value)
+    _ -> Error(Nil)
+  }
+}
+
+fn eventually(check: fn() -> Bool) -> Bool {
+  let deadline = now() + 10_000
+  wait_for(check, deadline)
+}
+
+fn wait_for(check: fn() -> Bool, deadline: Int) -> Bool {
+  case check() {
+    True -> True
+    False ->
+      case now() >= deadline {
+        True -> False
+        False -> {
+          process.sleep(100)
+          wait_for(check, deadline)
+        }
+      }
+  }
 }
 
 pub fn migrators_wait_for_each_other_despite_the_lock_timeout_test() {
@@ -311,6 +393,26 @@ pub fn an_application_started_pog_pool_can_be_adopted_test() {
   }
   assert bodies() == ["a", "b"]
   drop(pool, table)
+}
+
+// The refusal happens before any connection is used, so a pool that has
+// never connected is enough to test it without a server.
+pub fn a_pool_transaction_is_refused_inside_a_repo_transaction_test() {
+  let assert Ok(db) = sqlite.start(sqlite.memory())
+  let connection =
+    pog.named_connection(process.new_name(prefix: "howdy_database_test"))
+  let pool =
+    postgres.from_pog(actor.Started(pid: process.self(), data: connection))
+  let answer =
+    database.transaction(db, fn(_) {
+      postgres.transaction(pool, fn(_, _) { Ok(Nil) })
+    })
+  assert answer
+    == Error(service.Internal(
+      "a pool transaction cannot be opened inside a repo transaction",
+    ))
+  let assert Ok(_) = repo.close(db)
+  Nil
 }
 
 pub fn pog_errors_map_like_gloo_errors_without_driver_detail_test() {

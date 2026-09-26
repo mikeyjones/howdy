@@ -138,8 +138,8 @@ pub fn group_class(direction: Direction) -> Class {
     css.display("flex"),
     css.flex_direction(flex),
     css.overflow("hidden"),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.selector(" > [role=\"separator\"]", [css.cursor(cursor), ..handle_size]),
   ])
 }

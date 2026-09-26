@@ -131,9 +131,10 @@ row and sign in as anyone. The defences are:
   another site cannot reach it through DNS rebinding. `admin.allow_hosts`
   replaces that list for a trusted network; anyone who can reach an allowed
   host owns your data.
-- Forms carry no CSRF token. A page you visit while the admin runs could post
-  to it, which is one more reason to run it only against data you can afford
-  to lose.
+- Writes must come from the admin's own origin. A `POST` whose
+  `Sec-Fetch-Site` or `Origin` header says another site sent it gets `403`,
+  so a page you visit while the admin runs cannot post to it. Forms carry no
+  CSRF token; the browser's headers do that job.
 
 ## How the grid stays current
 

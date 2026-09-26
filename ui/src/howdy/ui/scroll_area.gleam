@@ -43,10 +43,7 @@ pub fn area_class() -> Class {
     css.property("overscroll-behavior", "contain"),
     css.property("scrollbar-width", "thin"),
     css.property("scrollbar-color", tokens.border <> " transparent"),
-    css.property("border-radius", tokens.radius_medium),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.radius(tokens.radius_medium),
+    style.focus_ring(),
   ])
 }

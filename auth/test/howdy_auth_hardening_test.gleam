@@ -23,6 +23,9 @@ import support.{count, exec, fixture, signup}
 
 const password = "an uncommon orchard phrase 947!"
 
+@external(erlang, "howdy_auth_test_ffi", "advance_clock")
+fn advance_clock(ms: Int, run: fn() -> a) -> a
+
 fn credential(database, id, encoded) {
   let assert Ok(_) =
     repo.execute(
@@ -329,7 +332,7 @@ pub fn optional_cache_expires_external_changes_and_never_stores_errors_test() {
   assert access.allowed(cached, principal, "read", access.Global) == Ok(True)
   assert access.allowed(permissions, principal, "read", access.Global)
     == Ok(False)
-  process.sleep(1100)
+  use <- advance_clock(1100)
   assert access.allowed(cached, principal, "read", access.Global) == Ok(False)
   let memo = cache.new()
   let key = #("a", "b", "c", "d", "e")

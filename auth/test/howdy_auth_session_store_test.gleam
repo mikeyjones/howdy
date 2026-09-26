@@ -4,6 +4,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/static_supervisor
 import gleam/result
 import howdy/auth
 import howdy/auth/group
@@ -11,7 +12,9 @@ import howdy/auth/groups
 import howdy/auth/internal/token
 import howdy/auth/policy
 import howdy/auth/secret
-import howdy/auth/session_store.{type SessionStore, Entry, SessionStore}
+import howdy/auth/session_store.{
+  type Entry, type SessionStore, Entry, SessionStore,
+}
 import howdy/auth/user
 import howdy/service
 import support.{count, fixture, signup}
@@ -62,6 +65,81 @@ pub fn the_memory_store_meets_the_contract_and_check_catches_a_broken_one_test()
     == Error("delete must not remove another user's record")
   assert session_store.check(unable_to_remove(store))
     == Error("delete_for_user returned an error")
+}
+
+@external(erlang, "howdy_auth_test_ffi", "delete_session_tables")
+fn delete_session_tables() -> Nil
+
+@external(erlang, "howdy_auth_test_ffi", "kill_session_owners")
+fn kill_session_owners() -> Nil
+
+fn eventually(times: Int, holds: fn() -> Bool) -> Bool {
+  case holds(), times {
+    True, _ -> True
+    False, 0 -> False
+    False, _ -> {
+      process.sleep(10)
+      eventually(times - 1, holds)
+    }
+  }
+}
+
+pub fn the_memory_store_outlives_the_process_that_made_it_test() {
+  let subject = process.new_subject()
+  let pid =
+    process.spawn_unlinked(fn() {
+      process.send(subject, session_store.memory())
+    })
+  let assert Ok(store) = process.receive(subject, 1000)
+  assert eventually(100, fn() { !process.is_alive(pid) })
+  assert session_store.check(store) == Ok(Nil)
+}
+
+pub fn a_deleted_table_fails_closed_instead_of_crashing_test() {
+  let store = session_store.memory()
+  let assert Ok(Nil) = store.insert(entry_for("ada", 4_000_000_000))
+  delete_session_tables()
+  assert store.get("x") == down()
+  assert store.insert(entry_for("ada", 4_000_000_000)) == down()
+  assert store.touch("x", 1, 2) == down()
+  assert store.list("ada") == down()
+  assert store.delete("x", "ada") == down()
+  assert store.delete_for_user("ada", None) == down()
+  assert store.prune(0) == down()
+  // A supervised store fails the same way before its owner has started.
+  let #(_, unstarted) = session_store.memory_supervised()
+  assert unstarted.get("x") == down()
+}
+
+pub fn the_supervised_store_runs_under_a_supervisor_and_survives_restarts_test() {
+  let #(child, store) = session_store.memory_supervised()
+  let assert Ok(_) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(child)
+    |> static_supervisor.start
+  assert session_store.check(store) == Ok(Nil)
+  let assert Ok(Nil) = store.insert(entry_for("ada", 4_000_000_000))
+  kill_session_owners()
+  // The supervisor brings the owner back with a fresh, empty table.
+  assert eventually(100, fn() { store.get("ada") == Ok(None) })
+  assert session_store.check(store) == Ok(Nil)
+}
+
+fn down() -> service.Result(a) {
+  Error(service.Internal("in-memory session store is unavailable"))
+}
+
+fn entry_for(user_id: String, expires_at: Int) -> Entry {
+  Entry(
+    digest: user_id,
+    user_id:,
+    method: "email",
+    created_at: 1,
+    last_seen_at: 2,
+    expires_at:,
+    client: "",
+    version: 0,
+  )
 }
 
 pub fn sessions_live_in_the_store_and_never_in_the_database_test() {

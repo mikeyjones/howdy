@@ -2,13 +2,15 @@
 //// conversation stays on the newest message while the reply grows, and
 //// keeps its place if you scroll back to read.
 
-import gleam/erlang/process
+import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
+import gleam/option.{type Option, None, Some}
 import gleam/string
 import howdy/ui
 import howdy/ui/button.{Primary}
 import howdy/ui/chat.{Incoming, Outgoing}
+import howdy_gallery/timer
 import lustre
 import lustre/attribute
 import lustre/effect.{type Effect}
@@ -26,10 +28,17 @@ pub type Message {
 }
 
 pub type Model {
-  Model(messages: List(Message), draft: String, next_id: Int)
+  Model(
+    messages: List(Message),
+    draft: String,
+    next_id: Int,
+    /// Where the words of a reply are timed to arrive.
+    timers: Option(Subject(Msg)),
+  )
 }
 
 pub type Msg {
+  Timers(Subject(Msg))
   Draft(String)
   Send
   Stream(Int, String)
@@ -53,13 +62,15 @@ fn init(_) -> #(Model, Effect(Msg)) {
       ],
       draft: "",
       next_id: 2,
+      timers: None,
     ),
-    effect.none(),
+    timer.subscribe(Timers),
   )
 }
 
 fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   case msg {
+    Timers(timers) -> #(Model(..model, timers: Some(timers)), effect.none())
     Draft(draft) -> #(Model(..model, draft:), effect.none())
     Send ->
       case string.trim(model.draft) {
@@ -69,11 +80,12 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
           let reply = Message(model.next_id + 1, Bot, "", True)
           #(
             Model(
+              ..model,
               messages: list.append(model.messages, [question, reply]),
               draft: "",
               next_id: model.next_id + 2,
             ),
-            stream(reply.id, answer(said)),
+            stream(model.timers, reply.id, answer(said)),
           )
         }
       }
@@ -104,20 +116,27 @@ fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
   }
 }
 
-/// Send the reply a word at a time, as a model streaming its answer would.
-fn stream(id: Int, reply: String) -> Effect(Msg) {
-  use dispatch <- effect.from
-  process.spawn(fn() {
-    process.sleep(600)
-    reply
-    |> string.split(" ")
-    |> list.each(fn(word) {
-      dispatch(Stream(id, word <> " "))
-      process.sleep(90)
-    })
-    dispatch(Done(id))
-  })
-  Nil
+/// Send the reply a word at a time, as a model streaming its answer would:
+/// each word is a timer on the runtime, so nothing sleeps. Without timers
+/// yet, the whole reply arrives at once.
+fn stream(timers: Option(Subject(Msg)), id: Int, reply: String) -> Effect(Msg) {
+  let words = string.split(reply, " ")
+  case timers {
+    Some(timers) ->
+      words
+      |> list.index_map(fn(word, index) {
+        timer.after(timers, 600 + 90 * index, Stream(id, word <> " "))
+      })
+      |> list.append([
+        timer.after(timers, 600 + 90 * list.length(words), Done(id)),
+      ])
+      |> effect.batch
+    None -> {
+      use dispatch <- effect.from
+      dispatch(Stream(id, reply))
+      dispatch(Done(id))
+    }
+  }
 }
 
 fn answer(question: String) -> String {

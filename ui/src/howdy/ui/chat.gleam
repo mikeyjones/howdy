@@ -264,8 +264,8 @@ pub fn latest_class() -> Class {
     css.property("inset-inline-start", "50%"),
     css.transform_("translateX(-50%)"),
     css.padding_(tokens.space_1 <> " " <> tokens.space_3),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", "999px"),
+    style.bordered(),
+    style.pill(),
     css.background(tokens.surface),
     css.color(tokens.text),
     css.box_shadow("0 4px 12px -4px rgb(0 0 0 / 0.3)"),
@@ -274,10 +274,7 @@ pub fn latest_class() -> Class {
     css.cursor("pointer"),
     css.selector("[hidden]", [css.display("none")]),
     css.selector(":dir(rtl)", [css.transform_("translateX(50%)")]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }
 
@@ -289,10 +286,7 @@ pub fn scroller_class() -> Class {
     css.flex_direction("column-reverse"),
     css.overflow_y("auto"),
     css.property("overscroll-behavior", "contain"),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }
 
@@ -318,7 +312,7 @@ pub fn message_class(side: Side) -> Class {
     css.align_items("flex-end"),
     css.gap(rem(0.5)),
     css.property("scroll-margin", "1rem"),
-    css.property("border-radius", tokens.radius_medium),
+    style.radius(tokens.radius_medium),
     css.transition("background 300ms"),
     // Picked out for a moment after a `jump` to it.
     css.selector("[data-flash]", [css.background(tokens.muted)]),
@@ -375,7 +369,7 @@ pub fn bubble_class(side: Side, variant: Variant) -> Class {
     Outline -> [
       css.background(tokens.surface),
       css.color(tokens.text),
-      css.border("1px solid " <> tokens.border),
+      style.bordered(),
     ]
     Ghost -> [
       css.background("transparent"),
@@ -386,7 +380,7 @@ pub fn bubble_class(side: Side, variant: Variant) -> Class {
   }
   css.class([
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
-    css.property("border-radius", tokens.radius_large),
+    style.radius(tokens.radius_large),
     css.property(corner, tokens.radius_small),
     ..list.append(surface, [
       css.font_size(rem(0.9375)),
@@ -405,17 +399,14 @@ pub fn reactions_class() -> Class {
 pub fn reaction_class() -> Class {
   css.class([
     css.padding_("0.125rem " <> tokens.space_2),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", "999px"),
+    style.bordered(),
+    style.pill(),
     css.background(tokens.surface),
     css.color(tokens.text),
     css.font_size(rem(0.75)),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
     css.selector("[aria-pressed=\"true\"]", [
       css.property("border-color", tokens.primary),
       css.background(tokens.muted),
@@ -480,7 +471,7 @@ pub fn status_icon_class() -> Class {
     css.justify_content("center"),
     css.property("width", "1.25rem"),
     css.property("height", "1.25rem"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.muted),
     css.font_size(rem(0.75)),
   ])
@@ -492,7 +483,7 @@ pub fn jump_class() -> Class {
     css.padding_(tokens.space_1 <> " " <> tokens.space_2),
     css.border("0"),
     css.property("border-inline-start", "3px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background(tokens.muted),
     css.color(tokens.text_muted),
     css.font_family(tokens.font_body),
@@ -500,9 +491,6 @@ pub fn jump_class() -> Class {
     css.text_align("start"),
     css.cursor("pointer"),
     css.hover([css.color(tokens.text)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }

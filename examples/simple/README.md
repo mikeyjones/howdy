@@ -7,7 +7,7 @@ cd examples/simple
 gleam run
 ```
 
-Then in another terminal:
+It listens on 127.0.0.1:8787. Then in another terminal:
 
 ```sh
 curl http://localhost:8787/                 # index.html served from priv/public

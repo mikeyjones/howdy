@@ -126,6 +126,7 @@ fn call(app: howdy.App, at: String, fields: List(#(String, String))) -> String {
   let res =
     testing.post_form(at, fields)
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 200
   testing.text(res)
@@ -135,6 +136,7 @@ fn new_user(app: howdy.App, email: String) -> String {
   let res =
     testing.post_form("/_howdy/users", [#("email", email)])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   let assert Ok("/_howdy/users/" <> id) = list.key_find(res.headers, "location")
   id
@@ -229,6 +231,68 @@ pub fn calls_a_guarded_endpoint_as_a_user_test() {
     auth.revoke_session_of(identity, id, session.id, by: user.System)
   let page = call(app, at, [#("as", id)])
   assert string.contains(page, ">200<")
+}
+
+@external(erlang, "howdy_admin_ffi", "cached_token")
+fn cached_token(identity: auth.Auth, user_id: String) -> Result(String, Nil)
+
+pub fn revoking_through_the_admin_drops_the_kept_token_test() {
+  use identity <- with_identity
+  let identity = auth.with_account_deletion(identity, fn(_, _) { Ok(Nil) })
+  let app = api_app(identity)
+  let id = new_user(app, "ada@example.com")
+  let at = operation("", "get", "/me")
+  let page = call(app, at, [#("as", id)])
+  assert string.contains(page, ">200<")
+  let assert Ok(token) = cached_token(identity, id)
+
+  // Another auth over the same users never sees this one's token.
+  let assert Ok(other) =
+    auth.new_without_email(
+      repo: auth.repo(identity),
+      origin: "http://127.0.0.1:1",
+    )
+  assert cached_token(other, id) == Error(Nil)
+
+  // Signing the user out everywhere forgets the token straight away.
+  let res =
+    testing.post_form("/_howdy/users/" <> id <> "/revoke", [])
+    |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
+    |> testing.send(app)
+  assert res.status == 303
+  assert cached_token(identity, id) == Error(Nil)
+  let assert Ok([]) = auth.sessions_of(identity, id)
+
+  // The next call opens a new session rather than sending the old token.
+  let page = call(app, at, [#("as", id)])
+  assert string.contains(page, ">200<")
+  let assert Ok(fresh) = cached_token(identity, id)
+  assert fresh != token
+  let assert Ok([_]) = auth.sessions_of(identity, id)
+
+  // So does revoking one session, and deleting the user.
+  let assert Ok([session]) = auth.sessions_of(identity, id)
+  let res =
+    testing.post_form("/_howdy/users/" <> id <> "/sessions/revoke", [
+      #("session", session.id),
+    ])
+    |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
+    |> testing.send(app)
+  assert res.status == 303
+  assert cached_token(identity, id) == Error(Nil)
+  let _ = call(app, at, [#("as", id)])
+  let assert Ok(_) = cached_token(identity, id)
+  let res =
+    testing.post_form("/_howdy/users/" <> id <> "/delete", [
+      #("confirm", "ada@example.com"),
+    ])
+    |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
+    |> testing.send(app)
+  assert res.status == 303
+  assert cached_token(identity, id) == Error(Nil)
 }
 
 pub fn sends_a_typed_bearer_token_test() {

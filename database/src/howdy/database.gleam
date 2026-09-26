@@ -134,6 +134,11 @@ fn register_transaction_hook(
 @internal
 pub fn bracketed(run: fn() -> a) -> a
 
+/// Whether this process is inside a Howdy transaction, on any Repo or pool.
+@external(erlang, "howdy_database_ffi", "in_transaction")
+@internal
+pub fn in_transaction() -> Bool
+
 /// Commit when `run` returns `Ok`; roll back and return its error otherwise.
 /// The transaction is a `transaction` span, with its queries inside.
 pub fn transaction(

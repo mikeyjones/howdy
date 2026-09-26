@@ -4,7 +4,14 @@
 %% Send one message through gen_smtp and sort the outcome into
 %% {ok, Receipt}, {error, {temporary, Reason}} or {error, {permanent, Reason}}.
 smtp_send(Host, Port, Tls, Username, Password, Timeout, Helo, From, To, Body) ->
-    {ok, _} = application:ensure_all_started(ssl),
+    case application:ensure_all_started(ssl) of
+        {ok, _} ->
+            deliver(Host, Port, Tls, Username, Password, Timeout, Helo, From, To, Body);
+        {error, Reason} ->
+            {error, {temporary, describe({ssl_not_started, Reason})}}
+    end.
+
+deliver(Host, Port, Tls, Username, Password, Timeout, Helo, From, To, Body) ->
     HostList = unicode:characters_to_list(Host),
     Security =
         case Tls of

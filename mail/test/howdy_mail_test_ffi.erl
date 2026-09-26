@@ -1,29 +1,42 @@
 -module(howdy_mail_test_ffi).
--export([new_table/0, table_push/2, table_all/1, start_smtp/1, stop_smtp/1, smtp_port/1, received/1, mime_header/2, mime_leaves/1, closed_port/0]).
+-export([new_table/0, table_push/2, table_all/1, start_smtp/1, stop_smtp/1, smtp_port/1,
+         attempts/1, monotonic_ms/0, children/1, received/1, mime_header/2, mime_leaves/1, closed_port/0]).
 
-%% A test SMTP server on a free loopback port, reporting to the caller.
+%% A test SMTP server on a free loopback port, reporting to the caller and
+%% counting the messages attempted through it.
 start_smtp(Auth) ->
     {ok, _} = application:ensure_all_started(gen_smtp),
     Name = {howdy_mail_test, make_ref()},
+    Counter = atomics:new(1, []),
     {ok, _} = gen_smtp_server:start(Name, howdy_mail_test_smtp, [
         {address, {127, 0, 0, 1}},
         {port, 0},
         {domain, "test.local"},
-        {sessionoptions, [{callbackoptions, [{collector, self()}, {auth, Auth}]}]}
+        {sessionoptions,
+         [{callbackoptions, [{collector, self()}, {auth, Auth}, {attempts, Counter}]}]}
     ]),
-    Name.
+    {Name, Counter}.
 
-stop_smtp(Name) ->
+stop_smtp({Name, _}) ->
     gen_smtp_server:stop(Name),
     nil.
 
-smtp_port(Name) -> ranch:get_port(Name).
+smtp_port({Name, _}) -> ranch:get_port(Name).
+
+%% How many MAIL FROM commands the server has seen.
+attempts({_, Counter}) -> atomics:get(Counter, 1).
 
 received(Timeout) ->
     receive
         {howdy_mail_test_smtp, From, To, Data} -> {ok, {From, To, Data}}
     after Timeout -> {error, nil}
     end.
+
+monotonic_ms() -> erlang:monotonic_time(millisecond).
+
+%% The pids of a supervisor's running children.
+children(Supervisor) ->
+    [Pid || {_, Pid, _, _} <- supervisor:which_children(Supervisor), is_pid(Pid)].
 
 %% A port nothing listens on.
 closed_port() ->

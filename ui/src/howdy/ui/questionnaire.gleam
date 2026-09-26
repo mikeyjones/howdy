@@ -571,8 +571,8 @@ pub fn scale_step_class() -> Class {
       css.justify_content("center"),
       css.property("min-width", "2.5rem"),
       css.property("height", "2.5rem"),
-      css.border("1px solid " <> tokens.border),
-      css.property("border-radius", tokens.radius_medium),
+      style.bordered(),
+      style.radius(tokens.radius_medium),
       css.background(tokens.surface),
       css.color(tokens.text),
       css.font_weight("500"),
@@ -584,7 +584,7 @@ pub fn scale_step_class() -> Class {
       css.property("border-color", tokens.primary),
     ]),
     css.selector(" > input:focus-visible + span", [
-      css.outline("2px solid " <> tokens.focus),
+      style.focus_outline(),
       css.property("outline-offset", "2px"),
     ]),
     css.selector(" > input:hover + span", [

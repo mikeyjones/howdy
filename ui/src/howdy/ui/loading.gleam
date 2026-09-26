@@ -72,7 +72,7 @@ pub fn skeleton_class() -> Class {
     css.display("block"),
     css.property("min-height", "1rem"),
     css.background(tokens.muted),
-    css.property("border-radius", tokens.radius_medium),
+    style.radius(tokens.radius_medium),
   ])
 }
 

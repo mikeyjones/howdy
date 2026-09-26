@@ -40,7 +40,7 @@ pub fn switch_class() -> Class {
     css.property("width", "2.25rem"),
     css.property("height", "1.25rem"),
     css.margin(rem(0.0)),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.border),
     css.cursor("pointer"),
     css.transition("background 150ms"),
@@ -51,7 +51,7 @@ pub fn switch_class() -> Class {
       css.property("inset-inline-start", "0.125rem"),
       css.property("width", "1rem"),
       css.property("height", "1rem"),
-      css.property("border-radius", "999px"),
+      style.pill(),
       css.background(tokens.surface),
       css.box_shadow("0 1px 2px rgb(0 0 0 / 0.25)"),
       css.transition("inset-inline-start 150ms"),
@@ -60,10 +60,7 @@ pub fn switch_class() -> Class {
     css.selector(":checked::before", [
       css.property("inset-inline-start", "1.125rem"),
     ]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
+    style.focus_ring(),
+    style.disabled_look(),
   ])
 }

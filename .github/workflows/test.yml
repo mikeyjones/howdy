@@ -44,6 +44,7 @@ jobs:
           path: |
             ~/.cache/gleam
             ui/build/packages
+            examples/gallery/build/packages
           key: gleam-ui-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
           restore-keys: gleam-ui-
       - uses: erlef/setup-beam@v1
@@ -54,6 +55,29 @@ jobs:
       - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test
+      # The browser behaviour in priv/behaviour.js is exercised over CDP
+      # against the gallery, which serves every component.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build and start the gallery
+        working-directory: examples/gallery
+        run: |
+          $GITHUB_WORKSPACE/scripts/ci-deps.sh
+          gleam build
+          nohup gleam run > /tmp/gallery.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf -o /dev/null http://127.0.0.1:8791/ui && exit 0
+            sleep 1
+          done
+          echo "gallery did not start"; cat /tmp/gallery.log; exit 1
+      - name: Browser tests (CDP)
+        env:
+          CHROMIUM: google-chrome
+        run: node browser_test/run.mjs
+      - name: Gallery log
+        if: failure()
+        run: cat /tmp/gallery.log
 
   howdy_dev:
     runs-on: ubuntu-latest
@@ -163,6 +187,52 @@ jobs:
       - run: gleam test
       - run: gleam format --check src test
 
+  openapi:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: openapi
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            openapi/build/packages
+          key: gleam-openapi-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-openapi-
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
+      - run: gleam test
+      - run: gleam format --check src test
+
+  telemetry:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telemetry
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/gleam
+            telemetry/build/packages
+          key: gleam-telemetry-${{ hashFiles('**/gleam.toml', '**/manifest.toml') }}
+          restore-keys: gleam-telemetry-
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          gleam-version: "1.18.1"
+          rebar3-version: "3"
+      - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
+      - run: gleam test
+      - run: gleam format --check src test
+
   flags:
     runs-on: ubuntu-latest
     services:
@@ -249,7 +319,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [simple, guards, chat, live, remote, admin]
+        example: [simple, guards, chat, live, remote, admin, openapi, gallery]
     defaults:
       run:
         working-directory: examples/${{ matrix.example }}

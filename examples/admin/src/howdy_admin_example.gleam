@@ -17,6 +17,8 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/option
+import gleam/otp/static_supervisor as supervisor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
 import gloo/adapter/sqlite
@@ -62,11 +64,19 @@ pub fn main() {
   }
   let db = open("admin_example.sqlite")
   let identity = identity(db, mailer())
-  let assert Ok(_) =
-    app(db, identity, permissions(db), features(db))
+  // The feature flag keeper and the server run under one supervisor inside
+  // an OTP application: each is restarted on a crash, and SIGTERM stops
+  // them in order, draining open connections.
+  let #(features, keeper) = supervised_features(db)
+  let server =
+    app(db, identity, permissions(db), features)
     |> howdy.bind(to: "127.0.0.1")
     |> howdy.listening(on: 8787)
-    |> howdy.start
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(keeper)
+    |> supervisor.add(howdy.supervised(server))
+    |> howdy.start_application(name: "howdy_admin_example_server")
   process.sleep_forever()
 }
 
@@ -208,11 +218,23 @@ pub fn all_flags() -> List(flags.Flag) {
 }
 
 /// The app's flags, kept in its database and kept current from it.
+/// The app's flags, kept fresh by a keeper linked to the caller. Tests and
+/// the dev runner use this; `main` supervises the keeper instead.
 pub fn features(db: Repo) -> flags.Flags {
-  let assert Ok(store) = flags_database.store(db)
-  let assert Ok(features) =
-    flags.new(store) |> flags.register(all_flags()) |> flags.start
+  let assert Ok(features) = flag_config(db) |> flags.start
   features
+}
+
+/// The flags handle and the child that keeps it fresh, for a supervisor.
+pub fn supervised_features(
+  db: Repo,
+) -> #(flags.Flags, supervision.ChildSpecification(flags.Flags)) {
+  flag_config(db) |> flags.supervised
+}
+
+fn flag_config(db: Repo) -> flags.Config {
+  let assert Ok(store) = flags_database.store(db)
+  flags.new(store) |> flags.register(all_flags())
 }
 
 pub fn app(

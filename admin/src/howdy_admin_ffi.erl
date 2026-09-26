@@ -1,5 +1,5 @@
 -module(howdy_admin_ffi).
--export([cells/1, postgres_pool/1, listen/4, cached_token/1, cache_token/2]).
+-export([cells/1, postgres_pool/1, listen/4, listen_via/11, cached_token/2, cache_token/3, forget_token/2]).
 
 %% A database row as it came from the driver, as a list of optional strings.
 %% pog rows are tuples and sqlight rows are lists; every value becomes text
@@ -63,66 +63,138 @@ postgres_pool({repo, Adapter}) when element(1, Adapter) =:= adapter ->
 postgres_pool(_) ->
     {error, nil}.
 
-%% pgo keeps the pool's configuration in the child specification of the
-%% pool supervisor, which the pool process is linked to.
+%% FALLBACK, used only when the app did not say how to connect with
+%% `howdy/admin.notify_via`. pgo has no public way to read a running
+%% pool's settings, so this walks its supervision tree: the pool process is
+%% linked to its `pgo_pool_sup`, whose `connection_sup` child spec carries
+%% the settings as its last argument. Every step is guarded, so a pgo whose
+%% shape has changed gives `{error, nil}` and the grid polls instead.
 pool_config(Name) ->
-    case whereis(Name) of
-        undefined -> {error, nil};
-        Pool ->
-            {links, Links} = process_info(Pool, links),
-            find_config([Pid || Pid <- Links, is_pid(Pid), is_pool_sup(Pid)])
+    try
+        case whereis(Name) of
+            undefined ->
+                {error, nil};
+            Pool ->
+                case process_info(Pool, links) of
+                    {links, Links} ->
+                        find_config([Pid || Pid <- Links, is_pid(Pid), is_pool_sup(Pid)]);
+                    _ ->
+                        {error, nil}
+                end
+        end
+    catch
+        _:_ -> {error, nil}
     end.
 
 is_pool_sup(Pid) ->
-    case proc_lib:initial_call(Pid) of
+    try proc_lib:initial_call(Pid) of
         {pgo_pool_sup, _, _} -> true;
         {supervisor, pgo_pool_sup, _} -> true;
         _ -> false
+    catch
+        _:_ -> false
     end.
 
 find_config([]) ->
     {error, nil};
 find_config([Sup | Rest]) ->
     try supervisor:get_childspec(Sup, connection_sup) of
-        {ok, #{start := {pgo_connection_sup, start_link, [_, _, _, Config]}}} -> {ok, Config};
-        _ -> find_config(Rest)
+        {ok, #{start := {pgo_connection_sup, start_link, [_, _, _, Config]}}} when is_map(Config) ->
+            {ok, Config};
+        _ ->
+            find_config(Rest)
     catch
         _:_ -> find_config(Rest)
     end.
 
-%% Open one more connection to the pool's server and LISTEN on Channel,
-%% calling Notify with each payload, until Owner exits. The connection is
-%% pgo's own notification client, which reconnects on its own.
-listen(Pool, Channel, Owner, Notify) ->
-    case pool_config(Pool) of
-        {error, nil} ->
-            {error, nil};
-        {ok, Config} ->
-            Parent = self(),
-            Pid = spawn(fun() -> start_listener(Parent, Config, Channel, Owner, Notify) end),
-            receive
-                {howdy_admin_listening, Pid, ok} -> {ok, nil};
-                {howdy_admin_listening, Pid, error} -> {error, nil}
-            after 5000 ->
-                exit(Pid, kill),
-                {error, nil}
-            end
+%% The settings for a listening connection, from what the app gave
+%% `howdy/admin.notify_via`: the public fields of a `pog.Config`, turned
+%% into pgo's map the way pog itself does.
+listener_config(Host, Port, Database, User, Password, Ssl, Parameters, IpVersion) ->
+    HostList = unicode:characters_to_list(Host),
+    {SslActivated, SslOptions} = ssl_options(HostList, Ssl),
+    Config = #{
+        host => HostList,
+        port => Port,
+        database => unicode:characters_to_list(Database),
+        user => unicode:characters_to_list(User),
+        ssl => SslActivated,
+        ssl_options => SslOptions,
+        connection_parameters => Parameters,
+        socket_options => case IpVersion of ipv6 -> [inet6]; _ -> [] end
+    },
+    case Password of
+        {some, Pw} -> Config#{password => unicode:characters_to_list(Pw)};
+        none -> Config
     end.
 
-start_listener(Parent, Config, Channel, Owner, Notify) ->
+ssl_options(_Host, ssl_disabled) ->
+    {false, []};
+ssl_options(_Host, ssl_unverified) ->
+    {true, [{verify, verify_none}]};
+ssl_options(Host, ssl_verified) ->
+    {true, [
+        {verify, verify_peer},
+        {cacerts, public_key:cacerts_get()},
+        {server_name_indication, Host},
+        {customize_hostname_check, [
+            {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+        ]}
+    ]}.
+
+%% Listen through the pool's own settings, found by the fallback above.
+listen(Pool, Channel, Owner, Notify) ->
+    case pool_config(Pool) of
+        {error, nil} -> {error, nil};
+        {ok, Config} -> listen_with(Config, Channel, Owner, Notify)
+    end.
+
+%% Listen with settings the app gave.
+listen_via(Host, Port, Database, User, Password, Ssl, Parameters, IpVersion, Channel, Owner, Notify) ->
+    Config = listener_config(Host, Port, Database, User, Password, Ssl, Parameters, IpVersion),
+    listen_with(Config, Channel, Owner, Notify).
+
+%% Open one more connection to the server and LISTEN on Channel, calling
+%% Notify with each payload, until Owner exits. The connection is pgo's own
+%% notification client, which reconnects on its own. The listener is linked
+%% to the caller, the grid's runtime, so neither outlives the other, and its
+%% answer carries a reference of this call's own so a late one can never be
+%% mistaken for anything else in the caller's mailbox.
+listen_with(Config, Channel, Owner, Notify) ->
+    Parent = self(),
+    Ref = make_ref(),
+    Pid = spawn_link(fun() -> start_listener(Parent, Ref, Config, Channel, Owner, Notify) end),
+    receive
+        {howdy_admin_listening, Ref, ok} -> {ok, nil};
+        {howdy_admin_listening, Ref, error} -> {error, nil}
+    after 5000 ->
+        unlink(Pid),
+        exit(Pid, kill),
+        receive
+            {howdy_admin_listening, Ref, _} -> ok
+        after 0 ->
+            ok
+        end,
+        {error, nil}
+    end.
+
+start_listener(Parent, Ref, Config, Channel, Owner, Notify) ->
     process_flag(trap_exit, true),
     Monitor = monitor(process, Owner),
-    case pgo_notifications:start_link(Config) of
+    Started = try pgo_notifications:start_link(Config) catch _:_ -> error end,
+    case Started of
         {ok, Listener} ->
-            case pgo_notifications:listen(Listener, Channel) of
+            Listening = try pgo_notifications:listen(Listener, Channel) catch _:_ -> error end,
+            case Listening of
                 {Tag, _} when Tag =:= ok; Tag =:= eventually ->
-                    Parent ! {howdy_admin_listening, self(), ok},
+                    Parent ! {howdy_admin_listening, Ref, ok},
                     listener_loop(Listener, Monitor, Notify);
                 _ ->
-                    Parent ! {howdy_admin_listening, self(), error}
+                    stop_listener(Listener),
+                    Parent ! {howdy_admin_listening, Ref, error}
             end;
         _ ->
-            Parent ! {howdy_admin_listening, self(), error}
+            Parent ! {howdy_admin_listening, Ref, error}
     end.
 
 listener_loop(Listener, Monitor, Notify) ->
@@ -131,23 +203,61 @@ listener_loop(Listener, Monitor, Notify) ->
             Notify(Payload),
             listener_loop(Listener, Monitor, Notify);
         {'DOWN', Monitor, process, _, _} ->
-            try gen_statem:stop(Listener) catch _:_ -> ok end,
-            ok;
+            stop_listener(Listener);
         {'EXIT', Listener, _} ->
             ok;
+        {'EXIT', _Parent, _} ->
+            stop_listener(Listener);
         _ ->
             listener_loop(Listener, Monitor, Notify)
     end.
 
+stop_listener(Listener) ->
+    try gen_statem:stop(Listener) catch _:_ -> ok end.
+
 %% Session tokens the API pages hold for the users they call as, so each
 %% call does not open a new session. Development only, and rarely written,
-%% which is what persistent_term suits.
-cached_token(UserId) ->
-    case persistent_term:get({howdy_admin_api_token, UserId}, undefined) of
-        undefined -> {error, nil};
-        Token -> {ok, Token}
+%% which is what persistent_term suits. One map holds them all, keyed by
+%% the Auth they were opened with as well as the user, so two auths never
+%% hand out each other's tokens; it keeps the newest ?TOKEN_LIMIT, and an
+%% entry goes when the admin revokes the user's sessions, deletes the user
+%% or is told the token no longer works.
+-define(TOKENS, howdy_admin_api_tokens).
+-define(TOKEN_LIMIT, 32).
+
+tokens() ->
+    persistent_term:get(?TOKENS, #{}).
+
+cached_token(Auth, UserId) ->
+    case maps:find({Auth, UserId}, tokens()) of
+        {ok, {_At, Token}} -> {ok, Token};
+        error -> {error, nil}
     end.
 
-cache_token(UserId, Token) ->
-    persistent_term:put({howdy_admin_api_token, UserId}, Token),
+cache_token(Auth, UserId, Token) ->
+    Tokens = maps:remove({Auth, UserId}, tokens()),
+    Trimmed = case map_size(Tokens) >= ?TOKEN_LIMIT of
+        true -> drop_oldest(Tokens);
+        false -> Tokens
+    end,
+    At = erlang:unique_integer([monotonic]),
+    persistent_term:put(?TOKENS, Trimmed#{{Auth, UserId} => {At, Token}}),
     nil.
+
+forget_token(Auth, UserId) ->
+    Tokens = tokens(),
+    case maps:is_key({Auth, UserId}, Tokens) of
+        true -> persistent_term:put(?TOKENS, maps:remove({Auth, UserId}, Tokens));
+        false -> ok
+    end,
+    nil.
+
+drop_oldest(Tokens) ->
+    {Oldest, _} = maps:fold(
+        fun(Key, {At, _}, {_, Best}) when Best =:= undefined; At < Best -> {Key, At};
+           (_, _, Acc) -> Acc
+        end,
+        {undefined, undefined},
+        Tokens
+    ),
+    maps:remove(Oldest, Tokens).

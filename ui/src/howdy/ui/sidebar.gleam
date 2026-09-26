@@ -314,8 +314,8 @@ pub fn layout_class() -> Class {
         css.margin(rem(0.5)),
         css.property("height", "calc(100vh - 1rem)"),
         css.property("top", "0.5rem"),
-        css.border("1px solid " <> tokens.border),
-        css.property("border-radius", tokens.radius_large),
+        style.bordered(),
+        style.radius(tokens.radius_large),
         css.box_shadow("0 4px 16px -8px rgb(0 0 0 / 0.2)"),
       ]),
       // Inset: the page is a card set into the sidebar's background.
@@ -325,8 +325,8 @@ pub fn layout_class() -> Class {
       css.selector("[data-variant=\"inset\"] > main", [
         css.margin_("0.5rem 0.5rem 0.5rem 0"),
         css.background(tokens.background),
-        css.border("1px solid " <> tokens.border),
-        css.property("border-radius", tokens.radius_large),
+        style.bordered(),
+        style.radius(tokens.radius_large),
         css.overflow("hidden"),
       ]),
     ]),
@@ -355,7 +355,7 @@ pub fn sidebar_class() -> Class {
       css.property("width", "min(18rem, 85vw)"),
       css.property("height", "100%"),
       css.property("max-height", "none"),
-      css.property("border-inline-end", "1px solid " <> tokens.border),
+      style.bordered_side("inline-end"),
       css.box_shadow("0 20px 50px -12px rgb(0 0 0 / 0.35)"),
     ]),
     css.backdrop([css.background("rgb(0 0 0 / 0.5)")]),
@@ -368,7 +368,7 @@ pub fn sidebar_class() -> Class {
       css.property("top", "0"),
       css.property("width", "auto"),
       css.property("height", "100vh"),
-      css.property("border-inline-end", "1px solid " <> tokens.border),
+      style.bordered_side("inline-end"),
       css.box_shadow("none"),
     ]),
   ])
@@ -395,7 +395,7 @@ pub fn content_class() -> Class {
 pub fn footer_class() -> Class {
   css.class([
     css.padding_(tokens.space_4),
-    css.property("border-top", "1px solid " <> tokens.border),
+    style.bordered_side("top"),
     css.font_size(rem(0.875)),
   ])
 }
@@ -477,7 +477,7 @@ pub fn item_class() -> Class {
     css.width(length.percent(100)),
     css.padding_("0.375rem " <> tokens.space_2),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_family(tokens.font_body),
@@ -487,10 +487,7 @@ pub fn item_class() -> Class {
     css.text_decoration("none"),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "-2px"),
-    ]),
+    style.focus_ring_offset("-2px"),
     css.selector("[aria-current=\"page\"]", [
       css.background(tokens.muted),
       css.font_weight("500"),

@@ -19,3 +19,6 @@ howdy = { path = ".." }
 ewe = ">= 8.0.0 and < 9.0.0"
 gleeunit = ">= 1.0.0 and < 2.0.0"
 howdy_telemetry = { path = "../telemetry" }
+
+[erlang]
+application_start_module = "howdy_remote_app"

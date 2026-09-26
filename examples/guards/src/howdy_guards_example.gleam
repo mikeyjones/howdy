@@ -2,6 +2,7 @@
 
 import gleam/erlang/process
 import gleam/int
+import gleam/otp/static_supervisor as supervisor
 import guards/auth
 import guards/profile_service
 import howdy
@@ -44,11 +45,16 @@ pub fn app() -> howdy.App {
 }
 
 pub fn main() -> Nil {
-  let assert Ok(_) =
+  let server =
     app()
     |> howdy.bind(to: "127.0.0.1")
     |> howdy.listening(on: 8788)
-    |> howdy.start
+  // Supervised inside an OTP application: restarted on a crash, drained on
+  // SIGTERM.
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(server))
+    |> howdy.start_application(name: "howdy_guards_server")
 
   process.sleep_forever()
 }

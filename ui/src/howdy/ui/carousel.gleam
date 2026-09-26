@@ -243,11 +243,8 @@ pub fn viewport_class(orientation: Orientation) -> Class {
       css.display("flex"),
       css.gap(rem(1.0)),
       css.property("scrollbar-width", "none"),
-      css.property("border-radius", tokens.radius_medium),
-      css.focus_visible([
-        css.outline("2px solid " <> tokens.focus),
-        css.property("outline-offset", "2px"),
-      ]),
+      style.radius(tokens.radius_medium),
+      style.focus_ring(),
     ],
     axis,
   ))
@@ -283,18 +280,15 @@ pub fn control_class() -> Class {
     css.property("width", "2.25rem"),
     css.property("height", "2.25rem"),
     css.padding(rem(0.0)),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", "999px"),
+    style.bordered(),
+    style.pill(),
     css.background(tokens.surface),
     css.color(tokens.text),
     css.font_size(rem(1.25)),
     css.line_height("1"),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }
 
@@ -307,18 +301,15 @@ pub fn play_class() -> Class {
     css.property("height", "2.25rem"),
     css.property("margin-inline-end", "auto"),
     css.padding(rem(0.0)),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", "999px"),
+    style.bordered(),
+    style.pill(),
     css.background(tokens.surface),
     css.color(tokens.text),
     css.font_size(rem(0.75)),
     css.line_height("1"),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
     css.selector(":not([data-howdy-carousel][data-autoplay] *)", [
       css.display("none"),
     ]),

@@ -1,5 +1,6 @@
 //// A themed page with two live components. Run with `gleam run` from
-//// `examples/live`, then open http://localhost:8790 in two browser tabs.
+//// `examples/live`; it listens on 127.0.0.1:8790. Open http://localhost:8790
+//// in two browser tabs.
 //// Or run `gleam dev` for the same app with hot reload.
 ////
 //// The first counter is private to each tab: every socket starts its own
@@ -24,6 +25,7 @@
 
 import gleam/erlang/process
 import gleam/int
+import gleam/otp/static_supervisor as supervisor
 import howdy
 import howdy/controller.{type Context}
 import howdy/cookie
@@ -39,10 +41,14 @@ import lustre/event
 pub fn main() -> Nil {
   let assert Ok(shared) = live.start(counter("Everyone's count"), with: 0)
 
+  // Supervised inside an OTP application: restarted on a crash, drained on
+  // SIGTERM. A local demo, so it listens on 127.0.0.1:8790 only.
   let assert Ok(_) =
-    app(shared)
-    |> howdy.listening(on: 8790)
-    |> howdy.start
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(
+      app(shared) |> howdy.bind(to: "127.0.0.1") |> howdy.listening(on: 8790),
+    ))
+    |> howdy.start_application(name: "howdy_live_server")
 
   process.sleep_forever()
 }

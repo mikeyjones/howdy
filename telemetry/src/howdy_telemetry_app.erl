@@ -8,11 +8,18 @@
 %% localhost:4318. Until `telemetry.start` configures it, stop that provider
 %% so adding the package records and sends nothing by itself.
 start(_Type, _Args) ->
+    ok = howdy_telemetry_ffi:check_sdk_shape(),
     howdy_telemetry_ffi:idle(),
-    supervisor:start_link(?MODULE, []).
+    supervisor:start_link({local, howdy_telemetry_supervisor}, ?MODULE, []).
 
 stop(_State) ->
     ok.
 
 init([]) ->
-    {ok, {#{strategy => one_for_one}, []}}.
+    Recorders = #{id => howdy_telemetry_recorder_sup,
+                  start => {howdy_telemetry_recorder_sup, start_link, []},
+                  restart => permanent,
+                  shutdown => infinity,
+                  type => supervisor,
+                  modules => [howdy_telemetry_recorder_sup]},
+    {ok, {#{strategy => one_for_one, intensity => 3, period => 5}, [Recorders]}}.

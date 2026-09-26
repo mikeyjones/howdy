@@ -198,7 +198,6 @@ pub fn size_counts_live_members_once_test() {
   let a = channel_member([topic])
   let b = channel_member([topic])
   join_pid(topic, a)
-  process.sleep(20)
   assert channel.size(topic) == 2
 
   stop_member(a)
@@ -217,4 +216,23 @@ pub fn joining_twice_delivers_once_test() {
 
   assert receive_frame() == Ok(websocket.Text("once"))
   assert receive_frame() == Error(Nil)
+}
+
+@external(erlang, "howdy_test_ffi", "scope_pid")
+fn scope_pid() -> Result(process.Pid, Nil)
+
+// The channel scope belongs to the howdy application's supervisor, so it
+// comes back if it dies and channels keep working.
+pub fn the_channel_scope_is_restarted_test() {
+  let topic = "test:scope"
+  let _ = channel_member([topic])
+  let assert Ok(first) = scope_pid()
+  process.kill(first)
+  // Membership is lost with the scope, but the scope itself returns and
+  // takes new members.
+  let member = channel_member([topic])
+  assert channel.size(topic) == 1
+  let assert Ok(second) = scope_pid()
+  assert second != first
+  stop_member(member)
 }

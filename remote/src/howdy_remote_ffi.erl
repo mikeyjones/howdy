@@ -1,16 +1,14 @@
 -module(howdy_remote_ffi).
 -export([
     start_directory/1, dispatch/4, dispatch_local/3, run/2,
-    call_cluster/4, call_node/5, cast_cluster/3, cast_node/4,
-    multicall/4, apply/5, providers/1, connect/1, self_node/0
+    call_cluster/4, call_node/5, cast_cluster/3, cast_node/4, spawn_cast/1,
+    multicall/4, apply/5, providers/1, connect/1, self_node/0,
+    scope/0, init_casts/0
 ]).
 
-%% Every started server is a small directory process. It joins one `pg`
-%% group per procedure name and answers "which function handles this name?".
-%% Calls never run inside the directory: `erpc` starts a fresh process on
-%% the serving node, that process fetches the handler from the directory and
-%% runs it. A slow or crashing handler therefore only affects its own call,
-%% and `erpc` reports timeouts, crashes and lost nodes to the caller.
+%% Servers are `howdy_remote_directory` processes, one per started server,
+%% found through the `howdy_remote` pg scope. `erpc` runs each call in a
+%% fresh process on the serving node.
 %%
 %% Replies cross the wire as `{ok, Json}` for a handler's success and
 %% `{error, Json}` for a service error. Transport failures are raised as the
@@ -18,59 +16,51 @@
 %% `{unavailable, Message}`, `{no_handler, Name}` and `{crashed, Message}`.
 
 -define(SCOPE, howdy_remote).
+-define(CASTS_KEY, {?MODULE, casts}).
+%% Casts in flight at once, over HTTP or looking for a server, before more
+%% are dropped. A cast promises nothing, so under a flood dropping beats
+%% growing without bound.
+-define(MAX_CASTS, 64).
+-define(DISCOVERY_MS, 1000).
 
-%% Start the scope on first use. It is not linked to the caller, so it
-%% outlives the server that happened to start it.
+%% The scope is a child of the `howdy_remote` application's supervisor.
+%% Callers outside a boot, such as a peer node that has only just loaded
+%% the code, start the application on first use.
 scope() ->
     case whereis(?SCOPE) of
         undefined ->
-            case pg:start(?SCOPE) of
+            case application:ensure_all_started(?SCOPE) of
                 {ok, _} -> ok;
-                {error, {already_started, _}} -> ok
+                {error, _} -> start_unsupervised()
             end;
         _ ->
             ok
     end,
     ?SCOPE.
 
+%% Only if the application cannot start, as when the code is on the path
+%% but the `.app` is not.
+start_unsupervised() ->
+    case pg:start(?SCOPE) of
+        {ok, _} -> ok;
+        {error, {already_started, _}} -> ok
+    end.
+
 %% -- Serving ------------------------------------------------------------------
 
 start_directory(Handlers) ->
-    case proc_lib:start_link(erlang, apply, [fun directory_init/2, [self(), Handlers]]) of
+    case howdy_remote_directory:start_link(Handlers) of
         {ok, Pid} -> {ok, Pid};
         {error, Reason} -> {error, format(Reason)}
-    end.
-
-directory_init(Parent, Handlers) ->
-    Scope = scope(),
-    lists:foreach(fun(Name) -> ok = pg:join(Scope, Name, self()) end, maps:keys(Handlers)),
-    proc_lib:init_ack(Parent, {ok, self()}),
-    directory_loop(Handlers).
-
-directory_loop(Handlers) ->
-    receive
-        {howdy_remote_lookup, From, Ref, Name} ->
-            From ! {Ref, maps:find(Name, Handlers)},
-            directory_loop(Handlers);
-        _ ->
-            directory_loop(Handlers)
     end.
 
 %% Run a call against the directory `Pid`, which lives on this node. The
 %% directory may have stopped since the caller looked it up. `Trace` holds
 %% the caller's trace headers, so the handler's span joins its trace.
 dispatch(Pid, Name, Payload, Trace) ->
-    Ref = erlang:monitor(process, Pid),
-    Pid ! {howdy_remote_lookup, self(), Ref, Name},
-    receive
-        {Ref, {ok, Handler}} ->
-            erlang:demonitor(Ref, [flush]),
-            Handler(Payload, {some, Trace});
-        {Ref, error} ->
-            erlang:demonitor(Ref, [flush]),
-            error({howdy_remote, {no_handler, Name}});
-        {'DOWN', Ref, process, Pid, _} ->
-            error({howdy_remote, {no_handler, Name}})
+    case howdy_remote_directory:lookup(Pid, Name) of
+        {ok, Handler} -> Handler(Payload, {some, Trace});
+        error -> error({howdy_remote, {no_handler, Name}})
     end.
 
 %% Run a call against any directory on this node that serves `Name`.
@@ -107,10 +97,24 @@ call_node(Node, Name, Payload, Trace, Timeout) ->
         erpc:call(to_node(Node), ?MODULE, dispatch_local, [Name, Payload, Trace], Timeout)
     end).
 
+%% Nothing waits: a server pg already knows gets the cast at once, and
+%% when pg knows none, asking the connected nodes happens in a process of
+%% its own, bounded by `DISCOVERY_MS`, which drops the cast if nothing
+%% serves `Name`.
 cast_cluster(Name, Payload, Trace) ->
-    case choose(Name, 1000) of
-        {ok, Pid} -> safe_cast(node(Pid), dispatch, [Pid, Name, Payload, Trace]);
-        {error, _} -> ok
+    Scope = scope(),
+    case known(Scope, Name) of
+        {ok, Pid} ->
+            safe_cast(node(Pid), dispatch, [Pid, Name, Payload, Trace]);
+        none ->
+            spawn_cast(fun() ->
+                case ask_connected(Scope, Name, ?DISCOVERY_MS) of
+                    {ok, Pid} ->
+                        safe_cast(node(Pid), dispatch, [Pid, Name, Payload, Trace]);
+                    {error, _} ->
+                        logger:debug("howdy_remote: dropped cast to ~ts, nothing serves it", [Name])
+                end
+            end)
     end,
     nil.
 
@@ -158,6 +162,36 @@ self_node() ->
 
 %% -- Helpers ------------------------------------------------------------------
 
+%% Run `Fun` in a process of its own, unlinked, while fewer than
+%% `MAX_CASTS` such processes are running; otherwise drop it.
+spawn_cast(Fun) ->
+    Casts = casts(),
+    case atomics:add_get(Casts, 1, 1) of
+        Count when Count > ?MAX_CASTS ->
+            atomics:sub(Casts, 1, 1),
+            logger:warning("howdy_remote: dropped cast, ~p already in flight", [?MAX_CASTS]);
+        _ ->
+            spawn(fun() ->
+                try Fun() after atomics:sub(Casts, 1, 1) end
+            end)
+    end,
+    nil.
+
+init_casts() ->
+    case persistent_term:get(?CASTS_KEY, undefined) of
+        undefined -> persistent_term:put(?CASTS_KEY, atomics:new(1, []));
+        _ -> ok
+    end.
+
+casts() ->
+    case persistent_term:get(?CASTS_KEY, undefined) of
+        undefined ->
+            init_casts(),
+            persistent_term:get(?CASTS_KEY);
+        Casts ->
+            Casts
+    end.
+
 %% `erpc:cast` only raises for arguments it cannot use, such as a malformed
 %% node name. A cast promises nothing, so that is dropped too.
 safe_cast(Node, Function, Args) ->
@@ -187,10 +221,17 @@ to_node(Node) -> Node.
 %% while the node is cut off from the cluster.
 choose(Name, Timeout) ->
     Scope = scope(),
+    case known(Scope, Name) of
+        {ok, Pid} -> {ok, Pid};
+        none -> ask_connected(Scope, Name, Timeout)
+    end.
+
+%% A server pg knows of now, local first.
+known(Scope, Name) ->
     case pg:get_local_members(Scope, Name) of
         [] ->
             case pg:get_members(Scope, Name) of
-                [] -> ask_connected(Scope, Name, Timeout);
+                [] -> none;
                 Members -> {ok, pick(Members)}
             end;
         Local ->

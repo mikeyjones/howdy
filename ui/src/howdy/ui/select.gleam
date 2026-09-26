@@ -91,7 +91,7 @@ pub fn select(
         attribute.attribute("popovertarget", listbox),
         attribute.aria_haspopup("listbox"),
         attribute.data("howdy-select-trigger", ""),
-        attribute.style("anchor-name", anchor_name(listbox)),
+        attribute.data("howdy-anchor", anchor_name(listbox)),
         ..list.append(placeholder_mark, attributes)
       ],
       [
@@ -110,7 +110,7 @@ pub fn select(
         attribute.id(listbox),
         attribute.popover("auto"),
         attribute.role("listbox"),
-        attribute.style("position-anchor", anchor_name(listbox)),
+        attribute.data("howdy-anchored", anchor_name(listbox)),
       ],
       render_items(items, id, value),
     ),
@@ -187,8 +187,8 @@ pub fn trigger_class() -> Class {
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.font_family(tokens.font_body),
     css.font_size(rem(1.0)),
     css.line_height("1.5"),
@@ -198,11 +198,8 @@ pub fn trigger_class() -> Class {
     css.selector("[aria-invalid=\"true\"]", [
       css.property("border-color", tokens.danger),
     ]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
+    style.focus_ring(),
+    style.disabled_look(),
     css.after([
       css.content("\"\""),
       css.flex_shrink(0.0),
@@ -227,8 +224,8 @@ pub fn listbox_class() -> Class {
     css.padding(rem(0.25)),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
   ])
 }
@@ -238,7 +235,7 @@ pub fn option_class() -> Class {
     css.position("relative"),
     css.padding_("0.375rem " <> tokens.space_2),
     css.property("padding-inline-end", "2rem"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.font_size(rem(0.875)),
     css.cursor("pointer"),
     css.property("user-select", "none"),

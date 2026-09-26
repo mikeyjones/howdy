@@ -13,7 +13,9 @@ import howdy/ui
 import howdy/ui/alert
 import howdy/ui/blocks/app_shell.{Group, Link}
 import howdy/ui/page
+import lustre/attribute
 import lustre/element.{type Element, text}
+import lustre/element/html
 
 /// Render `content` in the shell, with `current` marking the sidebar link.
 pub fn page(
@@ -136,6 +138,24 @@ pub fn failure(
   ])
 }
 
+/// `failure` for a page whose way back is the section it belongs to.
+pub fn failed(
+  config: Config,
+  ctx: Context,
+  current current: String,
+  heading heading: String,
+  error error: service.Error,
+) -> Response(Content) {
+  failure(
+    config,
+    ctx,
+    current:,
+    heading:,
+    error:,
+    back: config.path(config, current),
+  )
+}
+
 /// An alert describing a service error.
 pub fn problem(error: service.Error) -> Element(msg) {
   ui.alert(alert.Danger, [], [
@@ -156,6 +176,28 @@ fn title(error: service.Error) -> String {
     service.Validation(_) -> "Invalid input"
     service.TooManyRequests(_) -> "Too many requests"
   }
+}
+
+/// Label and value pairs, one per row.
+pub fn facts(pairs: List(#(String, String))) -> Element(msg) {
+  ui.table([], [
+    ui.table_body(
+      [],
+      list.map(pairs, fn(pair) {
+        ui.table_row([], [
+          ui.table_head([], [text(pair.0)]),
+          ui.table_cell([], [text(pair.1)]),
+        ])
+      }),
+    ),
+  ])
+}
+
+/// Inline code in the admin's monospace face.
+pub fn mono(content: String) -> Element(msg) {
+  html.code([attribute.style("font-family", "var(--howdy-font-mono)")], [
+    text(content),
+  ])
 }
 
 /// A short form of a value for a cell.

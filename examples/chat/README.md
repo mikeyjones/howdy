@@ -7,7 +7,7 @@ cd examples/chat
 gleam run
 ```
 
-It listens on port **8789**. Open http://localhost:8789 in two browser tabs,
+It listens on 127.0.0.1:**8789**. Open http://localhost:8789 in two browser tabs,
 pick a name and a room, and talk.
 
 Each room is a channel topic. A socket joins the room when it opens and pg

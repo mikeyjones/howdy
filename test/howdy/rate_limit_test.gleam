@@ -464,3 +464,15 @@ pub fn a_failing_shared_store_allows_requests_test() {
     rate_limit.check(limiter, "ip")
   let assert Allowed(..) = rate_limit.check(limiter, "ip")
 }
+
+@external(erlang, "howdy_ffi", "warn_at_most_every")
+fn warn_at_most_every(key: String, interval_ms: Int) -> Bool
+
+// A store outage is logged once per window, not once per request.
+pub fn store_failure_warnings_are_throttled_test() {
+  assert warn_at_most_every("throttle-test", 60_000)
+  assert !warn_at_most_every("throttle-test", 60_000)
+  assert !warn_at_most_every("throttle-test", 60_000)
+  // Another limiter has its own window.
+  assert warn_at_most_every("throttle-test-other", 60_000)
+}

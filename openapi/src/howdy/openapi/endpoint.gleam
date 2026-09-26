@@ -50,6 +50,7 @@ import howdy/context
 import howdy/controller.{
   type Builder, type GuardedContext, type Middleware, type Route,
 }
+import howdy/openapi/internal/annotation
 import howdy/openapi/schema.{type Schema}
 import howdy/query
 import howdy/service
@@ -98,7 +99,10 @@ pub fn route(
 ) -> Builder(guarded) {
   let operation = Operation(inputs: endpoint.inputs, docs: endpoint.docs)
   controller.route(controller, method, path, endpoint.handler)
-  |> controller.annotate(annotation_key, to_dynamic(operation))
+  |> controller.annotate(
+    annotation_key,
+    annotation.wrap(annotation_key, operation),
+  )
 }
 
 pub fn get(
@@ -566,28 +570,62 @@ pub fn render(
   mount: Mount,
   components: schema.Components,
 ) -> Result(Rendered, Nil) {
-  use annotation <- result.map(controller.annotation(route, annotation_key))
-  let operation: Operation = from_dynamic(annotation)
-  let inputs = case mount.header {
-    Some(#(name, version, required)) -> {
-      let node = schema.node(schema.enum([#(version, Nil)]))
-      [Parameter("header", name, required, node), ..operation.inputs()]
-    }
-    None -> operation.inputs()
-  }
+  use found <- result.map(controller.annotation(route, annotation_key))
+  let operation: Operation = annotation.unwrap(found, annotation_key)
   let docs = operation.docs()
   let path = openapi_path(list.append(mount.prefix, route.segments))
   let method = string.lowercase(http.method_to_string(route.method))
+  let inputs = inputs(operation.inputs(), mount, route.segments, method:, path:)
+  let #(parameters, components) = parameters(inputs, components)
+  let #(request_body, components) = request_body(inputs, components)
+  let #(responses, components) =
+    responses(docs, inputs, mount.media_type, components)
+  let operation_id = operation_id_of(docs, method, route.segments)
+  let fields =
+    operation_fields(
+      docs,
+      route.segments,
+      operation_id,
+      parameters,
+      request_body,
+      responses,
+    )
+  Rendered(
+    path:,
+    method:,
+    operation_id:,
+    operation: json.object(fields),
+    components:,
+  )
+}
 
-  let declared =
+/// Everything the operation reads: the version header, if the mount has
+/// one, then the endpoint's own inputs, then the path parameters the route
+/// captures but the endpoint does not read, as strings. Panics if the
+/// endpoint reads a path parameter the route does not capture.
+fn inputs(
+  declared: List(Input),
+  mount: Mount,
+  segments: List(String),
+  method method: String,
+  path path: String,
+) -> List(Input) {
+  let inputs = case mount.header {
+    Some(#(name, version, required)) -> {
+      let node = schema.node(schema.enum([Nil], fn(_) { version }))
+      [Parameter("header", name, required, node), ..declared]
+    }
+    None -> declared
+  }
+  let read =
     list.filter_map(inputs, fn(input) {
       case input {
         Parameter(location: "path", name:, ..) -> Ok(name)
         _ -> Error(Nil)
       }
     })
-  let captured = path_names(route.segments)
-  list.each(declared, fn(name) {
+  let captured = path_names(segments)
+  list.each(read, fn(name) {
     case list.contains(captured, name) {
       True -> Nil
       False ->
@@ -602,14 +640,20 @@ pub fn render(
         }
     }
   })
-  let undeclared =
+  let unread =
     captured
-    |> list.filter(fn(name) { !list.contains(declared, name) })
+    |> list.filter(fn(name) { !list.contains(read, name) })
     |> list.map(fn(name) {
       Parameter("path", name, True, schema.node(schema.string()))
     })
-  let inputs = list.append(inputs, undeclared)
+  list.append(inputs, unread)
+}
 
+/// The `parameters` array: every input but the body, in order.
+fn parameters(
+  inputs: List(Input),
+  components: schema.Components,
+) -> #(List(Json), schema.Components) {
   let #(parameters, components) =
     list.fold(inputs, #([], components), fn(acc, input) {
       let #(rendered, components) = acc
@@ -628,16 +672,24 @@ pub fn render(
         Body(..) -> acc
       }
     })
-  let parameters = list.reverse(parameters)
+  #(list.reverse(parameters), components)
+}
 
-  let body =
-    list.find_map(inputs, fn(input) {
-      case input {
-        Body(node:) -> Ok(node)
-        Parameter(..) -> Error(Nil)
-      }
-    })
-  let #(request_body, components) = case body {
+fn body_of(inputs: List(Input)) -> Result(schema.Node, Nil) {
+  list.find_map(inputs, fn(input) {
+    case input {
+      Body(node:) -> Ok(node)
+      Parameter(..) -> Error(Nil)
+    }
+  })
+}
+
+/// The `requestBody` field, for an endpoint that reads one.
+fn request_body(
+  inputs: List(Input),
+  components: schema.Components,
+) -> #(List(#(String, Json)), schema.Components) {
+  case body_of(inputs) {
     Ok(node) -> {
       let #(node, components) = schema.render(node, components)
       #(
@@ -655,7 +707,17 @@ pub fn render(
     }
     Error(Nil) -> #([], components)
   }
+}
 
+/// The `responses` object, by status: those declared, or `200` without
+/// any, plus the `400` an endpoint with inputs can answer and the `422` one
+/// with a body can, unless the endpoint documents those itself.
+fn responses(
+  docs: List(Doc),
+  inputs: List(Input),
+  media_type: String,
+  components: schema.Components,
+) -> #(List(#(String, Json)), schema.Components) {
   let replies =
     list.filter_map(docs, fn(doc) {
       case doc {
@@ -667,7 +729,7 @@ pub fn render(
     [] -> [Reply(status: 200, description: "Success", body: None)]
     _ -> replies
   }
-  let automatic = case inputs, result.is_ok(body) {
+  let automatic = case inputs, result.is_ok(body_of(inputs)) {
     [], _ -> []
     _, False -> [#(400, "The request is malformed")]
     _, True -> [
@@ -692,7 +754,7 @@ pub fn render(
           let #(content, components) = case body {
             Some(node) -> {
               let #(node, components) = schema.render(node, components)
-              #([#("content", content_of(node, mount.media_type))], components)
+              #([#("content", content_of(node, media_type))], components)
             }
             None -> #([], components)
           }
@@ -703,7 +765,34 @@ pub fn render(
         _ -> acc
       }
     })
+  #(list.reverse(responses), components)
+}
 
+/// The declared operation id, or the default made from the method and
+/// path.
+fn operation_id_of(
+  docs: List(Doc),
+  method: String,
+  segments: List(String),
+) -> String {
+  list.find_map(docs, fn(doc) {
+    case doc {
+      OperationId(id) -> Ok(id)
+      _ -> Error(Nil)
+    }
+  })
+  |> result.lazy_unwrap(fn() { default_operation_id(method, segments) })
+}
+
+/// The operation object's fields, in the order the document shows them.
+fn operation_fields(
+  docs: List(Doc),
+  segments: List(String),
+  operation_id: String,
+  parameters: List(Json),
+  request_body: List(#(String, Json)),
+  responses: List(#(String, Json)),
+) -> List(#(String, Json)) {
   let tags =
     list.filter_map(docs, fn(doc) {
       case doc {
@@ -711,18 +800,10 @@ pub fn render(
         _ -> Error(Nil)
       }
     })
-  let tags = case tags, fixed_segments(route.segments) {
+  let tags = case tags, fixed_segments(segments) {
     [], [first, ..] -> [first]
     tags, _ -> tags
   }
-  let operation_id =
-    list.find_map(docs, fn(doc) {
-      case doc {
-        OperationId(id) -> Ok(id)
-        _ -> Error(Nil)
-      }
-    })
-    |> result.lazy_unwrap(fn() { default_operation_id(method, route.segments) })
   let text = fn(pick: fn(Doc) -> Result(String, Nil), key: String) {
     case list.find_map(docs, pick) {
       Ok(value) -> [#(key, json.string(value))]
@@ -737,54 +818,45 @@ pub fn render(
         _ -> Error(Nil)
       }
     })
-
-  let fields =
-    list.flatten([
-      case tags {
-        [] -> []
-        _ -> [#("tags", json.array(tags, json.string))]
+  list.flatten([
+    case tags {
+      [] -> []
+      _ -> [#("tags", json.array(tags, json.string))]
+    },
+    text(
+      fn(doc) {
+        case doc {
+          Summary(text) -> Ok(text)
+          _ -> Error(Nil)
+        }
       },
-      text(
-        fn(doc) {
-          case doc {
-            Summary(text) -> Ok(text)
-            _ -> Error(Nil)
-          }
-        },
-        "summary",
-      ),
-      text(
-        fn(doc) {
-          case doc {
-            Description(text) -> Ok(text)
-            _ -> Error(Nil)
-          }
-        },
-        "description",
-      ),
-      [#("operationId", json.string(operation_id))],
-      case parameters {
-        [] -> []
-        _ -> [#("parameters", json.preprocessed_array(parameters))]
+      "summary",
+    ),
+    text(
+      fn(doc) {
+        case doc {
+          Description(text) -> Ok(text)
+          _ -> Error(Nil)
+        }
       },
-      request_body,
-      [#("responses", json.object(list.reverse(responses)))],
-      case security {
-        [] -> []
-        _ -> [#("security", json.preprocessed_array(security))]
-      },
-      case list.contains(docs, Deprecated) {
-        True -> [#("deprecated", json.bool(True))]
-        False -> []
-      },
-    ])
-  Rendered(
-    path:,
-    method:,
-    operation_id:,
-    operation: json.object(fields),
-    components:,
-  )
+      "description",
+    ),
+    [#("operationId", json.string(operation_id))],
+    case parameters {
+      [] -> []
+      _ -> [#("parameters", json.preprocessed_array(parameters))]
+    },
+    request_body,
+    [#("responses", json.object(responses))],
+    case security {
+      [] -> []
+      _ -> [#("security", json.preprocessed_array(security))]
+    },
+    case list.contains(docs, Deprecated) {
+      True -> [#("deprecated", json.bool(True))]
+      False -> []
+    },
+  ])
 }
 
 fn default_operation_id(method: String, segments: List(String)) -> String {
@@ -837,9 +909,3 @@ fn fixed_segments(segments: List(String)) -> List(String) {
     !string.starts_with(segment, ":") && !string.starts_with(segment, "*")
   })
 }
-
-@external(erlang, "howdy_openapi_ffi", "identity")
-fn to_dynamic(value: a) -> Dynamic
-
-@external(erlang, "howdy_openapi_ffi", "identity")
-fn from_dynamic(value: Dynamic) -> a

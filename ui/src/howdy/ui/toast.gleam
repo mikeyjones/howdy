@@ -59,7 +59,6 @@ pub fn region(
       class(region_class()),
       attribute.aria_label("Notifications"),
       attribute.aria_live("polite"),
-      attribute.attribute("onanimationend", faded_script),
       ..attributes
     ],
     [html.style([], animation_css), ..toasts],
@@ -267,7 +266,9 @@ pub fn items(queue: Queue) -> List(Item) {
 /// `aria-label` is "Dismiss". It is pressed for you when a toast fades.
 /// `on_hold` hears a toast's id when the reader starts (`True`) or stops
 /// (`False`) holding it open by pointing at it or focusing inside it; pass
-/// it on to `hold`.
+/// it on to `hold`. `howdy/ui/behaviour` presses a faded toast's close
+/// button and reports holds, so a live view keeping toasts in its model
+/// hears both.
 pub fn view(
   queue: Queue,
   on_close on_close: fn(Int) -> List(Attribute(msg)),
@@ -279,11 +280,7 @@ pub fn view(
       class(region_class()),
       attribute.aria_label("Notifications"),
       attribute.aria_live("polite"),
-      attribute.attribute("onanimationend", faded_script),
-      attribute.attribute("onpointerover", held_script),
-      attribute.attribute("onpointerout", held_script),
-      attribute.attribute("onfocusin", held_script),
-      attribute.attribute("onfocusout", held_script),
+      attribute.data("howdy-toast-queue", ""),
     ],
     [
       #("style", html.style([], animation_css)),
@@ -403,8 +400,8 @@ pub fn toast_class(variant: Variant) -> Class {
     css.property("padding-inline-end", "2.5rem"),
     css.background(tokens.surface),
     css.color(colour),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
     css.font_size(rem(0.875)),
     css.property("pointer-events", "auto"),
@@ -425,7 +422,7 @@ pub fn icon_class() -> Class {
     css.justify_content("center"),
     css.property("width", "1.125rem"),
     css.property("height", "1.125rem"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.font_size(rem(0.75)),
     css.font_weight("700"),
     css.color(tokens.primary),
@@ -456,33 +453,17 @@ pub fn close_class() -> Class {
     css.property("height", "1.5rem"),
     css.padding(rem(0.0)),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text_muted),
     css.font_size(rem(1.125)),
     css.line_height("1"),
     css.cursor("pointer"),
     css.hover([css.color(tokens.text), css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }
 
 // Sketch classes cannot carry `@keyframes`, so they travel with the region.
 // Fading out ends with `display: none`, so a faded toast gives up its space.
 const animation_css = "@keyframes howdy-toast-in{from{opacity:0;transform:translateY(.5rem)}}@keyframes howdy-toast-out{to{opacity:0;visibility:hidden;display:none}}@keyframes howdy-toast-out-again{to{opacity:0;visibility:hidden;display:none}}[data-howdy-toast]{animation:howdy-toast-in .2s ease-out,howdy-toast-out .2s ease-in var(--howdy-toast-duration,5s) forwards}[data-howdy-toast][data-round=odd]{animation-name:howdy-toast-in,howdy-toast-out-again}[data-howdy-toast][data-persistent]{animation:howdy-toast-in .2s ease-out}[data-howdy-toast]:hover,[data-howdy-toast]:focus-within{animation-play-state:paused}@keyframes howdy-toast-spin{to{transform:rotate(360deg)}}[data-howdy-toast-spinner]{animation:howdy-toast-spin .8s linear infinite}@media (prefers-reduced-motion:reduce){[data-howdy-toast-spinner]{animation-duration:2.4s}[data-howdy-toast]{animation-name:none,howdy-toast-out}[data-howdy-toast][data-round=odd]{animation-name:none,howdy-toast-out-again}[data-howdy-toast][data-persistent]{animation:none}}"
-
-// A toast that has faded is closed as if its close button were pressed, so
-// a live view keeping toasts in its model hears it. The fade waits while the
-// toast is hovered or focused, so it goes when the reader is done. An
-// attribute rather than the behaviour script, since animation events do not
-// leave a live view's shadow root.
-const faded_script = "(function(e){var t=e.target;if(!t.matches('[data-howdy-toast]')||e.animationName.indexOf('howdy-toast-out')!==0)return;var c=t.querySelector('[data-howdy-toast-close]');if(c)c.click();else t.hidden=true})(event)"
-
-// Whether a toast is held open, as its countdown sees it: pointed at or
-// focused inside. Checked once the pointer or focus has settled, since
-// focus moving within a toast leaves it and enters it again, and reported
-// only when it changes.
-const held_script = "(function(e){var t=e.target.closest&&e.target.closest('[data-howdy-toast]');if(!t)return;setTimeout(function(){var h=t.isConnected&&t.matches(':hover, :focus-within');if(String(h)===(t.dataset.held||'false'))return;t.dataset.held=String(h);t.dispatchEvent(new CustomEvent('howdy-toast-hold',{bubbles:true,composed:true,detail:{held:h}}))})})(event)"

@@ -121,9 +121,10 @@ every row, and sign in to your app as anyone. These are the defences:
 - The pages answer `403` to any request whose `Host` is not `localhost`,
   `127.0.0.1` or `[::1]`, so a page on another site cannot reach them
   through DNS rebinding.
-- Forms carry no CSRF token. A page you visit while the admin runs could
-  post to it, which is one more reason to run it only against data you can
-  afford to lose.
+- Writes must come from the admin's own origin. A `POST` whose
+  `Sec-Fetch-Site` or `Origin` header says another site sent it gets `403`,
+  so a page you visit while the admin runs cannot post to it. Forms carry
+  no CSRF token; the browser's headers do that job.
 
 To open the admin from another machine on a network you trust, list the
 exact host names it will be reached by:

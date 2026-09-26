@@ -10,8 +10,10 @@ cd examples/openapi
 gleam run
 ```
 
-Then open <http://localhost:8787/docs> for the API reference, or fetch the
-document itself:
+It listens on 127.0.0.1:8787. Open <http://localhost:8787/docs> for the API
+reference, or fetch the document itself. Each version's document keeps the
+API version from `openapi.new` and shows which version it describes beside
+it, as `1.0.0 (v1)` and `1.0.0 (v2)`:
 
 ```sh
 curl http://localhost:8787/openapi.json          # v1, the default version

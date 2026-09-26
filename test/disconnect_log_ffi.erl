@@ -1,16 +1,19 @@
 -module(disconnect_log_ffi).
--export([with_captured_reports/1, drop_mid_close/1, exit_with/2]).
+-export([with_captured_reports/2, drop_mid_close/1, exit_with/2]).
 -export([log/2]).
 
 %% Run `Run`, collecting the supervisor and crash reports that reach logger
 %% handlers meanwhile, after primary filters have had their say.
-with_captured_reports(Run) ->
+with_captured_reports(Server, Run) ->
     Id = howdy_test_capture,
     Self = self(),
     ok = logger:add_handler(Id, ?MODULE, #{config => Self}),
     try
         Run(),
-        timer:sleep(300),
+        %% Reports are written by the connection as it exits and by its
+        %% supervisor as it handles that exit, so once no connection is
+        %% left and the supervisor has answered, every report is in.
+        howdy_test_ffi:await_no_connections(Server),
         collect([])
     after
         logger:remove_handler(Id)

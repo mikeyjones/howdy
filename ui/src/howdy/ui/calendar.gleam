@@ -234,7 +234,7 @@ pub fn picker(
           attribute.attribute("popovertarget", popover),
           attribute.data("howdy-select-trigger", ""),
           attribute.aria_haspopup("dialog"),
-          attribute.style("anchor-name", anchor_name(popover)),
+          attribute.data("howdy-anchor", anchor_name(popover)),
           ..mark
         ],
         [
@@ -254,7 +254,7 @@ pub fn picker(
           attribute.popover("auto"),
           attribute.role("dialog"),
           attribute.aria_label(calendar.locale.choose_date),
-          attribute.style("position-anchor", anchor_name(popover)),
+          attribute.data("howdy-anchored", anchor_name(popover)),
         ],
         [
           html.div(
@@ -798,18 +798,15 @@ pub fn nav_button_class() -> Class {
     css.property("width", "2rem"),
     css.property("height", "2rem"),
     css.padding(rem(0.0)),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_small),
+    style.bordered(),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_size(rem(1.125)),
     css.line_height("1"),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }
 
@@ -839,17 +836,14 @@ pub fn day_class() -> Class {
     css.property("height", "2.25rem"),
     css.padding(rem(0.0)),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_family(tokens.font_body),
     css.font_size(rem(0.875)),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "1px"),
-    ]),
+    style.focus_ring_offset("1px"),
     css.selector("[data-outside]", [css.color(tokens.text_muted)]),
     css.selector("[aria-current=\"date\"]", [
       css.property("box-shadow", "inset 0 0 0 1px " <> tokens.border),
@@ -858,7 +852,7 @@ pub fn day_class() -> Class {
     // Days between a range's ends share a band of the muted colour.
     css.selector("[data-in-range]", [
       css.background(tokens.muted),
-      css.property("border-radius", "0"),
+      style.radius("0"),
     ]),
     css.selector("[aria-pressed=\"true\"]", [
       css.background(tokens.primary),
@@ -885,18 +879,15 @@ pub fn trigger_class() -> Class {
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.font_family(tokens.font_body),
     css.font_size(rem(1.0)),
     css.line_height("1.5"),
     css.text_align("start"),
     css.cursor("pointer"),
     css.selector("[data-placeholder]", [css.color(tokens.text_muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
   ])
 }
 
@@ -909,8 +900,8 @@ pub fn popover_class() -> Class {
     css.padding(rem(0.75)),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
   ])
 }

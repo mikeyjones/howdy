@@ -3,3 +3,4 @@
 build/
 erl_crash.dump
 /examples/live/priv/static/ui.css
+*.dump

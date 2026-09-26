@@ -8,9 +8,11 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import gloo/repo.{type Repo}
-import howdy/admin/internal/accounts
+import howdy/admin/internal/accounts/groups as group_pages
+import howdy/admin/internal/accounts/users as user_pages
 import howdy/admin/internal/api_spec
 import howdy/admin/internal/config.{type Config}
+import howdy/admin/internal/format
 import howdy/admin/internal/layout
 import howdy/admin/internal/schema
 import howdy/auth.{type Auth}
@@ -20,6 +22,7 @@ import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
 import howdy/flags.{type Flags}
+import howdy/mail
 import howdy/mail/outbox.{type Outbox}
 import howdy/service
 import howdy/telemetry/recorder.{type Recorder}
@@ -109,7 +112,7 @@ fn flags_card(config: Config, features: Flags) -> Element(msg) {
         ui.card_header([], [
           ui.card_title([text("howdy_flags")]),
           ui.card_description([
-            text(accounts.describe(
+            text(format.describe(
               list.length(flags.defined(features)),
               "registered flag",
             )),
@@ -151,7 +154,7 @@ fn database_card(config: Config, repo: Repo) -> Element(msg) {
               Postgres -> "PostgreSQL"
               Sqlite -> "SQLite"
             }),
-            text(" · " <> accounts.describe(list.length(tables), "table")),
+            text(" · " <> format.describe(list.length(tables), "table")),
           ]),
         ]),
         ui.card_content([], [
@@ -199,8 +202,8 @@ fn migrations(repo: Repo) -> Element(msg) {
 
 fn auth_card(config: Config, identity: Auth) -> Element(msg) {
   let facts = {
-    use users <- result.try(accounts.count_users(identity))
-    use groups <- result.try(accounts.count_groups(identity))
+    use users <- result.try(user_pages.count_users(identity))
+    use groups <- result.try(group_pages.count_groups(identity))
     Ok(#(users, groups))
   }
   case facts {
@@ -225,15 +228,15 @@ fn auth_card(config: Config, identity: Auth) -> Element(msg) {
         ui.card_header([], [
           ui.card_title([text("howdy_auth")]),
           ui.card_description([
-            text(accounts.describe(users, "user")),
-            text(" · " <> accounts.describe(groups, "group")),
+            text(format.describe(users, "user")),
+            text(" · " <> format.describe(groups, "group")),
             text(" · group mode " <> group.mode_name(auth.group_mode(identity))),
             case config.authorization {
               Some(access) ->
                 text(
                   " · "
                   <> case authorization.roles(access) {
-                    Ok(roles) -> accounts.describe(list.length(roles), "role")
+                    Ok(roles) -> format.describe(list.length(roles), "role")
                     Error(_) -> "roles unavailable"
                   },
                 )
@@ -282,13 +285,16 @@ fn mail_card(config: Config, box: Option(Outbox)) -> Element(msg) {
       ui.card_description([
         text(case box {
           Some(box) ->
-            accounts.describe(list.length(outbox.messages(box)), "message")
-            <> " in the outbox"
+            case outbox.messages(box) {
+              Ok(messages) ->
+                format.describe(list.length(messages), "message")
+                <> " in the outbox"
+              Error(error) ->
+                "The outbox could not be read: " <> mail.error_to_string(error)
+            }
           None -> "No outbox registered"
         }),
-        text(
-          " · " <> accounts.describe(list.length(config.previews), "preview"),
-        ),
+        text(" · " <> format.describe(list.length(config.previews), "preview")),
       ]),
     ]),
     ui.card_footer([], [
@@ -315,7 +321,7 @@ fn telemetry_card(config: Config, recorder: Recorder) -> Element(msg) {
       ui.card_title([text("howdy_telemetry")]),
       ui.card_description([
         text(
-          accounts.describe(list.length(traces), "trace")
+          format.describe(list.length(traces), "trace")
           <> " recorded · "
           <> int.to_string(failing)
           <> " with failures",
@@ -350,10 +356,10 @@ fn api_card(config: Config, api: config.Api) -> Element(msg) {
       ui.card_description([
         text(
           "Found in the app · "
-          <> accounts.describe(endpoints, "endpoint")
+          <> format.describe(endpoints, "endpoint")
           <> case versions {
             0 -> ""
-            count -> " · " <> accounts.describe(count, "version")
+            count -> " · " <> format.describe(count, "version")
           },
         ),
       ]),

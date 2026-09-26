@@ -11,55 +11,42 @@
 %% `Keep` roots have arrived after it. Spans whose root never ends here are
 %% swept after a few minutes.
 
--export([new/1, on_start/3, on_end/2, force_flush/1]).
+-export([new/1, create_tables/1, sweep/1, on_start/3, on_end/2, force_flush/1]).
 -export([traces/2, trace/2, logs/2, recent_logs/2, version/1, clear/1,
          record_log/6]).
 
 -include_lib("opentelemetry_api/include/opentelemetry.hrl").
 -include_lib("opentelemetry/include/otel_span.hrl").
 
--define(SWEEP_MS, 30000).
 -define(ORPHAN_AGE_US, 300000000).
 -define(MAX_LOGS, 2000).
 
 %% The Gleam `Recorder` is `{recorder, Tables}`; the queries take the tables.
 -record(tables, {spans, roots, logs, counter, keep}).
 
+%% The tables belong to a `howdy_telemetry_recorder_owner` under the
+%% package's supervisor, so a recorder made in a short-lived process still
+%% outlives it. The owner exits with the process that made it, which in an
+%% app is `main`. Starting the owner cannot hang: `start_child` returns an
+%% error if the owner dies in `init`, and the owner is alive when we ask
+%% for its tables, or the call exits.
 new(Keep) ->
-    Parent = self(),
-    Owner = spawn(fun() -> own(Parent, Keep) end),
-    Ref = erlang:monitor(process, Owner),
-    receive
-        {tables, Owner, Tables} ->
-            erlang:demonitor(Ref, [flush]),
-            Tables
-    end.
+    case whereis(howdy_telemetry_recorder_sup) of
+        undefined -> {ok, _} = application:ensure_all_started(howdy_telemetry);
+        _ -> ok
+    end,
+    {ok, Owner} = howdy_telemetry_recorder_sup:start_owner(self(), Keep),
+    howdy_telemetry_recorder_owner:tables(Owner).
 
-%% The tables belong to a process of their own, so a recorder made in a
-%% short-lived process still outlives it. It exits with the process that
-%% made it, which in an app is `main`.
-own(Parent, Keep) ->
-    T = #tables{
+%% Called by the owner, so the tables are its.
+create_tables(Keep) ->
+    #tables{
         spans = ets:new(howdy_telemetry_spans, [duplicate_bag, public, {write_concurrency, true}]),
         roots = ets:new(howdy_telemetry_roots, [ordered_set, public]),
         logs = ets:new(howdy_telemetry_logs, [ordered_set, public]),
         counter = counters:new(1, []),
         keep = Keep
-    },
-    Parent ! {tables, self(), T},
-    Ref = erlang:monitor(process, Parent),
-    erlang:send_after(?SWEEP_MS, self(), sweep),
-    loop(T, Ref).
-
-loop(T, Ref) ->
-    receive
-        sweep ->
-            sweep(T),
-            erlang:send_after(?SWEEP_MS, self(), sweep),
-            loop(T, Ref);
-        {'DOWN', Ref, process, _, _} ->
-            ok
-    end.
+    }.
 
 %% -- Span processor ---------------------------------------------------------
 

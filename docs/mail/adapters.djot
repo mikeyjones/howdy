@@ -75,8 +75,25 @@ control. Without `credentials`, no authentication is tried. `timeout` is
 how long to wait at each step, 10 seconds by default, and `helo` sets the
 name this host gives in `EHLO`.
 
-Each send opens a connection, delivers one message and closes it. An SMTP
-`4xx` reply is `Unavailable`, and a `5xx` is `Refused`.
+Each send opens a connection, delivers one message and closes it, in the
+process that called `mail.send`. An SMTP `4xx` reply is `Unavailable`, and
+a `5xx` is `Refused`.
+
+A temporary failure, which is an `Unavailable` one, can be tried again
+before it is returned:
+
+```gleam
+smtp.from_env()
+|> result.map(smtp.retries(_, 2))
+|> result.map(smtp.backoff(_, 1000))
+```
+
+`retries` is how many more attempts to make, 0 by default, and `backoff`
+is how long to wait before the first retry in milliseconds, 500 by default;
+each retry after it waits twice as long. A `Refused` message is never tried
+again. Every attempt happens in the calling process, so a send can take up
+to `retries + 1` times `timeout`, plus the waits in between: see
+"Sending is synchronous" in the [overview](/docs/mail/overview).
 
 ## Resend
 

@@ -83,11 +83,8 @@ pub fn control_class() -> Class {
     css.flex_shrink(0.0),
     css.property("accent-color", tokens.primary),
     css.cursor("pointer"),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
+    style.focus_ring(),
+    style.disabled_look(),
   ])
 }
 

@@ -6,7 +6,7 @@ howdy_ui components assembled into whole screens.
 gleam run
 ```
 
-Open <http://localhost:8791>.
+It listens on 127.0.0.1:8791. Open <http://localhost:8791>.
 
 - **Dashboard** (`/`): a collapsible sidebar that remembers its state in a
   cookie, stat cards, a bar and an area chart, and a live orders table you

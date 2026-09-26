@@ -204,9 +204,28 @@ pub fn cast_runs_without_waiting_test() {
   let assert Ok(first) = process.receive(seen, 1000)
   let assert Ok(second) = process.receive(seen, 1000)
   assert list.sort([first, second], string.compare) == ["again", "hello"]
-  // Casting to nobody does nothing.
-  remote.cast(remote.cluster(), fixtures.whoami("nobody_casts"), Nil)
+  // Casting to nobody does nothing, and does not wait to find that out.
+  let took =
+    elapsed_ms(fn() {
+      remote.cast(remote.cluster(), fixtures.whoami("nobody_casts"), Nil)
+    })
+  assert took < 100
 }
+
+@external(erlang, "howdy_remote_test_ffi", "elapsed_ms")
+fn elapsed_ms(run: fn() -> a) -> Int
+
+pub fn the_scope_and_servers_are_supervised_test() {
+  assert scope_supervised()
+  let assert Ok(started) = remote.start(fixtures.users_server("supervised"))
+  assert sys_aware(started.pid)
+}
+
+@external(erlang, "howdy_remote_test_ffi", "scope_supervised")
+fn scope_supervised() -> Bool
+
+@external(erlang, "howdy_remote_test_ffi", "sys_aware")
+fn sys_aware(pid: process.Pid) -> Bool
 
 pub fn multicall_and_providers_test() {
   serve("multi")

@@ -128,7 +128,7 @@ pub fn footer_class() -> Class {
 
 pub fn row_class() -> Class {
   css.class([
-    css.property("border-bottom", "1px solid " <> tokens.border),
+    style.bordered_side("bottom"),
     css.transition("background 120ms"),
     css.hover([css.background(tokens.muted)]),
     css.selector("[aria-selected=\"true\"]", [css.background(tokens.muted)]),

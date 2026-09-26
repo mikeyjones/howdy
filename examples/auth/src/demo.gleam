@@ -5,6 +5,7 @@
 import gleam/erlang/process
 import gleam/io
 import gleam/option.{None, Some}
+import gleam/otp/static_supervisor as supervisor
 import howdy
 import howdy/auth
 import howdy/auth/secret
@@ -59,6 +60,11 @@ pub fn env(name: String) -> Result(String, Nil)
 
 /// Listen on loopback only: these examples are not meant to be reachable.
 pub fn serve(app: howdy.App) -> Nil {
-  let assert Ok(_) = app |> howdy.bind(to: "127.0.0.1") |> howdy.start()
+  // Supervised inside an OTP application: restarted on a crash, drained on
+  // SIGTERM.
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(app |> howdy.bind(to: "127.0.0.1")))
+    |> howdy.start_application(name: "howdy_auth_example_server")
   process.sleep_forever()
 }

@@ -181,7 +181,7 @@ pub fn track_class(orientation: Orientation) -> Class {
   }
   css.class([
     css.position("absolute"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.muted),
     ..axis
   ])
@@ -204,7 +204,7 @@ pub fn fill_class(orientation: Orientation) -> Class {
   }
   css.class([
     css.position("absolute"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.primary),
     ..axis
   ])
@@ -218,7 +218,7 @@ fn thumb_styles() -> List(css.Style) {
     css.property("pointer-events", "auto"),
     css.property("width", "1.125rem"),
     css.property("height", "1.125rem"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.surface),
     css.border("2px solid " <> tokens.primary),
     css.box_shadow("0 1px 3px rgb(0 0 0 / 0.25)"),
@@ -269,11 +269,8 @@ pub fn slider_class() -> Class {
     css.margin(rem(0.0)),
     css.property("accent-color", tokens.primary),
     css.cursor("pointer"),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "4px"),
-    ]),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("not-allowed")]),
+    style.focus_ring_offset("4px"),
+    style.disabled_look(),
     css.selector("[data-orientation=\"vertical\"]", [
       css.property("writing-mode", "vertical-lr"),
       css.property("direction", "rtl"),

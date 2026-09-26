@@ -23,6 +23,15 @@ app sent.
 Only the newest 500 messages are kept. Older ones, and their files, are
 removed.
 
+Both `start` functions link the outbox to the caller. In an app with a
+[supervision tree](/docs/guides/supervision), `outbox.supervised()` and
+`outbox.supervised_in(directory)` return the handle and a child to add to
+the supervisor instead, so a crashed outbox is restarted: one in memory
+starts empty again, and one with a directory reads its files back. While
+the outbox is not running, sending to it is `mail.Unavailable`, like any
+provider that is away, and `outbox.messages` and `outbox.clear` return the
+same error rather than crashing the caller.
+
 ## In development
 
 Start the outbox in your `dev/` entry point, and give the app a mailer that
@@ -137,10 +146,14 @@ pub fn signup_sends_a_welcome_test() {
 
 - `outbox.latest_to(box, email)` is the newest message with that address
   among its recipients.
-- `outbox.messages(box)` is every message, newest first.
+- `outbox.messages(box)` is every message, newest first, as
+  `Ok(messages)`.
 - `outbox.get(box, id)` finds one by its id, which is the `id` of the
   `Receipt` that `send` returned.
 - `outbox.clear(box)` forgets every message and deletes their files.
+
+`messages` and `clear` are `Error(mail.Unavailable(_))` only when the
+outbox is not running, and `get` and `latest_to` are `Error(Nil)` then.
 
 What the outbox holds is the `mail.Outgoing` an adapter receives, so a test
 sees the message after the checks and the mailer's defaults, exactly as a

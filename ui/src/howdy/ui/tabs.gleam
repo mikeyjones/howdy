@@ -205,15 +205,15 @@ pub fn list_class(look: Look, orientation: Orientation) -> Class {
       css.gap(rem(0.25)),
       css.padding(rem(0.25)),
       css.background(tokens.muted),
-      css.property("border-radius", tokens.radius_medium),
+      style.radius(tokens.radius_medium),
     ]
     Line, Horizontal -> [
       css.gap(rem(1.0)),
-      css.property("border-bottom", "1px solid " <> tokens.border),
+      style.bordered_side("bottom"),
     ]
     Line, Vertical -> [
       css.gap(rem(0.25)),
-      css.property("border-inline-start", "1px solid " <> tokens.border),
+      style.bordered_side("inline-start"),
     ]
   }
   css.class(list.append(direction, drawn))
@@ -223,7 +223,7 @@ pub fn tab_class(look: Look, orientation: Orientation) -> Class {
   let drawn = case look, orientation {
     Segmented, _ -> [
       css.padding_("0.375rem " <> tokens.space_3),
-      css.property("border-radius", tokens.radius_small),
+      style.radius(tokens.radius_small),
       css.selector("[aria-selected=\"true\"]", [
         css.background(tokens.surface),
         css.color(tokens.text),
@@ -233,7 +233,7 @@ pub fn tab_class(look: Look, orientation: Orientation) -> Class {
     // The underline sits on the list's own line.
     Line, Horizontal -> [
       css.padding_(tokens.space_2 <> " " <> tokens.space_1),
-      css.property("border-radius", "0"),
+      style.radius("0"),
       css.property("margin-block-end", "-1px"),
       css.property("border-bottom", "2px solid transparent"),
       css.selector("[aria-selected=\"true\"]", [
@@ -243,7 +243,7 @@ pub fn tab_class(look: Look, orientation: Orientation) -> Class {
     ]
     Line, Vertical -> [
       css.padding_(tokens.space_2 <> " " <> tokens.space_3),
-      css.property("border-radius", "0"),
+      style.radius("0"),
       css.property("margin-inline-start", "-1px"),
       css.property("border-inline-start", "2px solid transparent"),
       css.selector("[aria-selected=\"true\"]", [
@@ -266,11 +266,8 @@ pub fn tab_class(look: Look, orientation: Orientation) -> Class {
       css.cursor("pointer"),
       css.transition("background 120ms, color 120ms"),
       css.hover([css.color(tokens.text)]),
-      css.focus_visible([
-        css.outline("2px solid " <> tokens.focus),
-        css.property("outline-offset", "2px"),
-      ]),
-      css.disabled([css.property("opacity", "0.5"), css.cursor("default")]),
+      style.focus_ring(),
+      style.disabled_look_with(cursor: "default"),
     ],
     drawn,
   ))
@@ -283,10 +280,7 @@ pub fn panels_class() -> Class {
 pub fn panel_class() -> Class {
   css.class([
     css.margin_(tokens.space_4 <> " 0 0"),
-    css.property("border-radius", tokens.radius_small),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.radius(tokens.radius_small),
+    style.focus_ring(),
   ])
 }

@@ -29,8 +29,9 @@ pub fn avatar(
       attribute.src(src),
       attribute.alt(alt),
       attribute.attribute("loading", "lazy"),
-      // A broken image steps aside for the initials behind it.
-      attribute.attribute("onerror", "this.remove()"),
+      // A broken image steps aside for the initials behind it, removed by
+      // `howdy/ui/behaviour`.
+      attribute.data("howdy-on-error", "remove"),
     ]),
   ])
 }
@@ -55,7 +56,7 @@ pub fn avatar_class() -> Class {
     css.property("width", "2rem"),
     css.property("height", "2rem"),
     css.overflow("hidden"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.muted),
     css.color(tokens.text_muted),
     css.font_size(rem(0.75)),

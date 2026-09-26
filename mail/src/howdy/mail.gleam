@@ -29,6 +29,23 @@
 //// own or the mailer's default), at least one recipient, a subject, and an
 //// HTML or text body. Addresses, the subject and headers may not contain
 //// line breaks, so user input placed in them cannot add headers.
+////
+//// ## Sending is synchronous
+////
+//// `send` delivers in the calling process and returns when the adapter has
+//// an answer: it opens the SMTP connection or makes the HTTP request, and
+//// waits for the provider to accept or refuse the message. A request
+//// handler that sends mail is held for that long, up to the adapter's
+//// timeout, and an `Unavailable` error is returned rather than tried again.
+//// There is no queue in this package. Where the wait matters, or a
+//// temporary failure must not lose the message, either:
+////
+//// - let the SMTP adapter try again itself, with `smtp.retries` and
+////   `smtp.backoff`, which still holds the caller for the whole time; or
+//// - record the message somewhere durable, such as a table of your own,
+////   and send it from a job that runs outside the request, using
+////   `retryable` to decide what to try again. The development `outbox` is
+////   only a sink for reading mail in development and tests, not a queue.
 
 import gleam/bit_array
 import gleam/bool

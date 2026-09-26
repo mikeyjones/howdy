@@ -20,6 +20,7 @@ import howdy/auth/connection
 import howdy/auth/connections
 import howdy/auth/group
 import howdy/auth/groups
+import howdy/auth/internal/sso_transport
 import howdy/auth/internal/token
 import howdy/auth/mfa
 import howdy/auth/routes
@@ -43,6 +44,13 @@ fn jwks() -> String
 
 @external(erlang, "howdy_auth_sso_ffi", "public_host")
 fn public_host(host: String) -> Bool
+
+@external(erlang, "howdy_auth_test_ffi", "with_pinned_idp")
+fn with_pinned_idp(
+  host: String,
+  body: String,
+  run: fn() -> a,
+) -> #(a, #(String, String))
 
 fn discovery(changes: List(#(String, json.Json))) -> String {
   [
@@ -563,6 +571,40 @@ pub fn only_public_addresses_are_fetched_test() {
   )
   assert public_host("8.8.8.8")
   assert public_host("2606:4700:4700::1111")
+}
+
+fn provider_request(host: String) -> Request(String) {
+  request.new()
+  |> request.set_scheme(http.Https)
+  |> request.set_host(host)
+  |> request.set_path("/keys")
+}
+
+pub fn names_resolving_to_private_addresses_are_never_requested_test() {
+  list.each(["localhost", "127.0.0.1", "169.254.169.254", "::1"], fn(host) {
+    assert sso_transport.send(provider_request(host))
+      == Error(service.Internal("SSO provider request failed"))
+      as host
+  })
+}
+
+/// The name is resolved once: the connection goes to the vetted address,
+/// while the name itself travels as the Host header and the TLS server name
+/// the certificate is checked against.
+pub fn provider_requests_connect_to_the_vetted_address_test() {
+  let host = "idp.example.test"
+  let #(answer, #(sni, head)) =
+    with_pinned_idp(host, "{\"keys\":[]}", fn() {
+      sso_transport.send(provider_request(host))
+    })
+  let assert Ok(res) = answer
+  assert res.status == 200
+  assert res.body == "{\"keys\":[]}"
+  assert sni == host
+  let head = string.lowercase(head)
+  assert string.starts_with(head, "get /keys http/1.1\r\n")
+  assert string.contains(head, "\r\nhost: " <> host <> "\r\n")
+  assert !string.contains(head, "127.0.0.1")
 }
 
 pub fn browser_routes_test() {

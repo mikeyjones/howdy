@@ -141,20 +141,42 @@ fn wrap_session(build: fn() -> App, session: reload.Session) -> App {
   |> howdy.controller(reload.controller(session))
 }
 
+// The watcher is linked to the process that called `start`, so a fault in it
+// is not silent, but one bad poll (a file vanishing mid snapshot, a build
+// tool that is missing) should not end the session either: each turn is
+// rescued and the loop carries on from the last good snapshot.
 fn loop(dev: Dev, session: reload.Session, before: watch.Snapshot) -> Nil {
   process.sleep(dev.interval)
+  let next = case attempt(fn() { poll(dev, session, before) }) {
+    Ok(snapshot) -> snapshot
+    Error(reason) -> {
+      io.println("howdy_dev: watcher error, still watching: " <> reason)
+      before
+    }
+  }
+  loop(dev, session, next)
+}
+
+fn poll(
+  dev: Dev,
+  session: reload.Session,
+  before: watch.Snapshot,
+) -> watch.Snapshot {
   let after = watch.snapshot(dev.watch)
   case watch.changed(before, after) {
-    [] -> loop(dev, session, before)
+    [] -> before
     changed -> {
       // Let an editor finish writing before building.
       process.sleep(50)
       let after = watch.snapshot(dev.watch)
       rebuild(session, changed)
-      loop(dev, session, after)
+      after
     }
   }
 }
+
+@external(erlang, "howdy_dev_ffi", "attempt")
+fn attempt(run: fn() -> a) -> Result(a, String)
 
 @external(erlang, "howdy_dev_ffi", "build")
 fn build_project() -> #(Int, String)

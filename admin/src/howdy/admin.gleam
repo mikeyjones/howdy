@@ -54,10 +54,14 @@
 //// on loopback. The pages also refuse a request whose `Host` is not
 //// `localhost`, `127.0.0.1` or `[::1]` unless `allow_hosts` says otherwise,
 //// so a browser on another machine, or a DNS-rebinding page, gets `403`.
-//// Forms carry no CSRF token: a page you visit while the admin runs could
-//// post to it, which is one more reason to only run it against data you
-//// can afford to lose.
+//// Writes must also come from the admin's own origin: a `POST` whose
+//// `Sec-Fetch-Site` or `Origin` header says another site sent it gets
+//// `403` too, so a page you visit while the admin runs cannot post to it.
 
+import gleam/http
+import gleam/http/request
+import gleam/http/response
+import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
@@ -75,6 +79,7 @@ import howdy/admin/internal/roles
 import howdy/admin/internal/telemetry as telemetry_pages
 import howdy/auth.{type Auth}
 import howdy/authorization.{type Authorization}
+import howdy/content
 import howdy/controller.{type Controller}
 import howdy/flags.{type Flags}
 import howdy/mail.{type Mailer}
@@ -83,6 +88,7 @@ import howdy/mail/preview.{type Preview}
 import howdy/openapi
 import howdy/service
 import howdy/telemetry/recorder.{type Recorder}
+import pog
 
 /// An admin area under construction.
 pub opaque type Admin {
@@ -91,26 +97,35 @@ pub opaque type Admin {
 
 /// An admin at `/_howdy` that knows about nothing yet.
 pub fn new() -> Admin {
-  Admin(
-    Config(
-      prefix: "/_howdy",
-      name: "Howdy admin",
-      database: None,
-      identity: None,
-      authorization: None,
-      outbox: None,
-      previews: [],
-      mailer: None,
-      recorder: None,
-      flags: None,
-      api: None,
-      hosts: [
-        "localhost",
-        "127.0.0.1",
-        "[::1]",
-      ],
-    ),
-  )
+  Admin(Config(
+    prefix: "/_howdy",
+    name: "Howdy admin",
+    database: None,
+    identity: None,
+    authorization: None,
+    outbox: None,
+    previews: [],
+    mailer: None,
+    recorder: None,
+    flags: None,
+    api: None,
+    hosts: [
+      "localhost",
+      "127.0.0.1",
+      "[::1]",
+    ],
+    listen: None,
+  ))
+}
+
+/// How the grid's listening connection reaches PostgreSQL, so it hears
+/// about changes through `NOTIFY` rather than polling. Give the same
+/// settings the app's pool uses, such as `pog.url_config(name, url)`; the
+/// pool name in them is not used. Without this the admin looks for the
+/// settings inside the running pool, which depends on pgo's internals and
+/// falls back to polling when it cannot find them. Does nothing on SQLite.
+pub fn notify_via(admin: Admin, config: pog.Config) -> Admin {
+  Admin(Config(..admin.config, listen: Some(config)))
 }
 
 /// Mount the pages somewhere other than `/_howdy`.
@@ -271,13 +286,88 @@ pub fn controllers(admin: Admin) -> List(Controller) {
 
 /// Refuse requests from hosts other than the allowed ones. `request.host`
 /// carries no port, so entries are compared whole.
+///
+/// Writes (`POST`, `PUT`, `PATCH`, `DELETE`) must also come from the admin's
+/// own origin, or a page on another site could make the browser send one.
+/// A `Sec-Fetch-Site` of `same-origin` or `none` (typed into the address
+/// bar) passes. Without that header, an `Origin` passes when its host is
+/// an allowed one and it names the same host and port the request was
+/// sent to. Anything else gets `403`. This mirrors `howdy/csrf`, which
+/// cannot be reused here because it takes whole origins with a scheme and
+/// the admin only knows host names. `GET`, `HEAD` and `OPTIONS`, including
+/// the grid's WebSocket upgrade, are not checked.
 fn only_hosts(config: Config) -> controller.Middleware {
   fn(ctx: controller.Context, next) {
     case list.contains(config.hosts, ctx.request.host) {
-      True -> next(ctx)
       False -> service.error_response(ctx, service.Forbidden)
+      True ->
+        case ctx.request.method {
+          http.Get | http.Head | http.Options -> next(ctx)
+          _ ->
+            case same_origin(ctx, config.hosts) {
+              True -> next(ctx)
+              False ->
+                response.new(403)
+                |> response.set_body(content.Text(
+                  "Forbidden: the admin only accepts writes from its own origin. This request's Sec-Fetch-Site or Origin header says another site sent it.",
+                ))
+            }
+        }
     }
   }
+}
+
+/// Whether a write came from the admin's own origin, by the browser's
+/// fetch metadata first and the `Origin` header otherwise. Fails closed when
+/// neither is present, or either is sent more than once.
+fn same_origin(ctx: controller.Context, hosts: List(String)) -> Bool {
+  case headers(ctx, "sec-fetch-site"), headers(ctx, "origin") {
+    ["same-origin"], _ | ["none"], _ -> True
+    [], [origin] ->
+      case string.split_once(origin, "://") {
+        Ok(#(_scheme, authority)) ->
+          authority == request_authority(ctx)
+          && list.contains(hosts, authority_host(authority))
+        Error(Nil) -> False
+      }
+    _, _ -> False
+  }
+}
+
+/// The host and port this request was sent to, as an `Origin` would name
+/// them: the `Host` header when there is one, else the parsed request.
+fn request_authority(ctx: controller.Context) -> String {
+  case request.get_header(ctx.request, "host") {
+    Ok(host) -> string.lowercase(host)
+    Error(Nil) ->
+      case ctx.request.port {
+        Some(port) -> ctx.request.host <> ":" <> int.to_string(port)
+        None -> ctx.request.host
+      }
+  }
+}
+
+/// `localhost:8787` becomes `localhost`; `[::1]:8787` becomes `[::1]`.
+fn authority_host(authority: String) -> String {
+  case string.ends_with(authority, "]") {
+    True -> authority
+    False ->
+      case list.reverse(string.split(authority, ":")) {
+        [_port, first, ..rest] ->
+          string.join(list.reverse([first, ..rest]), ":")
+        _ -> authority
+      }
+  }
+}
+
+/// Every value sent for a header, lowercased.
+fn headers(ctx: controller.Context, name: String) -> List(String) {
+  list.filter_map(ctx.request.headers, fn(header) {
+    case string.lowercase(header.0) == name {
+      True -> Ok(string.lowercase(header.1))
+      False -> Error(Nil)
+    }
+  })
 }
 
 /// Drop the `howdy_admin_notify` function and triggers the grid installs on

@@ -4,11 +4,13 @@ import gleam/int
 import gleam/json
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/static_supervisor
 import gleam/result
 import gleam/string
 import gleeunit
 import gloo/adapter/sqlite
 import gloo/repo.{type Repo}
+import gloo/sql as gloo_sql
 import howdy/database
 import howdy/database/postgres
 import howdy/flags.{
@@ -458,6 +460,98 @@ pub fn other_nodes_pick_up_changes_test() {
   flags.stop(features)
 }
 
+pub fn stopped_flags_answer_with_defaults_test() {
+  let assert Ok(features) = start(memory.new())
+  let assert Ok(Nil) = flags.kill(features, "search_v2", by: "ops")
+  assert !flags.enabled(features, search(), for: flags.anonymous())
+  flags.stop(features)
+  assert flags.enabled(features, search(), for: flags.anonymous())
+  assert flags.explain(features, checkout(), for: flags.user("1"))
+    == Default(False)
+}
+
+pub fn supervised_keeper_starts_and_stops_with_its_supervisor_test() {
+  let #(features, keeper) =
+    flags.new(memory.new())
+    |> flags.register([checkout(), search()])
+    |> flags.supervised
+  // Nothing is published until the keeper starts.
+  assert flags.enabled(features, search(), for: flags.anonymous())
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(keeper)
+    |> static_supervisor.start
+  let assert Ok(pid) = flags.keeper(features)
+  let assert Ok(Nil) = flags.kill(features, "search_v2", by: "ops")
+  assert !flags.enabled(features, search(), for: flags.anonymous())
+  // Shutting the supervisor down takes the keeper, and its settings, with it.
+  process.unlink(supervisor.pid)
+  process.send_exit(supervisor.pid)
+  process.sleep(100)
+  assert !process.is_alive(pid)
+  assert flags.keeper(features) == Error(Nil)
+  assert flags.enabled(features, search(), for: flags.anonymous())
+}
+
+pub fn supervised_keeper_is_restarted_and_reloads_test() {
+  let store = memory.new()
+  let #(features, keeper) =
+    flags.new(store)
+    |> flags.register([checkout(), search()])
+    |> flags.check_every(milliseconds: 60_000)
+    |> flags.supervised
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(keeper)
+    |> static_supervisor.start
+  let assert Ok(first) = flags.keeper(features)
+  assert !flags.enabled(features, checkout(), for: flags.user("1"))
+  // A change made elsewhere, that this keeper has not looked for yet.
+  let assert Ok(other) = start(store)
+  let assert Ok(Nil) =
+    flags.set_rollout(other, "new_checkout", 10_000, by: "ops")
+  assert !flags.enabled(features, checkout(), for: flags.user("1"))
+  process.kill(first)
+  process.sleep(100)
+  // The same handle answers, from settings the new keeper loaded afresh.
+  let assert Ok(second) = flags.keeper(features)
+  assert second != first
+  assert flags.enabled(features, checkout(), for: flags.user("1"))
+  let assert Ok(Nil) = flags.kill(features, "new_checkout", by: "ops")
+  assert flags.explain(features, checkout(), for: flags.user("1")) == Killed
+  flags.stop(other)
+  process.unlink(supervisor.pid)
+  process.send_exit(supervisor.pid)
+}
+
+pub fn a_store_that_crashes_does_not_take_the_keeper_test() {
+  let store =
+    flags.store(
+      named: "flaky",
+      load: fn() {
+        Ok(
+          flags.Snapshot(
+            version: 1,
+            settings: [#("new_checkout", setting(10_000))],
+            groups: [],
+          ),
+        )
+      },
+      version: fn() { panic as "the store is away" },
+      history: fn(_, _) { Ok([]) },
+    )
+  let assert Ok(features) =
+    flags.new(store)
+    |> flags.register([checkout()])
+    |> flags.check_every(milliseconds: 100)
+    |> flags.start
+  let assert Ok(pid) = flags.keeper(features)
+  process.sleep(250)
+  assert process.is_alive(pid)
+  assert flags.enabled(features, checkout(), for: flags.user("1"))
+  flags.stop(features)
+}
+
 pub fn duplicate_keys_and_missing_schema_are_refused_test() {
   let db = open()
   let assert Error(service.Internal(_)) = flags_database.store(db)
@@ -521,6 +615,118 @@ pub fn snapshots_round_trip_as_json_test() {
     for: flags.user("9") |> flags.in_organization("acme"),
   )
   flags.stop(copy)
+}
+
+pub fn a_stopped_memory_store_answers_with_errors_test() {
+  let store = memory.new()
+  let assert Ok(features) = start(store)
+  let assert Ok(Nil) =
+    flags.set_rollout(features, "new_checkout", to: 500, by: "mike")
+  memory.stop(store)
+  // Nothing crashes: the keeper is still up, and every call to the store
+  // is an error, so is a refresh and a change.
+  let assert Ok(pid) = flags.keeper(features)
+  let assert Error(service.Internal(reason)) = flags.refresh(features)
+  assert string.contains(reason, "stopped")
+  let assert Error(service.Internal(_)) =
+    flags.set_rollout(features, "new_checkout", to: 600, by: "mike")
+  assert process.is_alive(pid)
+  // Checks carry on from the settings loaded before.
+  assert share(features, checkout(), 1000) > 0
+  assert share(features, checkout(), 1000) < 100
+  // Stopping again is fine, and new flags cannot start on it.
+  memory.stop(store)
+  let assert Error(service.Internal(_)) = start(store)
+  flags.stop(features)
+}
+
+pub fn calling_stopped_flags_does_not_crash_test() {
+  let assert Ok(features) = start(memory.new())
+  flags.stop(features)
+  let assert Error(service.Internal(reason)) = flags.refresh(features)
+  assert string.contains(reason, "not running")
+  let assert Error(service.Internal(_)) =
+    flags.set_rollout(features, "new_checkout", to: 500, by: "mike")
+  flags.stop(features)
+}
+
+pub fn refresh_gives_up_on_a_slow_store_test() {
+  let store =
+    flags.store(
+      named: "slow",
+      load: fn() {
+        process.sleep(300)
+        Ok(flags.Snapshot(version: 1, settings: [], groups: []))
+      },
+      version: fn() { Ok(1) },
+      history: fn(_, _) { Ok([]) },
+    )
+  let assert Ok(features) =
+    flags.new(store)
+    |> flags.register([checkout()])
+    |> flags.start
+  let assert Error(service.Internal(reason)) =
+    flags.refresh_within(features, 50)
+  assert string.contains(reason, "did not answer within 50ms")
+  // The keeper finishes the reload on its own and is still there.
+  let assert Ok(pid) = flags.keeper(features)
+  process.sleep(400)
+  assert process.is_alive(pid)
+  assert flags.enabled(features, search(), for: flags.user("1"))
+  flags.stop(features)
+}
+
+pub fn a_change_whose_stored_setting_is_unreadable_cannot_be_undone_test() {
+  let db = open()
+  let assert Ok(Nil) = migration.run(db, [flags_database.schema()])
+  let assert Ok(store) = flags_database.store(db)
+  let assert Ok(features) = start(store)
+  let assert Ok(Nil) =
+    flags.set_rollout(features, "new_checkout", to: 500, by: "mike")
+  let assert Ok(Nil) =
+    flags.set_rollout(features, "new_checkout", to: 5000, by: "mike")
+  let assert Ok([latest, ..]) =
+    flags.history(features, of: Some("new_checkout"), limit: 10)
+  let assert Ok(Nil) =
+    database.execute(
+      db,
+      "UPDATE howdy_flags_changes SET before = 'not json' WHERE id = $1",
+      [gloo_sql.int(latest.id)],
+    )
+
+  // Undo refuses rather than treating the unreadable setting as nothing
+  // stored, which would have deleted the flag's setting.
+  let assert Error(service.Internal(reason)) =
+    flags.undo(features, change: latest.id, by: "ops")
+  assert string.contains(reason, "before change " <> int.to_string(latest.id))
+  assert string.contains(reason, "cannot be read")
+  let assert Ok(Some(setting)) = flags.setting(features, "new_checkout")
+  assert setting.rollout == 5000
+  // The history says so too, rather than showing the change as a first one.
+  let assert Error(service.Internal(_)) =
+    flags.history(features, of: Some("new_checkout"), limit: 10)
+
+  // A rule with a target that cannot be read stops the settings loading,
+  // rather than dropping the rule and letting the flag reach more people.
+  let assert Ok(Nil) =
+    database.execute(
+      db,
+      "INSERT INTO howdy_flags_rules (flag, target, effect) VALUES ('new_checkout', 'nonsense', 'block')",
+      [],
+    )
+  let assert Error(service.Internal(reason)) = flags.refresh(features)
+  assert string.contains(reason, "nonsense")
+  flags.stop(features)
+  let assert Ok(_) = repo.close(db)
+}
+
+pub fn unreadable_targets_fail_the_json_decoders_test() {
+  let text =
+    "{\"version\": 1, \"settings\": {}, \"groups\": [{\"name\": \"beta\", \"description\": \"\", \"members\": [\"bogus\"]}]}"
+  let assert Error(_) = json.parse(text, flags.snapshot_decoder())
+  let text =
+    "{\"killed\": false, \"rollout\": 0, \"bucketing\": \"user\", \"allowed\": [\"user:\"], \"blocked\": [], \"ramp\": null}"
+  let assert Error(_) = json.parse(text, flags.setting_decoder())
 }
 
 pub fn percentages_parse_to_hundredths_test() {

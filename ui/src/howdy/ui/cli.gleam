@@ -19,7 +19,6 @@
 //// takes entries from another registry published with `registry`.
 
 import gleam/bool
-import gleam/dict.{type Dict}
 import gleam/dynamic/decode
 import gleam/int
 import gleam/io
@@ -897,11 +896,6 @@ fn strip_slash(dir: String) -> String {
   }
 }
 
-/// `0, 1, ..., n - 1` counting down, for filling the table from the end.
-fn descending(n: Int) -> List(Int) {
-  list.index_map(list.repeat(Nil, n), fn(_, i) { n - 1 - i })
-}
-
 fn app_name() -> Result(String, String) {
   use toml <- result.try(
     simplifile.read("gleam.toml")
@@ -969,83 +963,74 @@ fn render_edit(edit: Edit) -> String {
   }
 }
 
-/// A shortest edit script by longest common subsequence. Files are small,
-/// so the full table is fine.
+/// A shortest edit script by longest common subsequence, in linear space
+/// (Hirschberg): split the old lines in half, find where the new lines
+/// split to match from LCS lengths computed forwards and backwards, and
+/// recurse on each half.
 fn edits(old: List(String), new: List(String)) -> List(Edit) {
-  let n = list.length(old)
-  let m = list.length(new)
-  let old_at = index(old)
-  let new_at = index(new)
-  // lengths[#(i, j)] is the LCS length of old[i..] and new[j..].
-  let lengths =
-    list.fold(descending(n), dict.new(), fn(table, i) {
-      list.fold(descending(m), table, fn(table, j) {
-        let value = case at(old_at, i) == at(new_at, j) {
-          True -> 1 + get(table, i + 1, j + 1)
-          False -> int.max(get(table, i + 1, j), get(table, i, j + 1))
-        }
-        dict.insert(table, #(i, j), value)
-      })
-    })
-  backtrack(lengths, old_at, new_at, n, m, 0, 0, [])
-}
-
-fn backtrack(
-  lengths: Dict(#(Int, Int), Int),
-  old_at: Dict(Int, String),
-  new_at: Dict(Int, String),
-  n: Int,
-  m: Int,
-  i: Int,
-  j: Int,
-  acc: List(Edit),
-) -> List(Edit) {
-  case i < n, j < m {
-    False, False -> list.reverse(acc)
-    True, False ->
-      backtrack(lengths, old_at, new_at, n, m, i + 1, j, [
-        Remove(at(old_at, i)),
-        ..acc
-      ])
-    False, True ->
-      backtrack(lengths, old_at, new_at, n, m, i, j + 1, [
-        Insert(at(new_at, j)),
-        ..acc
-      ])
-    True, True ->
-      case at(old_at, i) == at(new_at, j) {
-        True ->
-          backtrack(lengths, old_at, new_at, n, m, i + 1, j + 1, [
-            Keep(at(old_at, i)),
-            ..acc
+  case old, new {
+    [], _ -> list.map(new, Insert)
+    _, [] -> list.map(old, Remove)
+    [line], _ ->
+      case list.split_while(new, fn(other) { other != line }) {
+        #(before, [_, ..after]) ->
+          list.flatten([
+            list.map(before, Insert),
+            [Keep(line)],
+            list.map(after, Insert),
           ])
-        False ->
-          case get(lengths, i + 1, j) >= get(lengths, i, j + 1) {
-            True ->
-              backtrack(lengths, old_at, new_at, n, m, i + 1, j, [
-                Remove(at(old_at, i)),
-                ..acc
-              ])
-            False ->
-              backtrack(lengths, old_at, new_at, n, m, i, j + 1, [
-                Insert(at(new_at, j)),
-                ..acc
-              ])
-          }
+        #(_, []) -> [Remove(line), ..list.map(new, Insert)]
       }
+    _, _ -> {
+      let #(old_head, old_tail) = list.split(old, list.length(old) / 2)
+      let forward = lcs_lengths(old_head, new)
+      let backward =
+        lcs_lengths(list.reverse(old_tail), list.reverse(new)) |> list.reverse
+      let #(new_head, new_tail) = list.split(new, best_split(forward, backward))
+      list.append(edits(old_head, new_head), edits(old_tail, new_tail))
+    }
   }
 }
 
-fn index(lines: List(String)) -> Dict(Int, String) {
-  lines
-  |> list.index_map(fn(line, i) { #(i, line) })
-  |> dict.from_list
+/// The LCS length of `xs` and each prefix of `ys`: `m + 1` numbers, from
+/// the empty prefix to all of `ys`.
+fn lcs_lengths(xs: List(String), ys: List(String)) -> List(Int) {
+  let empty = list.map([[], ..list.map(ys, fn(_) { [] })], fn(_) { 0 })
+  use previous, x <- list.fold(xs, empty)
+  let assert [diagonal, ..above] = previous
+  next_row(x, ys, diagonal, above, 0, [0])
 }
 
-fn at(lines: Dict(Int, String), i: Int) -> String {
-  dict.get(lines, i) |> result.unwrap("")
+fn next_row(
+  x: String,
+  ys: List(String),
+  diagonal: Int,
+  above: List(Int),
+  left: Int,
+  acc: List(Int),
+) -> List(Int) {
+  case ys, above {
+    [y, ..ys], [up, ..above] -> {
+      let value = case x == y {
+        True -> diagonal + 1
+        False -> int.max(up, left)
+      }
+      next_row(x, ys, up, above, value, [value, ..acc])
+    }
+    _, _ -> list.reverse(acc)
+  }
 }
 
-fn get(table: Dict(#(Int, Int), Int), i: Int, j: Int) -> Int {
-  dict.get(table, #(i, j)) |> result.unwrap(0)
+/// The index into the new lines where the two halves meet: the first
+/// point with the greatest combined LCS length.
+fn best_split(forward: List(Int), backward: List(Int)) -> Int {
+  list.zip(forward, backward)
+  |> list.index_map(fn(pair, i) { #(pair.0 + pair.1, i) })
+  |> list.fold(#(-1, 0), fn(best, candidate) {
+    case candidate.0 > best.0 {
+      True -> candidate
+      False -> best
+    }
+  })
+  |> fn(best) { best.1 }
 }

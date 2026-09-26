@@ -203,7 +203,7 @@ pub fn conversations_are_logs_laid_out_from_the_bottom_test() {
 pub fn avatars_fall_back_to_initials_test() {
   let html = render(ui.avatar(src: "/a.png", alt: "Ada", initials: "AL"))
   assert string.contains(html, ">AL</span>")
-  assert string.contains(html, "onerror=\"this.remove()\"")
+  assert string.contains(html, "data-howdy-on-error=\"remove\"")
   assert string.contains(html, "alt=\"Ada\"")
 }
 

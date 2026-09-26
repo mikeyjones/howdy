@@ -121,12 +121,9 @@ pub fn drawer_class() -> Class {
     css.padding(rem(0.0)),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
+    style.bordered(),
     css.property("border-bottom", "0"),
-    css.property(
-      "border-radius",
-      tokens.radius_large <> " " <> tokens.radius_large <> " 0 0",
-    ),
+    style.radius(tokens.radius_large <> " " <> tokens.radius_large <> " 0 0"),
     css.box_shadow("0 -12px 40px -12px rgb(0 0 0 / 0.35)"),
     css.overflow("hidden"),
     css.property("overscroll-behavior", "contain"),
@@ -143,7 +140,7 @@ pub fn handle_class() -> Class {
     css.property("width", "3rem"),
     css.property("height", "0.375rem"),
     css.margin_(tokens.space_3 <> " 0 " <> tokens.space_1),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.border),
     css.cursor("grab"),
     css.property("touch-action", "none"),
@@ -154,10 +151,7 @@ pub fn handle_class() -> Class {
       css.position("absolute"),
       css.inset("-0.75rem -2rem"),
     ]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "4px"),
-    ]),
+    style.focus_ring_offset("4px"),
   ])
 }
 

@@ -30,7 +30,7 @@ pub fn trigger(id: String) -> List(Attribute(msg)) {
     attribute.attribute("popovertarget", id),
     attribute.aria_haspopup("menu"),
     attribute.data("howdy-menu-trigger", ""),
-    attribute.style("anchor-name", anchor_name(id)),
+    attribute.data("howdy-anchor", anchor_name(id)),
   ]
 }
 
@@ -45,7 +45,7 @@ pub fn menu(
       attribute.id(id),
       attribute.popover("auto"),
       attribute.role("menu"),
-      attribute.style("position-anchor", anchor_name(id)),
+      attribute.data("howdy-anchored", anchor_name(id)),
       ..attributes
     ],
     children,
@@ -161,7 +161,7 @@ pub fn submenu(
         attribute.tabindex(-1),
         attribute.attribute("popovertarget", id),
         attribute.data("howdy-submenu-trigger", ""),
-        attribute.style("anchor-name", anchor_name(id)),
+        attribute.data("howdy-anchor", anchor_name(id)),
       ],
       label,
     ),
@@ -172,7 +172,7 @@ pub fn submenu(
         attribute.id(id),
         attribute.popover("auto"),
         attribute.role("menu"),
-        attribute.style("position-anchor", anchor_name(id)),
+        attribute.data("howdy-anchored", anchor_name(id)),
       ],
       items,
     ),
@@ -211,8 +211,8 @@ pub fn menu_class() -> Class {
     css.padding(rem(0.25)),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
   ])
 }
@@ -225,7 +225,7 @@ pub fn item_class() -> Class {
     css.width(length.percent(100)),
     css.padding_("0.375rem " <> tokens.space_2),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_family(tokens.font_body),
@@ -259,7 +259,7 @@ pub fn item_class() -> Class {
       css.property("top", "50%"),
       css.property("width", "0.4rem"),
       css.property("height", "0.4rem"),
-      css.property("border-radius", "999px"),
+      style.pill(),
       css.background("currentColor"),
       css.transform_("translateY(-50%)"),
     ]),

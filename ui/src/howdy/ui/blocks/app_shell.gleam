@@ -113,7 +113,7 @@ pub fn bar_class() -> Class {
     css.justify_content("space-between"),
     css.gap(rem(1.0)),
     css.padding_(tokens.space_3 <> " " <> tokens.space_6),
-    css.property("border-bottom", "1px solid " <> tokens.border),
+    style.bordered_side("bottom"),
   ])
 }
 

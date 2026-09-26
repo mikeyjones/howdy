@@ -432,12 +432,5 @@ fn failure(
   heading: String,
   error: service.Error,
 ) -> Response(Content) {
-  layout.failure(
-    config,
-    ctx,
-    current: "/roles",
-    heading:,
-    error:,
-    back: config.path(config, "/roles"),
-  )
+  layout.failed(config, ctx, current: "/roles", heading:, error:)
 }

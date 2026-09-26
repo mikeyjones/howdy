@@ -87,7 +87,7 @@ pub fn toggle_class() -> Class {
     css.property("height", "2.25rem"),
     css.padding_("0 " <> tokens.space_2),
     css.border("1px solid transparent"),
-    css.property("border-radius", tokens.radius_medium),
+    style.radius(tokens.radius_medium),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_family(tokens.font_body),
@@ -99,11 +99,8 @@ pub fn toggle_class() -> Class {
       css.background(tokens.muted),
       css.property("border-color", tokens.border),
     ]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
-    css.disabled([css.property("opacity", "0.5"), css.cursor("default")]),
+    style.focus_ring(),
+    style.disabled_look_with(cursor: "default"),
   ])
 }
 
@@ -115,7 +112,7 @@ pub fn group_class() -> Class {
     ]),
     css.gap(rem(0.125)),
     css.padding(rem(0.125)),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
   ])
 }

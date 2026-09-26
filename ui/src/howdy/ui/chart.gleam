@@ -199,6 +199,11 @@ fn scale(values: List(Float)) -> Scale {
     False -> high
   }
   let step = nice_step({ high -. low } /. 5.0)
+  // A very large `low` absorbs the `+. 1.0` above, leaving no range.
+  let high = case high == low {
+    True -> low +. step
+    False -> high
+  }
   let low = float.floor(low /. step) *. step
   let high = float.ceiling(high /. step) *. step
   let count = float.round({ high -. low } /. step)
@@ -208,18 +213,26 @@ fn scale(values: List(Float)) -> Scale {
   Scale(low:, high:, ticks:)
 }
 
-/// 1, 2 or 5 times a power of ten.
+/// 1, 2 or 5 times a power of ten. A range that is zero, negative or
+/// otherwise has no logarithm gets a step of 1.
 fn nice_step(raw: Float) -> Float {
-  let assert Ok(ln) = float.logarithm(raw)
   let assert Ok(ln10) = float.logarithm(10.0)
-  let assert Ok(magnitude) = float.power(10.0, float.floor(ln /. ln10))
-  let factor = case raw /. magnitude {
-    n if n <=. 1.0 -> 1.0
-    n if n <=. 2.0 -> 2.0
-    n if n <=. 5.0 -> 5.0
-    _ -> 10.0
+  let magnitude = case float.logarithm(raw) {
+    Ok(ln) -> float.power(10.0, float.floor(ln /. ln10))
+    Error(Nil) -> Error(Nil)
   }
-  factor *. magnitude
+  case magnitude {
+    Ok(magnitude) if magnitude >. 0.0 -> {
+      let factor = case raw /. magnitude {
+        n if n <=. 1.0 -> 1.0
+        n if n <=. 2.0 -> 2.0
+        n if n <=. 5.0 -> 5.0
+        _ -> 10.0
+      }
+      factor *. magnitude
+    }
+    _ -> 1.0
+  }
 }
 
 /// Pixels from the top of the plot.

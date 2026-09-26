@@ -175,7 +175,7 @@ pub fn link_class() -> Class {
     css.property("min-width", "2.25rem"),
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
     css.border("1px solid transparent"),
-    css.property("border-radius", tokens.radius_medium),
+    style.radius(tokens.radius_medium),
     css.color(tokens.text),
     css.font_size(rem(0.875)),
     css.font_weight("500"),
@@ -184,10 +184,7 @@ pub fn link_class() -> Class {
     css.white_space("nowrap"),
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "2px"),
-    ]),
+    style.focus_ring(),
     css.selector("[aria-current=\"page\"]", [
       css.property("border-color", tokens.border),
       css.background(tokens.surface),

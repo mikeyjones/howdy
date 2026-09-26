@@ -5,7 +5,8 @@
 -export([channel_join/2, channel_leave/2, channel_members/1, channel_broadcast/3, tuple_second/1]).
 -export([parse_query/1]).
 -export([console_put/2, console_get/1]).
--export([quiet_disconnects/0]).
+-export([rescue/1, warn_at_most_every/2]).
+-export([quiet_disconnects/0, log_disconnects/0, stop_server/1]).
 
 %% -- Query strings ---------------------------------------------------------------
 %%
@@ -92,38 +93,44 @@ token_bucket_new(CapacityMilli, RatePerSecond) ->
     new_limiter(min(60000, IdleMs), {token_bucket, CapacityMilli, RatePerSecond}).
 
 new_limiter(Interval, Policy) ->
-    Table = ets:new(howdy_rate_limit, [set, public, {write_concurrency, true}]),
+    %% The janitor owns the table and is not linked to the caller, so a fault
+    %% while sweeping can never take the process that built the limiter down.
+    %% It monitors that process and deletes the table when it exits, so the
+    %% limiter still lives exactly as long as its creator, as documented.
     Owner = self(),
-    spawn_link(fun() ->
+    Ready = make_ref(),
+    Janitor = spawn(fun() ->
+        Table = ets:new(howdy_rate_limit, [set, public, {write_concurrency, true}]),
         Ref = monitor(process, Owner),
+        Owner ! {Ready, Table},
         cleanup_loop(Table, Ref, Interval, Policy)
     end),
-    {Table, Interval}.
+    receive
+        {Ready, Table} -> {Table, Interval}
+    after 5000 ->
+        exit(Janitor, kill),
+        error({howdy_rate_limit, janitor_did_not_start})
+    end.
 
 cleanup_loop(Table, Ref, Interval, Policy) ->
     receive
-        {'DOWN', Ref, process, _, _} -> ok
+        {'DOWN', Ref, process, _, _} ->
+            ets:delete(Table),
+            ok
     after Interval ->
-        %% The owner's table can disappear before its DOWN arrives.
-        Status = try
+        try
             Now = now_ms(),
             case Policy of
                 {fixed_window, WindowMs} ->
                     fixed_window_cleanup(Table, floor_div(Now, WindowMs));
                 {token_bucket, CapacityMilli, RatePerSecond} ->
                     token_bucket_cleanup(Table, CapacityMilli, RatePerSecond, Now)
-            end,
-            alive
-        catch error:badarg ->
-            case ets:info(Table) of
-                undefined -> gone;
-                _ -> error(badarg)
             end
+        catch Class:Reason:Stack ->
+            logger:warning(#{msg => "howdy rate limiter sweep failed; keeping the limiter",
+                             class => Class, reason => Reason, stacktrace => Stack})
         end,
-        case Status of
-            alive -> cleanup_loop(Table, Ref, Interval, Policy);
-            gone -> ok
-        end
+        cleanup_loop(Table, Ref, Interval, Policy)
     end.
 
 floor_div(A, B) ->
@@ -293,18 +300,10 @@ token_bucket_update(Table, Key, CapacityMilli, RatePerSecond, Max, Clock) ->
 
 -define(CHANNEL_SCOPE, howdy_websocket_channels).
 
-%% Start the scope on first use. It is not linked to the caller, so it
-%% outlives the socket that happened to start it.
+%% The scope is a child of the howdy application's supervisor (see
+%% howdy_app), started at boot or on first use, and restarted if it dies.
 channel_scope() ->
-    case whereis(?CHANNEL_SCOPE) of
-        undefined ->
-            case pg:start(?CHANNEL_SCOPE) of
-                {ok, _} -> ok;
-                {error, {already_started, _}} -> ok
-            end;
-        _ ->
-            ok
-    end,
+    howdy_app:ensure_started(),
     ?CHANNEL_SCOPE.
 
 channel_join(Topic, Pid) ->
@@ -362,6 +361,25 @@ quiet_disconnects() ->
         {error, {already_exist, _}} -> nil
     end.
 
+log_disconnects() ->
+    _ = logger:remove_primary_filter(?DISCONNECT_FILTER),
+    nil.
+
+%% -- Stopping ------------------------------------------------------------------
+%%
+%% The server is a supervisor that traps exits, so a `shutdown` exit makes it
+%% stop its children in order: the listener first, then each connection with
+%% the shutdown timeout to finish. Waiting for its DOWN means the caller sees
+%% the port free once this returns.
+
+stop_server(Pid) ->
+    unlink(Pid),
+    Ref = monitor(process, Pid),
+    exit(Pid, shutdown),
+    receive
+        {'DOWN', Ref, process, Pid, _} -> nil
+    end.
+
 drop_disconnect(#{msg := {report, #{label := {supervisor, child_terminated},
                                     report := Report}}} = Event, _) ->
     Reason = proplists:get_value(reason, Report),
@@ -373,8 +391,8 @@ drop_disconnect(#{msg := {report, #{label := {supervisor, child_terminated},
 drop_disconnect(#{msg := {report, #{label := {proc_lib, crash},
                                     report := [Crash | _]}}} = Event, _) ->
     case proplists:get_value(error_info, Crash) of
-        {exit, Reason, _Stack} ->
-            case disconnect_reason(Reason) of
+        {exit, Reason, Stack} ->
+            case disconnect_reason(Reason) andalso tup_exit(Stack) of
                 true -> stop;
                 false -> Event
             end;
@@ -382,6 +400,11 @@ drop_disconnect(#{msg := {report, #{label := {proc_lib, crash},
     end;
 drop_disconnect(Event, _) ->
     Event.
+
+%% The exit must have been raised by tup itself, so a handler that happens to
+%% exit with the same words is still reported.
+tup_exit([{tup_ffi, exit_with, _, _} | _]) -> true;
+tup_exit(_) -> false.
 
 pooled_connection(Offender) ->
     case {proplists:get_value(mfargs, Offender),
@@ -400,3 +423,32 @@ disconnect_reason(<<"the socket is not connected">>) -> true;
 disconnect_reason(<<"the write end is closed">>) -> true;
 disconnect_reason(<<"the connection timed out">>) -> true;
 disconnect_reason(_) -> false.
+
+%% -- Rescue --------------------------------------------------------------------
+%%
+%% Run a handler and turn a crash into `{error, Description}` after logging
+%% it with its stack trace, so the request can still be answered.
+
+rescue(Fun) ->
+    try
+        {ok, Fun()}
+    catch
+        Class:Reason:Stack ->
+            logger:error(#{msg => "howdy: handler crashed",
+                           class => Class, reason => Reason, stacktrace => Stack}),
+            {error, unicode:characters_to_binary(io_lib:format("~p:~0tP", [Class, Reason, 8]))}
+    end.
+
+%% -- Throttled warnings ----------------------------------------------------------
+%%
+%% True at most once per `IntervalMs` for a `Key`, so a store outage logs once
+%% per window rather than once per request. The last time is a persistent_term
+%% written only when the interval has passed, which is rare.
+
+warn_at_most_every(Key, IntervalMs) ->
+    Now = erlang:monotonic_time(millisecond),
+    Term = {howdy_warned, Key},
+    case persistent_term:get(Term, undefined) of
+        Last when is_integer(Last), Now - Last < IntervalMs -> false;
+        _ -> persistent_term:put(Term, Now), true
+    end.

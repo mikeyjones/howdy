@@ -46,7 +46,7 @@ pub fn ratio_class() -> Class {
     css.position("relative"),
     css.width(percent(100)),
     css.overflow("hidden"),
-    css.property("border-radius", tokens.radius_medium),
+    style.radius(tokens.radius_medium),
     css.background(tokens.muted),
     css.selector(" > img", fill()),
     css.selector(" > video", fill()),

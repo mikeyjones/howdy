@@ -217,8 +217,8 @@ pub fn attachment_class(layout: Layout) -> Class {
       css.display("flex"),
       css.align_items("center"),
       css.background(tokens.surface),
-      css.border("1px solid " <> tokens.border),
-      css.property("border-radius", tokens.radius_medium),
+      style.bordered(),
+      style.radius(tokens.radius_medium),
       css.selector("[data-failed]", [
         css.property("border-color", tokens.danger),
       ]),
@@ -242,7 +242,7 @@ pub fn icon_class(layout: Layout) -> Class {
       css.align_items("center"),
       css.justify_content("center"),
       css.flex_shrink(0.0),
-      css.property("border-radius", tokens.radius_small),
+      style.radius(tokens.radius_small),
       css.background(tokens.muted),
       css.color(tokens.text_muted),
       css.font_size_("0.625rem"),
@@ -258,7 +258,7 @@ pub fn media_class(layout: Layout) -> Class {
       css.display("block"),
       css.flex_shrink(0.0),
       css.overflow("hidden"),
-      css.property("border-radius", tokens.radius_small),
+      style.radius(tokens.radius_small),
       css.background(tokens.muted),
       css.selector(" > img", [
         css.display("block"),
@@ -300,7 +300,7 @@ pub fn track_class() -> Class {
     css.width(percent(100)),
     css.property("height", "0.25rem"),
     css.overflow("hidden"),
-    css.property("border-radius", "999px"),
+    style.pill(),
     css.background(tokens.muted),
   ])
 }
@@ -331,7 +331,7 @@ pub fn actions_class(layout: Layout) -> Class {
         css.property("inset-inline-end", tokens.space_3),
         css.display("flex"),
         css.gap(rem(0.25)),
-        css.property("border-radius", tokens.radius_small),
+        style.radius(tokens.radius_small),
         css.background(tokens.surface),
       ])
     _ -> css.class([css.display("flex"), css.gap(rem(0.25))])

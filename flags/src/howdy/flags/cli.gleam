@@ -39,6 +39,7 @@ import gleam/string
 import gleam/time/calendar
 import gleam/time/timestamp
 import howdy/flags.{type Flag, type Flags, type Setting, type Store}
+import howdy/flags/internal/time
 import howdy/service
 
 const usage = "Manage feature flags.
@@ -171,9 +172,9 @@ fn command(
   case words {
     [] | ["help"] -> Outcome(0, usage)
     ["export"] -> {
-      case unique(defined) {
-        True -> done(json.to_string(flags.to_json(defined)))
-        False -> failed("two flags share a key")
+      case flags.unique_keys(defined) {
+        Ok(Nil) -> done(json.to_string(flags.to_json(defined)))
+        Error(_) -> failed("two flags share a key")
       }
     }
     ["list"] -> {
@@ -562,7 +563,7 @@ fn show(key: String, flag: Option(Flag), setting: Option(Setting)) -> String {
         Some(ramp) ->
           string.join(list.map(ramp.steps, flags.percent_to_string), " → ")
           <> " every "
-          <> duration(ramp.every)
+          <> time.duration(ramp.every)
           <> case ramp.next {
             Some(next) -> ", next step " <> when(next)
             None -> ", paused"
@@ -611,11 +612,6 @@ fn find(defined: List(Flag), key: String) -> Option(Flag) {
   |> option.from_result
 }
 
-fn unique(defined: List(Flag)) -> Bool {
-  let keys = list.map(defined, flags.key)
-  list.unique(keys) == keys
-}
-
 /// Seconds from `90s`, `30m`, `1h`, `2d` or a bare number of seconds.
 fn parse_duration(text: String) -> Result(Int, Nil) {
   let text = string.trim(text)
@@ -629,15 +625,6 @@ fn parse_duration(text: String) -> Result(Int, Nil) {
   case int.parse(number) {
     Ok(n) if n > 0 -> Ok(n * unit)
     _ -> Error(Nil)
-  }
-}
-
-fn duration(seconds: Int) -> String {
-  case seconds {
-    _ if seconds % 86_400 == 0 -> int.to_string(seconds / 86_400) <> "d"
-    _ if seconds % 3600 == 0 -> int.to_string(seconds / 3600) <> "h"
-    _ if seconds % 60 == 0 -> int.to_string(seconds / 60) <> "m"
-    _ -> int.to_string(seconds) <> "s"
   }
 }
 

@@ -15,6 +15,12 @@ fn stop_smtp(server: Server) -> Nil
 @external(erlang, "howdy_mail_test_ffi", "smtp_port")
 fn smtp_port(server: Server) -> Int
 
+@external(erlang, "howdy_mail_test_ffi", "attempts")
+fn attempts(server: Server) -> Int
+
+@external(erlang, "howdy_mail_test_ffi", "monotonic_ms")
+fn now() -> Int
+
 @external(erlang, "howdy_mail_test_ffi", "received")
 fn received(timeout: Int) -> Result(#(String, List(String), String), Nil)
 
@@ -112,6 +118,64 @@ pub fn refused_and_temporary_recipients_test() {
     )
   assert string.contains(reason, "451")
   assert received(100) == Error(Nil)
+  stop_smtp(server)
+}
+
+pub fn temporary_failures_are_retried_when_asked_test() {
+  let server = start_smtp(False)
+  let flaky = message() |> mail.to([mail.address("flaky@example.com")])
+  let config = smtp.new("127.0.0.1") |> smtp.port(smtp_port(server))
+  // Without retries, the first attempt's answer is the answer.
+  let assert Error(mail.Unavailable(_)) = mail.send(mailer(config), flaky)
+  assert attempts(server) == 1
+  stop_smtp(server)
+
+  let server = start_smtp(False)
+  let config =
+    smtp.new("127.0.0.1")
+    |> smtp.port(smtp_port(server))
+    |> smtp.retries(2)
+    |> smtp.backoff(50)
+  let assert Ok(_) = mail.send(mailer(config), flaky)
+  assert attempts(server) == 2
+  let assert Ok(_) = received(1000)
+  stop_smtp(server)
+}
+
+pub fn retries_back_off_and_give_up_test() {
+  let server = start_smtp(False)
+  let config =
+    smtp.new("127.0.0.1")
+    |> smtp.port(smtp_port(server))
+    |> smtp.retries(2)
+    |> smtp.backoff(100)
+  let started = now()
+  let assert Error(mail.Unavailable(reason)) =
+    mail.send(
+      mailer(config),
+      message() |> mail.to([mail.address("later@example.com")]),
+    )
+  assert string.contains(reason, "451")
+  assert attempts(server) == 3
+  // 100ms before the second attempt, 200ms before the third.
+  assert now() - started >= 300
+  assert received(100) == Error(Nil)
+  stop_smtp(server)
+}
+
+pub fn refusals_are_not_retried_test() {
+  let server = start_smtp(False)
+  let config =
+    smtp.new("127.0.0.1")
+    |> smtp.port(smtp_port(server))
+    |> smtp.retries(3)
+    |> smtp.backoff(10)
+  let assert Error(mail.Refused(_)) =
+    mail.send(
+      mailer(config),
+      message() |> mail.to([mail.address("refused@example.com")]),
+    )
+  assert attempts(server) == 1
   stop_smtp(server)
 }
 

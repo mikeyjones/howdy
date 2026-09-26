@@ -18,7 +18,6 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
-import gleam/time/timestamp
 import gloo/migration as gloo_migration
 import gloo/repo.{type Repo}
 import gloo/sql
@@ -28,8 +27,10 @@ import howdy/flags.{
   type Change, type Setting, type Snapshot, type Target, type Update, Change,
   Delete, GroupSummary, Ramp, Save, Setting, Snapshot, Unchanged,
 }
+import howdy/flags/internal/time
 import howdy/migration
 import howdy/service
+import logging
 
 /// The `howdy_flags_` tables. Run with `howdy/migration` during deployment.
 pub fn schema() -> migration.Package {
@@ -166,28 +167,35 @@ fn read_settings(
         use steps <- decode.field(4, decode.optional(decode.string))
         use every <- decode.field(5, decode.optional(decode.int))
         use next <- decode.field(6, decode.optional(decode.int))
-        let ramp = case steps, every {
-          Some(steps), Some(every) ->
-            Some(Ramp(
-              steps: string.split(steps, ",") |> list.filter_map(int.parse),
-              every:,
-              next:,
-            ))
-          _, _ -> None
-        }
-        decode.success(#(
-          flag,
-          Setting(
-            killed: killed == 1,
-            rollout:,
-            bucketing: flags.bucketing_from_string(bucketing),
-            allowed: [],
-            blocked: [],
-            ramp:,
-          ),
-        ))
+        decode.success(#(flag, killed, rollout, bucketing, steps, every, next))
       },
     ),
+  )
+  use rows <- result.try(
+    list.try_map(rows, fn(row) {
+      let #(flag, killed, rollout, bucketing, steps, every, next) = row
+      use ramp <- result.map(case steps, every {
+        Some(steps), Some(every) ->
+          string.split(steps, ",")
+          |> list.try_map(int.parse)
+          |> result.map(fn(steps) { Some(Ramp(steps:, every:, next:)) })
+          |> result.map_error(fn(_) {
+            unreadable("the ramp steps stored for " <> flag, steps)
+          })
+        _, _ -> Ok(None)
+      })
+      #(
+        flag,
+        Setting(
+          killed: killed == 1,
+          rollout:,
+          bucketing: flags.bucketing_from_string(bucketing),
+          allowed: [],
+          blocked: [],
+          ramp:,
+        ),
+      )
+    }),
   )
   use rules <- result.try(
     database.query(
@@ -204,13 +212,22 @@ fn read_settings(
       },
     ),
   )
+  use rules <- result.try(
+    list.try_map(rules, fn(rule) {
+      flags.target_from_string(rule.1)
+      |> result.map(fn(target) { #(rule.0, target, rule.2) })
+      |> result.map_error(fn(_) {
+        unreadable("a rule stored for " <> rule.0, rule.1)
+      })
+    }),
+  )
   Ok(
     list.map(rows, fn(row) {
       let #(key, setting) = row
       let pick = fn(effect) {
         list.filter_map(rules, fn(rule) {
           case rule.0 == key && rule.2 == effect {
-            True -> flags.target_from_string(rule.1)
+            True -> Ok(rule.1)
             False -> Error(Nil)
           }
         })
@@ -218,6 +235,15 @@ fn read_settings(
       #(key, Setting(..setting, allowed: pick("allow"), blocked: pick("block")))
     }),
   )
+}
+
+/// Something stored cannot be read back. Nothing in this package writes
+/// such a row, so it was changed by hand or by another version; say so
+/// in the log and refuse, rather than carry on with part of the settings.
+fn unreadable(what: String, text: String) -> service.Error {
+  let message = what <> " cannot be read: " <> string.inspect(text)
+  logging.log(logging.Error, "howdy/flags/database: " <> message)
+  service.Internal(message)
 }
 
 fn read_groups(conn: Repo) -> service.Result(List(flags.GroupSummary)) {
@@ -521,7 +547,7 @@ fn history(
     Some(key) -> #(" WHERE flag = $1", [sql.string(key)])
     None -> #("", [])
   }
-  database.query(
+  use rows <- result.try(database.query(
     conn,
     select_changes(conn)
       <> filter
@@ -529,17 +555,19 @@ fn history(
       <> int.to_string(limit),
     args,
     change_decoder(),
-  )
+  ))
+  list.try_map(rows, parse_change)
 }
 
 fn read_change(conn: Repo, id: Int) -> service.Result(Change) {
-  database.one(
+  use row <- result.try(database.one(
     conn,
     select_changes(conn) <> " WHERE id = $1",
     [sql.int(id)],
     change_decoder(),
     or: service.NotFound("no such change"),
-  )
+  ))
+  parse_change(row)
 }
 
 fn select_changes(conn: Repo) -> String {
@@ -548,7 +576,20 @@ fn select_changes(conn: Repo) -> String {
   <> ", actor, summary, before, after FROM howdy_flags_changes"
 }
 
-fn change_decoder() -> decode.Decoder(Change) {
+/// A change as stored, with its settings still JSON.
+type StoredChange {
+  StoredChange(
+    id: Int,
+    flag: Option(String),
+    at: Int,
+    by: String,
+    summary: String,
+    before: Option(String),
+    after: Option(String),
+  )
+}
+
+fn change_decoder() -> decode.Decoder(StoredChange) {
   use id <- decode.field(0, decode.int)
   use flag <- decode.field(1, decode.optional(decode.string))
   use at <- decode.field(2, decode.int)
@@ -556,19 +597,36 @@ fn change_decoder() -> decode.Decoder(Change) {
   use summary <- decode.field(4, decode.string)
   use before <- decode.field(5, decode.optional(decode.string))
   use after <- decode.field(6, decode.optional(decode.string))
-  let parse = fn(text) {
-    option.then(text, fn(text) {
-      json.parse(text, flags.setting_decoder()) |> option.from_result
-    })
+  decode.success(StoredChange(id:, flag:, at:, by:, summary:, before:, after:))
+}
+
+/// A stored setting that cannot be read is an error: `undo` would take a
+/// missing `before` as "nothing was stored" and delete the flag's setting.
+fn parse_change(stored: StoredChange) -> service.Result(Change) {
+  let parse = fn(text: Option(String), which: String) {
+    case text {
+      None -> Ok(None)
+      Some(text) ->
+        json.parse(text, flags.setting_decoder())
+        |> result.map(Some)
+        |> result.map_error(fn(_) {
+          unreadable(
+            "the setting " <> which <> " change " <> int.to_string(stored.id),
+            text,
+          )
+        })
+    }
   }
-  decode.success(Change(
-    id:,
-    flag:,
-    at:,
-    by:,
-    summary:,
-    before: parse(before),
-    after: parse(after),
+  use before <- result.try(parse(stored.before, "before"))
+  use after <- result.try(parse(stored.after, "after"))
+  Ok(Change(
+    id: stored.id,
+    flag: stored.flag,
+    at: stored.at,
+    by: stored.by,
+    summary: stored.summary,
+    before:,
+    after:,
   ))
 }
 
@@ -597,8 +655,7 @@ fn record(
       }),
     )
   }
-  let #(now, _) =
-    timestamp.to_unix_seconds_and_nanoseconds(timestamp.system_time())
+  let now = time.now()
   database.execute(
     conn,
     "INSERT INTO howdy_flags_changes (id, flag, at, actor, summary, before, after) VALUES ($1, $2, "

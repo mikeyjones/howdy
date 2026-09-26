@@ -191,17 +191,24 @@ pub fn nullable(inner: Schema(a)) -> Schema(Option(a)) {
   )
 }
 
-/// A string that must be one of the given names, each standing for a value.
-/// Encoding looks the value up to find its name. Panics if `variants` is
-/// empty.
+/// A string that is the name of one of `variants`, as `name` gives it.
+/// Decoding accepts only the listed variants; encoding names any value with
+/// `name`, so write it as a `case` over the type and the compiler sees that
+/// every variant has a name. Panics if `variants` is empty.
 ///
 /// ```gleam
-/// schema.enum([#("admin", Admin), #("member", Member)])
+/// schema.enum([Admin, Member], fn(role) {
+///   case role {
+///     Admin -> "admin"
+///     Member -> "member"
+///   }
+/// })
 /// ```
-pub fn enum(variants: List(#(String, a))) -> Schema(a) {
-  let assert [#(_, first), ..] = variants
+pub fn enum(variants: List(a), name: fn(a) -> String) -> Schema(a) {
+  let assert [first, ..] = variants
     as "howdy/openapi/schema: enum needs at least one variant"
-  let names = list.map(variants, fn(variant) { variant.0 })
+  let named = list.map(variants, fn(variant) { #(name(variant), variant) })
+  let names = list.map(named, fn(variant) { variant.0 })
   let message = "must be one of " <> string.join(names, ", ")
   Schema(
     node: fn() {
@@ -210,18 +217,13 @@ pub fn enum(variants: List(#(String, a))) -> Schema(a) {
         #("enum", json.array(names, json.string)),
       ])
     },
-    decoder: decode.then(decode.string, fn(name) {
-      case list.key_find(variants, name) {
+    decoder: decode.then(decode.string, fn(text) {
+      case list.key_find(named, text) {
         Ok(value) -> decode.success(value)
         Error(Nil) -> decode.failure(first, message)
       }
     }),
-    encode: fn(value) {
-      case list.find(variants, fn(variant) { variant.1 == value }) {
-        Ok(#(name, _)) -> json.string(name)
-        Error(Nil) -> json.null()
-      }
-    },
+    encode: fn(value) { json.string(name(value)) },
     placeholder: fn() { first },
     text: Single(dynamic.string),
     members: fn() { [] },

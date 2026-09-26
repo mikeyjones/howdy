@@ -100,19 +100,16 @@ pub fn theme_must_be_one_the_page_offers_test() {
 
   let branded = testing.get("/branded") |> testing.send(app()) |> testing.text
   assert string.contains(branded, "data-theme=\"brand\"")
-  assert !string.contains(branded, "prefers-color-scheme")
+  assert !string.contains(branded, "@media (prefers-color-scheme")
 }
 
 pub fn theme_toggle_flips_the_attribute_and_cookie_test() {
   let html = testing.get("/") |> testing.send(app()) |> testing.text
-  assert string.contains(html, "onclick=\"(function(r,a,b){")
-  assert string.contains(html, "document.cookie=&#39;theme=&#39;")
+  // The toggle is a marker the behaviour script acts on, not inline JS.
+  assert string.contains(html, "data-howdy-theme-toggle")
   assert string.contains(html, "data-howdy-theme-from=\"light\"")
   assert string.contains(html, "data-howdy-theme-to=\"dark\"")
-  assert string.contains(
-    html,
-    "this.dataset.howdyThemeFrom,this.dataset.howdyThemeTo)",
-  )
+  assert !string.contains(html, "onclick=")
 }
 
 pub fn untrusted_theme_names_never_change_the_event_handler_test() {
@@ -125,12 +122,17 @@ pub fn untrusted_theme_names_never_change_the_event_handler_test() {
       to: "\"<&\u{2028}\u{2029}",
     )
     |> element.to_string
-  let assert Ok(#(_, normal)) = string.split_once(normal, "onclick=\"")
-  let assert Ok(#(_, malicious)) = string.split_once(malicious, "onclick=\"")
-  let assert Ok(#(normal, _)) = string.split_once(normal, "\"")
-  let assert Ok(#(malicious, _)) = string.split_once(malicious, "\"")
-  assert normal == malicious
-  assert !string.contains(malicious, "pwned")
+  // There is no handler to poison: the names only ever land in escaped
+  // attribute values the behaviour script reads back as data.
+  assert !string.contains(normal, "onclick")
+  assert !string.contains(malicious, "onclick")
+  assert !string.contains(malicious, "<script")
+  assert string.contains(malicious, "data-howdy-theme-from=\"")
+  // Quotes and angle brackets are escaped, so the value cannot end the
+  // attribute or open a tag.
+  assert string.contains(malicious, "&#39;")
+  assert string.contains(malicious, "&quot;&lt;&amp;")
+  assert !string.contains(malicious, "\"<&")
 }
 
 pub fn live_pages_include_the_client_runtime_test() {

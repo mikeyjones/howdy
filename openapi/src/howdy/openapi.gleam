@@ -22,7 +22,6 @@
 //// them. An app with a `howdy/version` group gets a document per version;
 //// see `version_document`.
 
-import gleam/dynamic.{type Dynamic}
 import gleam/http/response
 import gleam/json.{type Json}
 import gleam/list
@@ -33,6 +32,7 @@ import howdy
 import howdy/content
 import howdy/controller
 import howdy/openapi/endpoint
+import howdy/openapi/internal/annotation
 import howdy/openapi/schema
 import howdy/version
 
@@ -49,7 +49,10 @@ pub opaque type Spec {
   )
 }
 
-/// `version` is the version of your API, not of OpenAPI.
+/// `version` is the version of your API, not of OpenAPI, and is the
+/// document's `info.version`. With a `howdy/version` group, each version's
+/// document shows it followed by that version's name, as in `1.0.0 (v2)`;
+/// see `version_document`.
 pub fn new(title title: String, version version: String) -> Spec {
   Spec(
     title:,
@@ -125,11 +128,7 @@ pub fn document(spec: Spec, app: howdy.App) -> Json {
       document
     }
     None ->
-      build(
-        spec,
-        spec.version,
-        mounted(howdy.routes(app), endpoint.unversioned()),
-      )
+      build(spec, None, mounted(howdy.routes(app), endpoint.unversioned()))
   }
 }
 
@@ -145,7 +144,8 @@ pub fn versions(app: howdy.App) -> List(String) {
 /// The document for one version of the API: the app's unversioned
 /// endpoints, which answer whatever the version, and the version's own,
 /// including those it falls back to. The document's `info.version` is the
-/// version's name.
+/// spec's version followed by the version's name in parentheses, as in
+/// `1.0.0 (v2)`, so both are seen.
 ///
 /// How a client asks for the version is documented the way OpenAPI expects:
 ///
@@ -171,7 +171,7 @@ pub fn version_document(
   // Unversioned controllers are matched first, as the router does.
   let routes =
     list.append(mounted(howdy.routes(app), endpoint.unversioned()), versioned)
-  build(spec, name, routes)
+  build(spec, Some(name), routes)
 }
 
 fn mounted(
@@ -217,9 +217,13 @@ fn main_version(group: version.Group) -> String {
 
 fn build(
   spec: Spec,
-  api_version: String,
+  version: Option(String),
   routes: List(#(controller.Route, endpoint.Mount)),
 ) -> Json {
+  let api_version = case version {
+    Some(name) -> spec.version <> " (" <> name <> ")"
+    None -> spec.version
+  }
   let #(paths, components, _) =
     list.fold(routes, #([], schema.components(), []), fn(acc, entry) {
       let #(route, mount) = entry
@@ -392,21 +396,16 @@ fn json_controller(served: Served) -> controller.Controller {
     |> response.set_header("content-type", "application/json; charset=utf-8")
     |> response.set_body(content.Text(body))
   })
-  |> controller.annotate(served_key, to_dynamic(served))
+  |> controller.annotate(served_key, annotation.wrap(served_key, served))
 }
 
 /// The documents `serve` added to `app`, in the order they were added.
 pub fn served(app: howdy.App) -> List(Served) {
   list.filter_map(howdy.routes(app), fn(route) {
-    controller.annotation(route, served_key) |> result.map(from_dynamic)
+    controller.annotation(route, served_key)
+    |> result.map(annotation.unwrap(_, served_key))
   })
 }
-
-@external(erlang, "howdy_openapi_ffi", "identity")
-fn to_dynamic(value: a) -> Dynamic
-
-@external(erlang, "howdy_openapi_ffi", "identity")
-fn from_dynamic(value: Dynamic) -> a
 
 /// Where `serve` puts a version's document, next to the main one at `path`.
 fn version_path(path: String, name: String) -> String {

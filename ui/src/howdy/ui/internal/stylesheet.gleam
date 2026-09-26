@@ -1,10 +1,10 @@
 //// Where classes are registered and their CSS collected.
 ////
 //// Sketch class names are content hashes, so a name can be computed in the
-//// calling process with a throwaway stylesheet. The CSS for each distinct
-//// class is rendered once and kept in an ETS table owned by a supervised
-//// process in the howdy_ui application. After startup, cache access is
-//// direct, so rendering does not queue on the owner process.
+//// calling process with a throwaway stylesheet. The name and CSS for each
+//// distinct class are computed once and kept in ETS tables owned by a
+//// supervised process in the howdy_ui application. After startup, cache
+//// access is direct, so rendering does not queue on the owner process.
 
 import gleam/int
 import gleam/list
@@ -20,6 +20,12 @@ fn known(name: String) -> Bool
 
 @external(erlang, "howdy_ui_ffi", "register")
 fn register(name: String, css: String) -> Nil
+
+@external(erlang, "howdy_ui_ffi", "name_of")
+fn name_of(class: Class) -> Result(String, Nil)
+
+@external(erlang, "howdy_ui_ffi", "remember_name")
+fn remember_name(class: Class, name: String) -> Nil
 
 @external(erlang, "howdy_ui_ffi", "all_css")
 fn all_css() -> String
@@ -41,12 +47,22 @@ fn phash2(term: String, range: Int) -> Int
 
 /// Register a class and return its generated name. If a render scope is
 /// open in this process, the name is recorded in it.
+///
+/// The name is a content hash, so it is computed once per distinct class
+/// and then read from the cache alongside the CSS.
 pub fn class_name(class: Class) -> String {
-  let assert Ok(sheet) = sketch.stylesheet(strategy: sketch.Ephemeral)
-  let #(sheet, name) = sketch.class_name(class, sheet)
-  case name == "" || known(name) {
-    True -> Nil
-    False -> register(name, sketch.render(sheet))
+  let name = case name_of(class) {
+    Ok(name) -> name
+    Error(Nil) -> {
+      let assert Ok(sheet) = sketch.stylesheet(strategy: sketch.Ephemeral)
+      let #(sheet, name) = sketch.class_name(class, sheet)
+      case name == "" || known(name) {
+        True -> Nil
+        False -> register(name, sketch.render(sheet))
+      }
+      remember_name(class, name)
+      name
+    }
   }
   note(name)
   name
@@ -55,10 +71,16 @@ pub fn class_name(class: Class) -> String {
 /// Run `render` and return its result with the CSS for exactly the classes
 /// it used.
 pub fn scoped(render: fn() -> a) -> #(a, String) {
+  let #(result, names) = scoped_names(render)
+  #(result, css_for(names))
+}
+
+/// Run `render` and return its result with the names of the classes it
+/// used, in the order they were first seen.
+pub fn scoped_names(render: fn() -> a) -> #(a, List(String)) {
   scope_begin()
   let result = render()
-  let names = scope_end()
-  #(result, css_for(names))
+  #(result, scope_end())
 }
 
 /// The CSS for every class registered so far, in the order first seen.

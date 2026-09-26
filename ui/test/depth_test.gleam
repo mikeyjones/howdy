@@ -271,9 +271,12 @@ pub fn updating_a_toast_restarts_its_countdown_test() {
   let first =
     render(toast.view(queue, on_close: fn(_) { [] }, on_hold: fn(_, _) { Nil }))
   assert !string.contains(first, "data-round=\"odd\"")
-  // Faded toasts close themselves through their close button.
-  assert string.contains(first, "onanimationend")
-  assert string.contains(first, "onfocusin")
+  // Faded toasts close themselves through their close button, and hover
+  // or focus holds them: both are wired by the behaviour script off the
+  // queue's marker rather than inline handlers.
+  assert string.contains(first, "data-howdy-toast-queue")
+  assert !string.contains(first, "onanimationend")
+  assert !string.contains(first, "onfocusin")
   let queue = toast.update(queue, id, toast.Success, "Two", "", 10)
   let second =
     render(toast.view(queue, on_close: fn(_) { [] }, on_hold: fn(_, _) { Nil }))

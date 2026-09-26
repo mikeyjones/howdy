@@ -81,10 +81,10 @@ pub fn group_class() -> Class {
     css.align_items("center"),
     css.width(percent(100)),
     css.background(tokens.surface),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.focus_within([
-      css.outline("2px solid " <> tokens.focus),
+      style.focus_outline(),
       css.property("outline-offset", "2px"),
     ]),
     css.selector(":has([aria-invalid=\"true\"])", [

@@ -92,10 +92,10 @@ pub fn group_class() -> Class {
     css.margin(rem(0.0)),
     css.padding(rem(0.0)),
     css.list_style("none"),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.selector(" > li + li", [
-      css.property("border-top", "1px solid " <> tokens.border),
+      style.bordered_side("top"),
     ]),
   ])
 }
@@ -114,10 +114,7 @@ pub fn link_class() -> Class {
     css.color(tokens.text),
     css.text_decoration("none"),
     css.hover([css.background(tokens.muted)]),
-    css.focus_visible([
-      css.outline("2px solid " <> tokens.focus),
-      css.property("outline-offset", "-2px"),
-    ]),
+    style.focus_ring_offset("-2px"),
   ])
 }
 

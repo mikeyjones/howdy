@@ -23,7 +23,7 @@ import sketch/css/length.{rem}
 pub fn trigger(id: String) -> List(Attribute(msg)) {
   [
     attribute.data("howdy-hover-card", id),
-    attribute.style("anchor-name", anchor_name(id)),
+    attribute.data("howdy-anchor", anchor_name(id)),
   ]
 }
 
@@ -37,7 +37,7 @@ pub fn card(
       class(card_class()),
       attribute.id(id),
       attribute.popover("manual"),
-      attribute.style("position-anchor", anchor_name(id)),
+      attribute.data("howdy-anchored", anchor_name(id)),
       ..attributes
     ],
     children,
@@ -59,8 +59,8 @@ pub fn card_class() -> Class {
     css.padding(rem(1.0)),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
   ])
 }

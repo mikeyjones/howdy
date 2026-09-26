@@ -31,7 +31,7 @@ pub fn trigger(id: String) -> List(Attribute(msg)) {
   [
     attribute.data("howdy-tooltip", id),
     attribute.aria_describedby(id),
-    attribute.style("anchor-name", anchor_name(id)),
+    attribute.data("howdy-anchor", anchor_name(id)),
   ]
 }
 
@@ -43,7 +43,7 @@ pub fn tooltip(id: String, children: List(Element(msg))) -> Element(msg) {
       attribute.popover("manual"),
       attribute.role("tooltip"),
       attribute.data("howdy-side", "top"),
-      attribute.style("position-anchor", anchor_name(id)),
+      attribute.data("howdy-anchored", anchor_name(id)),
     ],
     children,
   )
@@ -65,7 +65,7 @@ pub fn tooltip_class() -> Class {
     css.background(tokens.text),
     css.color(tokens.background),
     css.border("0"),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.font_size(rem(0.75)),
     css.line_height("1.4"),
   ])

@@ -40,6 +40,10 @@ howdy.new()
 listening on, whose `port` is the real one even when configured with port `0`.
 Once listening, it prints a HOWDY ASCII banner, the framework version (`2.0.0`),
 and the bound URL. Keep the calling process alive while serving requests.
+For anything beyond a script, run the server under a supervisor as an OTP
+application with `howdy.supervised` and `howdy.start_application`, so a crash
+is restarted and `SIGTERM` lets open requests finish; see
+[docs/guides/supervision.djot](docs/guides/supervision.djot).
 Howdy runs on the [ewe](https://hexdocs.pm/ewe/) server, but your code never
 needs to name it. For ewe options `howdy.start` does not offer, pass
 `howdy.handler(app)` to `ewe.new` yourself.
@@ -739,9 +743,7 @@ Route dispatch is indexed, so its cost does not grow with the number of
 controllers; a 512-controller app dispatches as fast as a one-controller app.
 Run `gleam run -m routing_benchmark` for dispatch throughput and heap allocation,
 and `gleam run -m rate_limit_benchmark` for identity-cardinality scaling.
-[Routing measurements](docs/benchmarks/routing.md) and
-[rate-limit measurements](docs/benchmarks/rate-limit-cardinality.md) describe the
-fixtures, results and limitations. CI tests all six examples and retains both
+CI tests every package and every example in `examples/`, and runs both
 benchmarks. Generated `build/` directories are ignored throughout the repository.
 
 ### Reserved optional-package modules
@@ -752,7 +754,11 @@ The core package reserves `howdy/auth`, every `howdy/auth/*` module and
 `howdy/remote` and every `howdy/remote/*` module for `howdy_remote`, and
 `howdy/admin` and every `howdy/admin/*` module for `howdy_admin`, and
 `howdy/mail` and every `howdy/mail/*` module for `howdy_mail`, and
-`howdy/flags` and every `howdy/flags/*` module for `howdy_flags`. Core must not
+`howdy/flags` and every `howdy/flags/*` module for `howdy_flags`,
+`howdy/openapi` and every `howdy/openapi/*` module for `howdy_openapi`,
+`howdy/telemetry` and every `howdy/telemetry/*` module for `howdy_telemetry`,
+`howdy/ui` and every `howdy/ui/*` module for `howdy_ui`, and `howdy/dev` and
+every `howdy/dev/*` module for `howdy_dev`. Core must not
 define these modules: Gleam/BEAM module names are
 global across dependencies. CI runs `scripts/check-auth-namespace.sh` to
 reject collisions. Applications should put their own modules in their own

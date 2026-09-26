@@ -29,6 +29,9 @@
 //// returns; other nodes pick them up the next time they check for changes,
 //// every two seconds unless `check_every` says otherwise.
 ////
+//// In an app, put the keeper under a supervisor with `supervised`: the
+//// handle it returns keeps working across restarts.
+////
 //// ## Stores
 ////
 //// Where the settings are kept is up to a `Store`:
@@ -64,9 +67,10 @@ import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
+import gleam/otp/supervision
 import gleam/result
 import gleam/string
-import gleam/time/timestamp
+import howdy/flags/internal/time
 import howdy/service
 import logging
 
@@ -292,10 +296,14 @@ pub fn enabled(flags: Flags, flag: Flag, for actor: Actor) -> Bool {
 /// Whether the flag is on for this actor, and why, checked in this order:
 /// the kill switch, block rules, allow rules, then the rollout.
 pub fn explain(flags: Flags, flag: Flag, for actor: Actor) -> Decision {
-  let snapshot = current(flags.key)
-  case dict.get(snapshot.settings, flag.key) {
+  // Nothing is published between `stop` and a restart: the default applies.
+  case current(flags.key) {
     Error(Nil) -> Default(flag.default)
-    Ok(setting) -> decide(flag.key, setting, actor, snapshot.groups)
+    Ok(snapshot) ->
+      case dict.get(snapshot.settings, flag.key) {
+        Error(Nil) -> Default(flag.default)
+        Ok(setting) -> decide(flag.key, setting, actor, snapshot.groups)
+      }
   }
 }
 
@@ -418,7 +426,9 @@ pub fn export(flags: List(Flag)) -> Nil {
   io.println(json.to_string(to_json(flags)))
 }
 
-fn unique_keys(flags: List(Flag)) -> service.Result(Nil) {
+/// `Invalid` when two of the flags share a key. The CLI checks the same.
+@internal
+pub fn unique_keys(flags: List(Flag)) -> service.Result(Nil) {
   let keys = list.map(flags, fn(flag) { flag.key })
   case list.unique(keys) == keys {
     True -> Ok(Nil)
@@ -574,7 +584,7 @@ pub fn start_ramp(
     True -> Ok(Nil)
     False -> Error(service.Invalid("a ramp takes a step at most every second"))
   })
-  let now = now()
+  let now = time.now()
   use setting <- change(flags, key, by)
   use <- refuse_killed(setting)
   let ramp = Ramp(steps:, every:, next: None)
@@ -587,7 +597,7 @@ pub fn start_ramp(
         "Ramp "
           <> string.join(list.map(steps, percent_to_string), " → ")
           <> " every "
-          <> duration(every)
+          <> time.duration(every)
           <> ", now at "
           <> percent_to_string(after.rollout),
       ))
@@ -615,7 +625,7 @@ pub fn resume_ramp(
   key: String,
   by by: String,
 ) -> service.Result(Nil) {
-  let now = now()
+  let now = time.now()
   use setting <- change(flags, key, by)
   use <- refuse_killed(setting)
   case setting.ramp {
@@ -669,15 +679,6 @@ fn step(setting: Setting, ramp: Ramp, now: Int) -> Result(Setting, Nil) {
     False -> None
   }
   Setting(..setting, rollout:, ramp:)
-}
-
-fn duration(seconds: Int) -> String {
-  case seconds {
-    _ if seconds % 86_400 == 0 -> int.to_string(seconds / 86_400) <> "d"
-    _ if seconds % 3600 == 0 -> int.to_string(seconds / 3600) <> "h"
-    _ if seconds % 60 == 0 -> int.to_string(seconds / 60) <> "m"
-    _ -> int.to_string(seconds) <> "s"
-  }
 }
 
 /// Delete what is stored for a flag, putting it back to its default. Works
@@ -784,7 +785,7 @@ fn refreshing(
 /// is no longer due changes nothing. Returns how many steps were taken.
 @internal
 pub fn advance_ramps(flags: Flags, now: Int) -> service.Result(Int) {
-  advance(flags.store, current(flags.key), now)
+  advance(flags.store, result.unwrap(current(flags.key), empty()), now)
 }
 
 fn advance(store: Store, index: Index, now: Int) -> service.Result(Int) {
@@ -1009,6 +1010,9 @@ pub opaque type Store {
     version: fn() -> service.Result(Int),
     history: fn(Option(String), Int) -> service.Result(List(Change)),
     writer: Option(Writer),
+    /// Let go of whatever the store runs, such as `howdy/flags/memory`'s
+    /// process. Nothing, for stores that run nothing of their own.
+    stop: fn() -> Nil,
   )
 }
 
@@ -1023,13 +1027,27 @@ pub fn store(
   version version: fn() -> service.Result(Int),
   history history: fn(Option(String), Int) -> service.Result(List(Change)),
 ) -> Store {
-  Store(name:, load:, version:, history:, writer: None)
+  Store(name:, load:, version:, history:, writer: None, stop: fn() { Nil })
 }
 
 /// A store that can also be changed through this package: by the
 /// management functions, the admin, and `howdy/flags/cli`.
 pub fn with_writer(store: Store, writer: Writer) -> Store {
   Store(..store, writer: Some(writer))
+}
+
+/// A store with something to end when it is no longer wanted. Stores that
+/// own a process, such as `howdy/flags/memory`, register it here so their
+/// own `stop` can reach it through the opaque handle.
+@internal
+pub fn with_stop(store: Store, stop: fn() -> Nil) -> Store {
+  Store(..store, stop:)
+}
+
+/// Run the store's `stop`. `howdy/flags/memory.stop` is the public face.
+@internal
+pub fn stop_store(store: Store) -> Nil {
+  store.stop()
 }
 
 /// Where the flags are kept, such as `database`.
@@ -1070,57 +1088,114 @@ pub fn check_every(config: Config, milliseconds milliseconds: Int) -> Config {
   Config(..config, interval: milliseconds)
 }
 
-/// Running flags: the settings in memory, and a process, linked to the
-/// caller, that keeps them current.
+/// Running flags: the settings in memory, and a process, the keeper, that
+/// keeps them current. Both are found by names chosen when the handle is
+/// made, not by the keeper's pid, so the handle outlives any one keeper:
+/// a keeper restarted by a supervisor publishes under the same key and
+/// registers the same name, and checks, `refresh` and `stop` carry on.
 pub opaque type Flags {
   Flags(
     store: Store,
     defined: List(Flag),
     key: #(String, Reference),
-    keeper: Subject(Message),
+    name: process.Name(Message),
   )
 }
 
-/// Load the settings and start keeping them current.
+/// Load the settings and start keeping them current, in a process linked
+/// to the caller. Prefer `supervised` in an app, so a keeper that crashes
+/// is restarted rather than taking the caller with it.
 pub fn start(config: Config) -> service.Result(Flags) {
   use _ <- result.try(unique_keys(config.defined))
-  use snapshot <- result.try(config.store.load())
-  let key = #("howdy_flags", reference.new())
-  publish(key, index(snapshot))
-  let started =
-    actor.new_with_initialiser(5000, fn(subject) {
-      process.send_after(subject, config.interval, Tick)
-      actor.initialised(Keeper(
-        store: config.store,
-        key:,
-        version: snapshot.version,
-        interval: config.interval,
-        self: subject,
-      ))
-      |> actor.returning(subject)
-      |> Ok
-    })
-    |> actor.on_message(keep)
-    |> actor.start
-  case started {
-    Ok(started) ->
-      Ok(Flags(
-        store: config.store,
-        defined: config.defined,
-        key:,
-        keeper: started.data,
-      ))
+  let flags = handle(config)
+  case launch(config, flags) {
+    Ok(_) -> Ok(flags)
+    Error(actor.InitFailed(message)) -> Error(service.Internal(message))
     Error(_) -> {
-      withdraw(key)
+      withdraw(flags.key)
       Error(service.Internal("the flags process did not start"))
     }
   }
 }
 
+/// The flags as a child of a supervisor, with the handle to check them by.
+/// The handle is made here, before the keeper starts, so it can be given
+/// to the app while the supervisor owns the keeper.
+///
+/// ```gleam
+/// let #(features, keeper) = flags.supervised(config)
+/// static_supervisor.new(static_supervisor.OneForOne)
+/// |> static_supervisor.add(keeper)
+/// |> static_supervisor.start
+/// ```
+///
+/// The keeper loads the settings when it starts, so a restart after a crash
+/// replaces whatever it had published with fresh settings, and every check
+/// keeps working meanwhile from the last ones. It is restarted after a
+/// crash and not after `stop`, which lets go of the settings for good.
+/// While the supervisor's shutdown takes the keeper down, it lets go of
+/// them too, so checks answer with the flags' defaults rather than settings
+/// nobody keeps current.
+pub fn supervised(
+  config: Config,
+) -> #(Flags, supervision.ChildSpecification(Flags)) {
+  let flags = handle(config)
+  let child =
+    supervision.worker(fn() { launch(config, flags) })
+    |> supervision.restart(supervision.Transient)
+  #(flags, child)
+}
+
+fn handle(config: Config) -> Flags {
+  Flags(
+    store: config.store,
+    defined: config.defined,
+    key: #("howdy_flags", reference.new()),
+    name: process.new_name("howdy_flags"),
+  )
+}
+
+/// Start the keeper for this handle: load the settings, publish them under
+/// the handle's key and register under its name.
+fn launch(config: Config, flags: Flags) -> actor.StartResult(Flags) {
+  actor.new_with_initialiser(5000, fn(subject) {
+    use _ <- result.try(
+      unique_keys(config.defined) |> result.map_error(service.message),
+    )
+    use snapshot <- result.try(
+      guard(config.store.load) |> result.map_error(service.message),
+    )
+    publish(flags.key, index(snapshot))
+    // An exit from the parent, such as the supervisor shutting down, lets
+    // go of the settings on the way out.
+    process.trap_exits(True)
+    let selector =
+      process.new_selector()
+      |> process.select(subject)
+      |> process.select_trapped_exits(Exit)
+    process.send_after(subject, config.interval, Tick)
+    actor.initialised(Keeper(
+      store: config.store,
+      key: flags.key,
+      version: snapshot.version,
+      interval: config.interval,
+      self: subject,
+    ))
+    |> actor.selecting(selector)
+    |> actor.returning(flags)
+    |> Ok
+  })
+  |> actor.named(flags.name)
+  |> actor.on_message(keep)
+  |> actor.start
+}
+
 /// Stop keeping the settings current and let go of them. Checks on these
-/// flags fail afterwards.
+/// flags answer with the flags' defaults afterwards. Stopping flags whose
+/// keeper is not running does nothing.
 pub fn stop(flags: Flags) -> Nil {
-  actor.call(flags.keeper, waiting: 5000, sending: Stop)
+  let _ = ask(flags, refresh_timeout_ms, Stop)
+  Nil
 }
 
 /// The flags registered with `register`, in order.
@@ -1128,9 +1203,67 @@ pub fn defined(flags: Flags) -> List(Flag) {
   flags.defined
 }
 
-/// Reload the settings now rather than at the next check.
+/// How long `refresh` waits for the keeper to reload.
+const refresh_timeout_ms = 5000
+
+/// Reload the settings now rather than at the next check, and wait for the
+/// reload so a change made here is in force when this returns. The wait
+/// is bounded: after five seconds this returns `Error(service.Internal)`
+/// while the keeper carries on and publishes the settings when the store
+/// answers, and the same error comes back at once when no keeper is
+/// running. Neither crashes the caller.
 pub fn refresh(flags: Flags) -> service.Result(Nil) {
-  actor.call(flags.keeper, waiting: 10_000, sending: Refresh)
+  refresh_within(flags, refresh_timeout_ms)
+}
+
+@internal
+pub fn refresh_within(flags: Flags, milliseconds: Int) -> service.Result(Nil) {
+  ask(flags, milliseconds, Refresh) |> result.flatten
+}
+
+/// Ask the keeper and wait for its answer, without crashing the caller
+/// when there is none: the keeper may not be running, may exit while
+/// answering, or may be held up by the store.
+fn ask(
+  flags: Flags,
+  milliseconds: Int,
+  make: fn(Subject(a)) -> Message,
+) -> service.Result(a) {
+  case process.named(flags.name) {
+    Error(Nil) -> Error(not_running())
+    Ok(pid) -> {
+      let reply = process.new_subject()
+      let monitor = process.monitor(pid)
+      process.send(process.named_subject(flags.name), make(reply))
+      let outcome =
+        process.new_selector()
+        |> process.select_map(reply, Ok)
+        |> process.select_specific_monitor(monitor, fn(_) {
+          Error(not_running())
+        })
+        |> process.selector_receive(within: milliseconds)
+      process.demonitor_process(monitor)
+      case outcome {
+        Ok(answer) -> answer
+        Error(Nil) ->
+          Error(service.Internal(
+            "the flags keeper did not answer within "
+            <> int.to_string(milliseconds)
+            <> "ms; the store may be slow or away",
+          ))
+      }
+    }
+  }
+}
+
+fn not_running() -> service.Error {
+  service.Internal("the flags keeper is not running")
+}
+
+/// The keeper's process, while one is running.
+@internal
+pub fn keeper(flags: Flags) -> Result(process.Pid, Nil) {
+  process.named(flags.name)
 }
 
 // -- Keeping settings current ------------------------------------------------
@@ -1139,6 +1272,10 @@ pub fn refresh(flags: Flags) -> service.Result(Nil) {
 /// stored user or organization is in.
 type Index {
   Index(settings: Dict(String, Setting), groups: Dict(String, List(String)))
+}
+
+fn empty() -> Index {
+  Index(settings: dict.new(), groups: dict.new())
 }
 
 fn index(snapshot: Snapshot) -> Index {
@@ -1157,15 +1294,28 @@ fn index(snapshot: Snapshot) -> Index {
 fn publish(key: #(String, Reference), index: Index) -> Nil
 
 @external(erlang, "howdy_flags_ffi", "current")
-fn current(key: #(String, Reference)) -> Index
+fn current(key: #(String, Reference)) -> Result(Index, Nil)
 
 @external(erlang, "howdy_flags_ffi", "withdraw")
 fn withdraw(key: #(String, Reference)) -> Nil
+
+@external(erlang, "howdy_flags_ffi", "attempt")
+fn attempt(run: fn() -> a) -> Result(a, String)
+
+/// A store call that raises, rather than returning an error, is an error
+/// like any other: the keeper survives it.
+fn guard(run: fn() -> service.Result(a)) -> service.Result(a) {
+  case attempt(run) {
+    Ok(outcome) -> outcome
+    Error(crash) -> Error(service.Internal("the store crashed: " <> crash))
+  }
+}
 
 type Message {
   Tick
   Refresh(reply: Subject(service.Result(Nil)))
   Stop(reply: Subject(Nil))
+  Exit(process.ExitMessage)
 }
 
 type Keeper {
@@ -1187,17 +1337,22 @@ fn keep(state: Keeper, message: Message) -> actor.Next(Keeper, Message) {
       process.send(reply, Nil)
       actor.stop()
     }
+    Exit(_) -> {
+      withdraw(state.key)
+      actor.stop()
+    }
     Refresh(reply) -> {
       let #(state, outcome) = reload(state)
       process.send(reply, outcome)
       actor.continue(state)
     }
     Tick -> {
-      case advance(state.store, current(state.key), now()) {
+      let index = result.unwrap(current(state.key), empty())
+      case guard(fn() { advance(state.store, index, time.now()) }) {
         Ok(_) -> Nil
         Error(error) -> warn("taking due ramp steps failed", error)
       }
-      let state = case state.store.version() {
+      let state = case guard(state.store.version) {
         Ok(version) if version == state.version -> state
         Ok(_) -> {
           let #(state, outcome) = reload(state)
@@ -1219,7 +1374,7 @@ fn keep(state: Keeper, message: Message) -> actor.Next(Keeper, Message) {
 }
 
 fn reload(state: Keeper) -> #(Keeper, service.Result(Nil)) {
-  case state.store.load() {
+  case guard(state.store.load) {
     Ok(snapshot) -> {
       publish(state.key, index(snapshot))
       #(Keeper(..state, version: snapshot.version), Ok(Nil))
@@ -1234,12 +1389,6 @@ fn warn(what: String, error: service.Error) -> Nil {
     logging.Warning,
     "howdy/flags: " <> what <> ": " <> service.message(error),
   )
-}
-
-fn now() -> Int {
-  let #(seconds, _) =
-    timestamp.to_unix_seconds_and_nanoseconds(timestamp.system_time())
-  seconds
 }
 
 // -- JSON --------------------------------------------------------------------
@@ -1347,9 +1496,16 @@ fn targets_to_json(targets: List(Target)) -> json.Json {
   json.array(targets, fn(target) { json.string(target_to_string(target)) })
 }
 
+/// Every target must parse: a member or rule that cannot be read is an
+/// error, not something to drop, or a flag would quietly reach fewer or
+/// more people than it was set to.
 fn targets_decoder() -> decode.Decoder(List(Target)) {
-  decode.list(decode.string)
-  |> decode.map(list.filter_map(_, target_from_string))
+  use texts <- decode.then(decode.list(decode.string))
+  case list.try_map(texts, target_from_string) {
+    Ok(targets) -> decode.success(targets)
+    Error(Nil) ->
+      decode.failure([], "a target such as user:1, org:acme or group:beta")
+  }
 }
 
 /// `user` or `organization`, as stores keep it.

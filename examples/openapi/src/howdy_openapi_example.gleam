@@ -1,5 +1,6 @@
-//// Run with `gleam run` from the `examples/openapi` directory, then open
-//// http://localhost:8787/docs for the API reference, or try:
+//// Run with `gleam run` from the `examples/openapi` directory. It listens on
+//// 127.0.0.1:8787: open http://localhost:8787/docs for the API reference, or
+//// try:
 ////
 //// ```sh
 //// curl http://localhost:8787/openapi.json
@@ -12,6 +13,7 @@
 //// ```
 
 import gleam/erlang/process
+import gleam/otp/static_supervisor as supervisor
 import howdy
 import howdy/logger
 import howdy/openapi
@@ -21,6 +23,8 @@ import user/controller as user_controller
 import user/controller_v2 as user_controller_v2
 
 pub fn app() -> howdy.App {
+  // The API's own version. Each version's document shows it with the
+  // version's name beside it: `1.0.0 (v1)`, `1.0.0 (v2)`.
   let spec =
     openapi.new(title: "Users API", version: "1.0.0")
     |> openapi.description("A small user directory, documented by Howdy.")
@@ -48,7 +52,12 @@ pub fn main() -> Nil {
   logging.configure()
   logging.set_level(logging.Info)
 
-  let assert Ok(_) = app() |> howdy.start
+  // Supervised inside an OTP application: restarted on a crash, drained on
+  // SIGTERM. A local demo, so it listens on 127.0.0.1:8787 only.
+  let assert Ok(_) =
+    supervisor.new(supervisor.OneForOne)
+    |> supervisor.add(howdy.supervised(app() |> howdy.bind(to: "127.0.0.1")))
+    |> howdy.start_application(name: "howdy_openapi_server")
 
   process.sleep_forever()
 }

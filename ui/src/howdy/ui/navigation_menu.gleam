@@ -57,7 +57,7 @@ pub fn panel(
         class(trigger_class()),
         attribute.type_("button"),
         attribute.attribute("popovertarget", id),
-        attribute.style("anchor-name", anchor_name(id)),
+        attribute.data("howdy-anchor", anchor_name(id)),
       ],
       list.append(label, [
         html.span([class(chevron_class()), attribute.aria_hidden(True)], []),
@@ -68,7 +68,7 @@ pub fn panel(
         class(panel_class()),
         attribute.id(id),
         attribute.popover("auto"),
-        attribute.style("position-anchor", anchor_name(id)),
+        attribute.data("howdy-anchored", anchor_name(id)),
       ],
       [html.ul([class(panel_list_class())], links)],
     ),
@@ -103,13 +103,6 @@ pub fn classes() -> List(Class) {
   ]
 }
 
-fn focus_ring() -> css.Style {
-  css.focus_visible([
-    css.outline("2px solid " <> tokens.focus),
-    css.property("outline-offset", "2px"),
-  ])
-}
-
 pub fn list_class() -> Class {
   css.class([
     css.display("flex"),
@@ -129,7 +122,7 @@ pub fn trigger_class() -> Class {
     css.gap(rem(0.375)),
     css.padding_(tokens.space_2 <> " " <> tokens.space_3),
     css.border("0"),
-    css.property("border-radius", tokens.radius_medium),
+    style.radius(tokens.radius_medium),
     css.background("transparent"),
     css.color(tokens.text),
     css.font_family(tokens.font_body),
@@ -139,7 +132,7 @@ pub fn trigger_class() -> Class {
     css.cursor("pointer"),
     css.hover([css.background(tokens.muted)]),
     css.selector("[aria-current=\"page\"]", [css.background(tokens.muted)]),
-    focus_ring(),
+    style.focus_ring(),
   ])
 }
 
@@ -163,8 +156,8 @@ pub fn panel_class() -> Class {
     css.padding(rem(0.5)),
     css.background(tokens.surface),
     css.color(tokens.text),
-    css.border("1px solid " <> tokens.border),
-    css.property("border-radius", tokens.radius_medium),
+    style.bordered(),
+    style.radius(tokens.radius_medium),
     css.box_shadow("0 10px 30px -10px rgb(0 0 0 / 0.3)"),
   ])
 }
@@ -186,11 +179,11 @@ pub fn panel_link_class() -> Class {
     css.flex_direction("column"),
     css.gap(rem(0.125)),
     css.padding(rem(0.75)),
-    css.property("border-radius", tokens.radius_small),
+    style.radius(tokens.radius_small),
     css.color(tokens.text),
     css.text_decoration("none"),
     css.hover([css.background(tokens.muted)]),
-    focus_ring(),
+    style.focus_ring(),
   ])
 }
 

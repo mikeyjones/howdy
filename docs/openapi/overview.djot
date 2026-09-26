@@ -5,8 +5,10 @@
 interactive reference for it.
 
 ```toml
-howdy_openapi = { git = "https://github.com/mikeyjones/howdy.git", ref = "v2.0.0", path = "openapi" }
+howdy_openapi = { git = "https://github.com/mikeyjones/howdy.git", ref = "v2", path = "openapi" }
 ```
+
+`howdy_openapi` is not in the v2.0.0 release, so depend on the `v2` branch until the next tag.
 
 Gleam cannot look inside a decoder or a handler, so there is nothing to read
 a document from after the fact. Instead you describe each value once, as a
@@ -168,7 +170,8 @@ document per version. Each holds the app's unversioned endpoints, which
 answer whatever the version, and the version's own, including those it falls
 back to. Where a version overrides a route, its own endpoint is the one
 documented, as it is the one that answers. The document's `info.version` is
-the version's name.
+the spec's version followed by the group's name in parentheses, such as
+`1.0.0 (v2)`, so both the API version and the group it describes are visible.
 
 ```gleam
 let api =

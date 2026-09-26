@@ -2,6 +2,7 @@ import gleam/erlang/process
 import gleam/int
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/otp/static_supervisor
 import gleam/string
 import howdy/mail
 import howdy/mail/outbox
@@ -32,7 +33,7 @@ pub fn keeps_messages_newest_first_test() {
   let box = outbox.start()
   let assert Ok(first) = mail.send(mailer(box), message("a@example.com", "One"))
   let assert Ok(_) = mail.send(mailer(box), message("b@example.com", "Two"))
-  let assert [newest, oldest] = outbox.messages(box)
+  let assert Ok([newest, oldest]) = outbox.messages(box)
   assert newest.subject == "Two"
   assert oldest.subject == "One"
   assert outbox.get(box, first.id) == Ok(oldest)
@@ -40,8 +41,8 @@ pub fn keeps_messages_newest_first_test() {
   assert latest.subject == "One"
   assert outbox.latest_to(box, "nobody@example.com") == Error(Nil)
   assert outbox.directory(box) == None
-  outbox.clear(box)
-  assert outbox.messages(box) == []
+  assert outbox.clear(box) == Ok(Nil)
+  assert outbox.messages(box) == Ok([])
 }
 
 pub fn keeps_only_the_newest_test() {
@@ -51,7 +52,7 @@ pub fn keeps_only_the_newest_test() {
       mail.send(mailer(box), message("a@example.com", int.to_string(n)))
     Nil
   })
-  let messages = outbox.messages(box)
+  let assert Ok(messages) = outbox.messages(box)
   assert list.length(messages) == outbox.capacity
   let assert [newest, ..] = messages
   assert newest.subject == int.to_string(outbox.capacity + 3)
@@ -63,7 +64,7 @@ pub fn subscribers_hear_about_changes_test() {
   outbox.subscribe(box, fn() { process.send(heard, Nil) })
   let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "One"))
   assert process.receive(heard, 1000) == Ok(Nil)
-  outbox.clear(box)
+  assert outbox.clear(box) == Ok(Nil)
   assert process.receive(heard, 1000) == Ok(Nil)
 }
 
@@ -86,7 +87,8 @@ pub fn a_crashing_subscriber_does_not_stop_the_outbox_test() {
   outbox.subscribe(box, fn() { panic as "boom" })
   let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "One"))
   let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "Two"))
-  assert list.length(outbox.messages(box)) == 2
+  let assert Ok(messages) = outbox.messages(box)
+  assert list.length(messages) == 2
 }
 
 pub fn directory_survives_a_restart_test() {
@@ -114,7 +116,7 @@ pub fn directory_survives_a_restart_test() {
   let assert Ok(again) = outbox.start_in(directory)
   assert outbox.messages(again) == before
 
-  outbox.clear(again)
+  assert outbox.clear(again) == Ok(Nil)
   let assert Ok(files) = simplifile.read_directory(directory)
   assert files == []
   let _ = simplifile.delete(directory)
@@ -125,6 +127,92 @@ pub fn unreadable_files_are_skipped_test() {
   let assert Ok(_) = simplifile.create_directory_all(directory)
   let assert Ok(_) = simplifile.write(directory <> "/junk.json", "{not json")
   let assert Ok(box) = outbox.start_in(directory)
-  assert outbox.messages(box) == []
+  assert outbox.messages(box) == Ok([])
   let _ = simplifile.delete(directory)
+}
+
+pub fn a_directory_that_cannot_be_created_is_an_error_test() {
+  let directory = temporary_directory()
+  let assert Ok(_) = simplifile.create_directory_all(directory)
+  let assert Ok(_) = simplifile.write(directory <> "/file", "")
+  let assert Error(reason) = outbox.start_in(directory <> "/file/mail")
+  assert string.starts_with(reason, "cannot create ")
+  let _ = simplifile.delete(directory)
+}
+
+pub fn a_supervised_outbox_answers_and_is_restarted_test() {
+  let #(box, child) = outbox.supervised()
+  // Before the supervisor starts it, the outbox is unavailable, not a crash.
+  assert outbox.messages(box)
+    == Error(mail.Unavailable("the outbox is not running"))
+  assert outbox.latest_to(box, "a@example.com") == Error(Nil)
+  let assert Error(mail.Unavailable(_)) =
+    mail.send(mailer(box), message("a@example.com", "One"))
+
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(child)
+    |> static_supervisor.start
+  let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "One"))
+  let assert Ok([one]) = outbox.messages(box)
+  assert one.subject == "One"
+
+  // A crash loses the memory but not the handle.
+  let assert [first] = children(supervisor.pid)
+  process.kill(first)
+  process.sleep(100)
+  let assert [second] = children(supervisor.pid)
+  assert second != first
+  assert outbox.messages(box) == Ok([])
+  let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "Two"))
+  let assert Ok([two]) = outbox.messages(box)
+  assert two.subject == "Two"
+
+  process.unlink(supervisor.pid)
+  process.send_exit(supervisor.pid)
+  process.sleep(100)
+  assert outbox.messages(box)
+    == Error(mail.Unavailable("the outbox is not running"))
+}
+
+pub fn a_supervised_directory_outbox_keeps_its_messages_across_restarts_test() {
+  let directory = temporary_directory()
+  let #(box, child) = outbox.supervised_in(directory)
+  assert outbox.directory(box) == Some(directory)
+  let assert Ok(supervisor) =
+    static_supervisor.new(static_supervisor.OneForOne)
+    |> static_supervisor.add(child)
+    |> static_supervisor.start
+  let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "One"))
+  let assert [first] = children(supervisor.pid)
+  process.kill(first)
+  process.sleep(100)
+  let assert Ok([one]) = outbox.messages(box)
+  assert one.subject == "One"
+  process.unlink(supervisor.pid)
+  process.send_exit(supervisor.pid)
+  let _ = simplifile.delete(directory)
+}
+
+pub fn an_outbox_that_stops_mid_call_is_unavailable_test() {
+  let box = outbox.start()
+  let assert Ok(_) = mail.send(mailer(box), message("a@example.com", "One"))
+  let assert Ok(pid) = outbox_pid(box)
+  process.unlink(pid)
+  process.kill(pid)
+  process.sleep(50)
+  assert outbox.messages(box)
+    == Error(mail.Unavailable("the outbox is not running"))
+  assert outbox.clear(box)
+    == Error(mail.Unavailable("the outbox is not running"))
+  assert outbox.get(box, "x") == Error(Nil)
+  // Subscribing to a stopped outbox is quietly nothing.
+  outbox.subscribe(box, fn() { Nil })
+}
+
+@external(erlang, "howdy_mail_test_ffi", "children")
+fn children(supervisor: process.Pid) -> List(process.Pid)
+
+fn outbox_pid(box: outbox.Outbox) -> Result(process.Pid, Nil) {
+  outbox.pid(box)
 }

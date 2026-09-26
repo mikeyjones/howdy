@@ -1,6 +1,7 @@
 import gleam/dict
 import gleam/dynamic/decode
 import gleam/http
+import gleam/http/response
 import gleam/json
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -36,7 +37,12 @@ pub type NewUser {
 }
 
 fn role() -> Schema(Role) {
-  schema.enum([#("admin", Admin), #("member", Member)])
+  schema.enum([Admin, Member], fn(role) {
+    case role {
+      Admin -> "admin"
+      Member -> "member"
+    }
+  })
 }
 
 fn user() -> Schema(User) {
@@ -161,6 +167,22 @@ fn document() -> decode.Dynamic {
   data
 }
 
+/// The message of the panic `run` raises, or `Ok` with its result.
+@external(erlang, "howdy_openapi_test_ffi", "rescue")
+fn rescue(run: fn() -> a) -> Result(a, String)
+
+fn ok(ctx: controller.Context) {
+  controller.text(ctx, "ok")
+}
+
+fn document_of(
+  spec: openapi.Spec,
+  controller: controller.Controller,
+) -> String {
+  openapi.document(spec, howdy.new() |> howdy.controller(controller))
+  |> json.to_string
+}
+
 fn at(
   data: decode.Dynamic,
   path: List(String),
@@ -209,6 +231,90 @@ pub fn dict_and_nullable_test() {
   let assert Ok(value) =
     json.parse("{\"a\":1,\"b\":null}", schema.decoder(scores))
   assert value == dict.from_list([#("a", Some(1)), #("b", None)])
+}
+
+pub fn try_map_can_fail_test() {
+  let switch =
+    schema.string()
+    |> schema.try_map(
+      to: fn(text) {
+        case text {
+          "on" -> Ok(True)
+          "off" -> Ok(False)
+          _ -> Error("must be on or off")
+        }
+      },
+      from: fn(on) {
+        case on {
+          True -> "on"
+          False -> "off"
+        }
+      },
+      placeholder: False,
+    )
+  assert json.parse("\"on\"", schema.decoder(switch)) == Ok(True)
+  assert json.to_string(schema.to_json(False, switch)) == "\"off\""
+  let assert Error(json.UnableToDecode([error])) =
+    json.parse("\"maybe\"", schema.decoder(switch))
+  assert error.expected == "must be on or off"
+
+  // The message reaches the client, and the document keeps the string.
+  let toggles =
+    controller.new("toggle")
+    |> endpoint.get("/", {
+      use on <- endpoint.query("switch", switch)
+      use ctx <- endpoint.handle
+      controller.text(ctx, string.inspect(on))
+    })
+  let app = howdy.new() |> howdy.controller(toggles)
+  let res =
+    testing.get("/toggle")
+    |> testing.query([#("switch", "maybe")])
+    |> testing.send(app)
+  assert res.status == 400
+  assert testing.error(res) == Ok("query parameter switch must be on or off")
+  assert string.contains(
+    document_of(spec(), toggles),
+    "{\"name\":\"switch\",\"in\":\"query\",\"required\":true,\"schema\":{\"type\":\"string\"}}",
+  )
+}
+
+pub fn example_format_and_deprecated_are_documented_test() {
+  let day =
+    schema.string()
+    |> schema.format("date")
+    |> schema.example("2024-01-31")
+    |> schema.deprecated
+  let days =
+    controller.new("day")
+    |> endpoint.get("/", {
+      use <- endpoint.describe([endpoint.deprecated()])
+      use _day <- endpoint.query("day", day)
+      use _person <- endpoint.optional_query(
+        "person",
+        user() |> schema.description("Who asked"),
+      )
+      use ctx <- endpoint.handle
+      controller.text(ctx, "ok")
+    })
+  let text = document_of(spec(), days)
+  assert string.contains(
+    text,
+    "\"schema\":{\"type\":\"string\",\"format\":\"date\",\"examples\":[\"2024-01-31\"],\"deprecated\":true}",
+  )
+  // Keywords added after naming sit beside the reference.
+  assert string.contains(
+    text,
+    "\"schema\":{\"$ref\":\"#/components/schemas/User\",\"description\":\"Who asked\"}",
+  )
+  assert string.contains(
+    text,
+    "\"responses\":{\"200\":{\"description\":\"Success\"}",
+  )
+  assert string.ends_with(
+    text,
+    "},\"deprecated\":true}}},\"components\":{\"schemas\":{\"User\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"},\"name\":{\"type\":\"string\"},\"role\":{\"type\":\"string\",\"enum\":[\"admin\",\"member\"]},\"nickname\":{\"type\":\"string\"}},\"required\":[\"id\",\"name\",\"role\"]},\"FieldError\":{\"type\":\"object\",\"properties\":{\"field\":{\"type\":\"string\"},\"message\":{\"type\":\"string\"}},\"required\":[\"field\",\"message\"]},\"Error\":{\"type\":\"object\",\"properties\":{\"error\":{\"type\":\"string\"},\"fields\":{\"type\":\"array\",\"items\":{\"$ref\":\"#/components/schemas/FieldError\"}}},\"required\":[\"error\"]}},\"securitySchemes\":{\"bearer\":{\"type\":\"http\",\"scheme\":\"bearer\"}}}}",
+  )
 }
 
 // -- Endpoints ---------------------------------------------------------------
@@ -315,7 +421,136 @@ pub fn body_errors_are_field_errors_test() {
   assert testing.error(res) == Ok("request body is not valid JSON")
 }
 
+pub fn required_header_test() {
+  let tenants =
+    controller.new("tenant")
+    |> endpoint.get("/", {
+      use tenant <- endpoint.header("X-Tenant", schema.string())
+      use ctx <- endpoint.handle
+      controller.text(ctx, tenant)
+    })
+  let app = howdy.new() |> howdy.controller(tenants)
+  let res =
+    testing.get("/tenant")
+    |> testing.header("x-tenant", "acme")
+    |> testing.send(app)
+  assert testing.text(res) == "acme"
+
+  let res = testing.get("/tenant") |> testing.send(app)
+  assert res.status == 400
+  assert testing.error(res) == Ok("missing header x-tenant")
+
+  assert string.contains(
+    document_of(spec(), tenants),
+    "\"parameters\":[{\"name\":\"x-tenant\",\"in\":\"header\",\"required\":true,\"schema\":{\"type\":\"string\"}}]",
+  )
+}
+
+pub fn body_with_limit_rejects_a_large_body_test() {
+  let app =
+    howdy.new()
+    |> howdy.controller(
+      controller.new("note")
+      |> endpoint.post("/", {
+        use text <- endpoint.body_with_limit(schema.string(), 8)
+        use ctx <- endpoint.handle
+        controller.text(ctx, text)
+      }),
+    )
+  let res = testing.post("/note", json.string("hi")) |> testing.send(app)
+  assert testing.text(res) == "hi"
+
+  let res =
+    testing.post("/note", json.string("far too long"))
+    |> testing.send(app)
+  assert res.status == 400
+  assert testing.error(res) == Ok("request body too large")
+}
+
+pub fn wrap_runs_middleware_around_the_endpoint_test() {
+  let stamp = fn(ctx, next) {
+    next(ctx) |> response.set_header("x-wrapped", "yes")
+  }
+  let app =
+    howdy.new()
+    |> howdy.controller(
+      controller.new("user")
+      |> endpoint.get("/:id", by_id() |> endpoint.wrap(stamp)),
+    )
+  let res = testing.get("/user/1") |> testing.send(app)
+  assert response.get_header(res, "x-wrapped") == Ok("yes")
+  assert testing.text(res) == "{\"id\":1,\"name\":\"Ada\",\"role\":\"admin\"}"
+  // Errors from the inputs pass through the middleware too.
+  let res = testing.get("/user/abc") |> testing.send(app)
+  assert res.status == 400
+  assert response.get_header(res, "x-wrapped") == Ok("yes")
+}
+
 // -- The document ------------------------------------------------------------
+
+pub fn spec_details_are_documented_test() {
+  let spec =
+    openapi.new(title: "Users", version: "1.0.0")
+    |> openapi.server("https://api.example.com")
+    |> openapi.server("https://staging.example.com")
+    |> openapi.api_key_cookie("session", cookie: "sid")
+    |> openapi.require("session")
+  assert json.to_string(openapi.document(spec, howdy.new()))
+    == "{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"Users\",\"version\":\"1.0.0\"},\"servers\":[{\"url\":\"https://api.example.com\"},{\"url\":\"https://staging.example.com\"}],\"security\":[{\"session\":[]}],\"paths\":{},\"components\":{\"securitySchemes\":{\"session\":{\"type\":\"apiKey\",\"in\":\"cookie\",\"name\":\"sid\"}}}}"
+}
+
+pub fn duplicate_operation_ids_panic_test() {
+  let find = fn() {
+    use <- endpoint.describe([endpoint.operation_id("find")])
+    use ctx <- endpoint.handle
+    ok(ctx)
+  }
+  let users =
+    controller.new("user")
+    |> endpoint.get("/a", find())
+    |> endpoint.get("/b", find())
+  assert rescue(fn() { document_of(spec(), users) })
+    == Error(
+      "howdy/openapi: GET /user/a and GET /user/b both have the operation id find; give one its own with endpoint.operation_id",
+    )
+}
+
+pub fn duplicate_schema_names_panic_test() {
+  let reply = fn(schema: Schema(String)) {
+    use <- endpoint.describe([endpoint.response(200, "A thing", schema)])
+    use ctx <- endpoint.handle
+    ok(ctx)
+  }
+  let things =
+    controller.new("thing")
+    |> endpoint.get("/a", reply(schema.string() |> schema.named("Thing")))
+    |> endpoint.get(
+      "/b",
+      reply(schema.string() |> schema.max_length(3) |> schema.named("Thing")),
+    )
+  assert rescue(fn() { document_of(spec(), things) })
+    == Error("howdy/openapi: two different schemas are named Thing")
+  // The same schema under one name is fine.
+  let same =
+    controller.new("thing")
+    |> endpoint.get("/a", reply(schema.string() |> schema.named("Thing")))
+    |> endpoint.get("/b", reply(schema.string() |> schema.named("Thing")))
+  let assert Ok(_) = rescue(fn() { document_of(spec(), same) })
+}
+
+pub fn undeclared_path_parameters_panic_test() {
+  let users =
+    controller.new("user")
+    |> endpoint.get("/", {
+      use _id <- endpoint.path("id", schema.int())
+      use ctx <- endpoint.handle
+      ok(ctx)
+    })
+  assert rescue(fn() { document_of(spec(), users) })
+    == Error(
+      "howdy/openapi: GET /user reads path parameter id, which its route does not capture",
+    )
+}
 
 pub fn document_lists_only_endpoints_test() {
   let doc = document()
@@ -510,7 +745,8 @@ pub fn path_versions_are_prefixed_test() {
   assert openapi.versions(app) == ["v1", "v2"]
 
   let v2 = version_doc(app, "v2")
-  assert at(v2, ["info", "version"], decode.string) == "v2"
+  // The spec's version is kept, with the version's name beside it.
+  assert at(v2, ["info", "version"], decode.string) == "1.0.0 (v2)"
   // v2 overrides the list and falls back to v1 for the rest; unversioned
   // routes answer in every version, unprefixed.
   assert path_keys(v2) == ["/health", "/v2/users", "/v2/users/{id}"]
@@ -604,6 +840,27 @@ pub fn accept_versions_have_vendor_media_types_test() {
   assert dict.keys(health) == ["application/json"]
 }
 
+pub fn custom_versions_are_documented_as_they_are_test() {
+  let app = versioned_app(version.custom(fn(_) { Some("v2") }))
+  let v2 = version_doc(app, "v2")
+  assert at(v2, ["info", "version"], decode.string) == "1.0.0 (v2)"
+  assert path_keys(v2) == ["/health", "/users", "/users/{id}"]
+  // Nothing can be said about how the version is chosen: no prefix, no
+  // header and plain JSON.
+  let assert Error(_) =
+    decode.run(
+      v2,
+      decode.at(["paths", "/users", "get", "parameters"], decode.dynamic),
+    )
+  let content =
+    at(
+      v2,
+      ["paths", "/users", "get", "responses", "200", "content"],
+      decode.dict(decode.string, decode.dynamic),
+    )
+  assert dict.keys(content) == ["application/json"]
+}
+
 pub fn serve_serves_every_version_test() {
   let app =
     versioned_app(version.path())
@@ -620,9 +877,9 @@ pub fn serve_serves_every_version_test() {
     name
   }
   // The main document is the default version's.
-  assert version_of("/openapi.json") == "v1"
-  assert version_of("/openapi/v1.json") == "v1"
-  assert version_of("/openapi/v2.json") == "v2"
+  assert version_of("/openapi.json") == "1.0.0 (v1)"
+  assert version_of("/openapi/v1.json") == "1.0.0 (v1)"
+  assert version_of("/openapi/v2.json") == "1.0.0 (v2)"
 
   let page = testing.get("/docs") |> testing.send(app) |> testing.text
   assert string.contains(
@@ -645,7 +902,7 @@ pub fn main_document_is_the_newest_without_a_default_test() {
       ]),
     )
   let text = json.to_string(openapi.document(spec(), app))
-  assert string.contains(text, "\"version\":\"v2\"")
+  assert string.contains(text, "\"version\":\"1.0.0 (v2)\"")
 }
 
 pub fn served_lists_the_documents_test() {

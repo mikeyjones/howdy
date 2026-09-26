@@ -6,6 +6,7 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
+import gleam/uri
 import howdy/controller.{
   type Controller, type Handler, type Middleware, type Route,
 }
@@ -255,11 +256,34 @@ fn match_segments(
 ) -> Result(Dict(String, String), Nil) {
   case pattern, path {
     [], [] -> Ok(params)
-    ["*" <> name], rest -> Ok(dict.insert(params, name, string.join(rest, "/")))
+    ["*" <> name], rest ->
+      case list.try_map(rest, decode_capture) {
+        Ok(decoded) -> Ok(dict.insert(params, name, string.join(decoded, "/")))
+        Error(Nil) -> Error(Nil)
+      }
     [":" <> name, ..pattern], [value, ..path] ->
-      match_segments(pattern, path, dict.insert(params, name, value))
+      case decode_capture(value) {
+        Ok(decoded) ->
+          match_segments(pattern, path, dict.insert(params, name, decoded))
+        Error(Nil) -> Error(Nil)
+      }
     [expected, ..pattern], [actual, ..path] if expected == actual ->
       match_segments(pattern, path, params)
     _, _ -> Error(Nil)
+  }
+}
+
+/// A captured segment, percent-decoded so `/users/john%20doe` gives a param
+/// of `"john doe"`. A segment that does not decode, or that hides a `/` or a
+/// NUL behind an escape, matches nothing: the first is malformed, and the
+/// other two would let one segment stand for several.
+fn decode_capture(segment: String) -> Result(String, Nil) {
+  case uri.percent_decode(segment) {
+    Ok(decoded) ->
+      case string.contains(decoded, "/") || string.contains(decoded, "\u{0}") {
+        True -> Error(Nil)
+        False -> Ok(decoded)
+      }
+    Error(Nil) -> Error(Nil)
   }
 }

@@ -1,9 +1,9 @@
-//// WebAuthn verification through the pinned glasslock dependency. Howdy owns
-//// expiry, one-time challenges, account/session binding and atomic persistence.
+//// WebAuthn verification through the pinned glasslock dependency (its
+//// unstable parts only via `internal/webauthn_adapter`). Howdy owns expiry,
+//// one-time challenges, account/session binding and atomic persistence.
 
 import glasslock
 import glasslock/authentication
-import glasslock/internal as webauthn
 import glasslock/registration
 import gleam/bit_array
 import gleam/dynamic/decode
@@ -12,6 +12,7 @@ import gleam/json
 import gleam/list
 import gleam/result
 import gleam/string
+import howdy/auth/internal/webauthn_adapter as webauthn
 import howdy/service
 
 pub type Passkey {
@@ -177,25 +178,20 @@ pub fn register(
     bit_array.base64_url_decode(encoded)
     |> result.replace_error(service.Unauthorized),
   )
-  use object <- result.try(
-    webauthn.parse_attestation_object(object)
-    |> result.replace_error(service.Unauthorized),
-  )
-  use #(data, _, _) <- result.try(
-    webauthn.extract_attestation_fields(object)
+  use data <- result.try(
+    webauthn.attestation_auth_data(object)
     |> result.replace_error(service.Unauthorized),
   )
   use #(eligible, backed_up) <- result.try(backup_flags(data))
-  use parsed_data <- result.try(
-    webauthn.parse_registration_auth_data(data)
-    |> result.replace_error(service.Unauthorized),
+  use aaguid <- result.try(
+    webauthn.aaguid(data) |> result.replace_error(service.Unauthorized),
   )
   Ok(Stored(
     Passkey(
       bit_array.base64_url_encode(credential.id, False),
       name,
       now,
-      bit_array.base64_url_encode(parsed_data.attested_credential.aaguid, False),
+      bit_array.base64_url_encode(aaguid, False),
       eligible,
       backed_up,
     ),

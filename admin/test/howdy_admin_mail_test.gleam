@@ -1,5 +1,6 @@
 //// The mail pages: the outbox, one message in every form, and previews.
 
+import gleam/erlang/process
 import gleam/http/request
 import gleam/list
 import gleam/string
@@ -34,6 +35,7 @@ fn post(app: howdy.App, path: String) -> String {
   let res =
     testing.post_form(path, [])
     |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
     |> testing.send(app)
   assert res.status == 303
     as {
@@ -122,7 +124,7 @@ pub fn shows_a_sent_message_test() {
   assert status == 404
 
   assert post(app, "/_howdy/mail/clear") == "/_howdy/mail"
-  assert outbox.messages(box) == []
+  assert outbox.messages(box) == Ok([])
   assert string.contains(get(app, base), "No such message")
 }
 
@@ -179,7 +181,7 @@ pub fn sends_a_preview_to_the_outbox_test() {
       |> admin.mail_previews(previews(), send_with: mailer(box))
     })
   let location = post(app, "/_howdy/mail/previews/send?p=emails.welcome")
-  let assert [sent] = outbox.messages(box)
+  let assert Ok([sent]) = outbox.messages(box)
   assert location == "/_howdy/mail/message/" <> sent.id
   assert sent.subject == "Welcome to Acme"
 }
@@ -197,7 +199,7 @@ pub fn sends_a_preview_without_an_outbox_test() {
   assert list.key_find(headers, "location") == Ok("/_howdy/mail/previews")
   let location = post(app, "/_howdy/mail/previews/send?p=emails.welcome")
   assert location == "/_howdy/mail/previews?p=emails.welcome&sent=outbox"
-  assert list.length(outbox.messages(box)) == 1
+  let assert Ok([_]) = outbox.messages(box)
 }
 
 pub fn previews_from_several_calls_are_shown_together_test() {
@@ -213,4 +215,27 @@ pub fn previews_from_several_calls_are_shown_together_test() {
       send_with: mailer(box),
     )
   assert admin.preview_count(registered) == 2
+}
+
+pub fn an_outbox_that_is_not_running_is_reported_test() {
+  let box = outbox.start()
+  let app = app(admin.mail(_, box))
+  // The outbox is linked to the test, so let go of it before stopping it.
+  let assert Ok(pid) = outbox.pid(box)
+  process.unlink(pid)
+  process.kill(pid)
+  let assert Error(_) = outbox.messages(box)
+
+  let overview = get(app, "/_howdy")
+  assert string.contains(overview, "The outbox could not be read")
+  assert !string.contains(overview, "in the outbox")
+
+  // Clearing cannot redirect as if it worked: the page says why instead.
+  let res =
+    testing.post_form("/_howdy/mail/clear", [])
+    |> request.set_host("localhost")
+    |> testing.header("sec-fetch-site", "same-origin")
+    |> testing.send(app)
+  assert res.status == 200
+  assert string.contains(testing.text(res), "The outbox was not cleared")
 }
