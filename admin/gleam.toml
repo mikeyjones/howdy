@@ -19,6 +19,7 @@ howdy_ui = { path = "../ui" }
 howdy_mail = { path = "../mail" }
 howdy_telemetry = { path = "../telemetry" }
 howdy_openapi = { path = "../openapi" }
+howdy_flags = { path = "../flags" }
 
 [dev_dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

@@ -33,6 +33,8 @@ import howdy/authorization as access
 import howdy/controller.{type GuardedContext}
 import howdy/database
 import howdy/database/postgres
+import howdy/flags
+import howdy/flags/database as flags_database
 import howdy/guard
 import howdy/mail
 import howdy/mail/preview
@@ -61,7 +63,7 @@ pub fn main() {
   let db = open("admin_example.sqlite")
   let identity = identity(db, mailer())
   let assert Ok(_) =
-    app(db, identity, permissions(db))
+    app(db, identity, permissions(db), features(db))
     |> howdy.bind(to: "127.0.0.1")
     |> howdy.listening(on: 8787)
     |> howdy.start
@@ -86,7 +88,12 @@ pub fn open(path: String) -> Repo {
     }
   }
   let assert Ok(Nil) =
-    migration.run(db, [auth.schema(), access.schema(), schema()])
+    migration.run(db, [
+      auth.schema(),
+      access.schema(),
+      flags_database.schema(),
+      schema(),
+    ])
   db
 }
 
@@ -185,10 +192,34 @@ pub fn identity(db: Repo, mailer: mail.Mailer) -> auth.Auth {
   })
 }
 
+/// A feature flag: off until it is turned on, in the admin under **Flags**
+/// or from a console, for some users, a group or a share of everyone.
+pub fn newest_first() -> flags.Flag {
+  flags.flag(
+    "notes_newest_first",
+    description: "List a user's notes newest first in GET /notes",
+  )
+}
+
+/// Every flag the app defines: registered at startup, and managed with
+/// `gleam run -m tasks/flags`. Add new flags here.
+pub fn all_flags() -> List(flags.Flag) {
+  [newest_first()]
+}
+
+/// The app's flags, kept in its database and kept current from it.
+pub fn features(db: Repo) -> flags.Flags {
+  let assert Ok(store) = flags_database.store(db)
+  let assert Ok(features) =
+    flags.new(store) |> flags.register(all_flags()) |> flags.start
+  features
+}
+
 pub fn app(
   db: Repo,
   identity: auth.Auth,
   permissions: access.Authorization,
+  features: flags.Flags,
 ) -> howdy.App {
   // Documented with howdy/openapi, so the admin can list and call them,
   // signed in as any user.
@@ -202,7 +233,16 @@ pub fn app(
         endpoint.error(401, "Not signed in"),
       ])
       use ctx: GuardedContext(Principal) <- endpoint.handle
-      list(db, ctx.guard.user)
+      let user = ctx.guard.user
+      list(
+        db,
+        user,
+        newest_first: flags.enabled(
+          features,
+          newest_first(),
+          for: flags.user(user.id),
+        ),
+      )
       |> service.respond(ctx, schema.to_json(_, schema.list(note())))
     })
     // Everyone's notes, for a user holding the global `reader` role.
@@ -277,11 +317,19 @@ pub fn schema() -> migration.Package {
   ])
 }
 
-pub fn list(db: Repo, owner: User) -> service.Result(List(Note)) {
+pub fn list(
+  db: Repo,
+  owner: User,
+  newest_first newest_first: Bool,
+) -> service.Result(List(Note)) {
   use conn <- database.connect(db)
   database.query(
     conn,
-    "SELECT id, title, stars FROM notes_notes WHERE user_id = $1 ORDER BY id",
+    "SELECT id, title, stars FROM notes_notes WHERE user_id = $1 ORDER BY id"
+      <> case newest_first {
+      True -> " DESC"
+      False -> ""
+    },
     [sql.string(owner.id)],
     note_row(),
   )

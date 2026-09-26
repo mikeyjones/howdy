@@ -31,6 +31,11 @@ With `DATABASE_URL` set to a PostgreSQL server, the app and the admin use it
 instead of the SQLite file, and the grid follows changes through `NOTIFY`
 rather than polling.
 
+The app defines one feature flag, `notes_newest_first`, which the admin shows
+under **Flags**. `gleam run -m tasks/flags help` lists commands to manage the
+flags from a terminal, such as `list`, `kill` and `rollout`; `export` prints
+every flag the code defines as JSON without opening the database.
+
 `gleam run` serves the app without hot reload or the admin: both are dev
 dependencies and their entry point lives in `dev/`, which
 `gleam export erlang-shipment` leaves out.

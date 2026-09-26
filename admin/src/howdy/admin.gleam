@@ -35,6 +35,9 @@
 //// - `telemetry`: the traces and log lines a `howdy/telemetry/recorder`
 ////   holds, as they happen: each request as a timeline of its queries,
 ////   remote calls and emails, with repeated and slow queries pointed out.
+//// - `flags`: the feature flags of a `howdy/flags`: their kill switches,
+////   who they are allowed or blocked for, their history with undo, and the
+////   groups rules can name. Rollouts are shown, not set.
 ////
 //// Some things need no registering, because `mount` can see them in the
 //// app:
@@ -64,6 +67,7 @@ import howdy/admin/internal/accounts
 import howdy/admin/internal/api as api_pages
 import howdy/admin/internal/config.{type Config, Config}
 import howdy/admin/internal/data
+import howdy/admin/internal/flags as flag_pages
 import howdy/admin/internal/mail as mail_pages
 import howdy/admin/internal/notify
 import howdy/admin/internal/overview
@@ -72,6 +76,7 @@ import howdy/admin/internal/telemetry as telemetry_pages
 import howdy/auth.{type Auth}
 import howdy/authorization.{type Authorization}
 import howdy/controller.{type Controller}
+import howdy/flags.{type Flags}
 import howdy/mail.{type Mailer}
 import howdy/mail/outbox.{type Outbox}
 import howdy/mail/preview.{type Preview}
@@ -97,6 +102,7 @@ pub fn new() -> Admin {
       previews: [],
       mailer: None,
       recorder: None,
+      flags: None,
       api: None,
       hosts: [
         "localhost",
@@ -187,6 +193,14 @@ pub fn telemetry(admin: Admin, recorder: Recorder) -> Admin {
   Admin(Config(..admin.config, recorder: Some(recorder)))
 }
 
+/// Manage these feature flags: turn them off at once, allow or block them
+/// for users, organizations and groups, and undo any change. Rollouts and
+/// ramps are shown but set from the app. Changes are recorded as made by
+/// `howdy_admin`.
+pub fn flags(admin: Admin, features: Flags) -> Admin {
+  Admin(Config(..admin.config, flags: Some(features)))
+}
+
 /// Exact request hostnames (without port) the pages answer, replacing the
 /// loopback names. Anyone who can reach an allowed host owns your data.
 pub fn allow_hosts(admin: Admin, hosts: List(String)) -> Admin {
@@ -241,6 +255,10 @@ pub fn controllers(admin: Admin) -> List(Controller) {
     },
     case config.recorder {
       Some(recorder) -> [telemetry_pages.controller(config, recorder)]
+      None -> []
+    },
+    case config.flags {
+      Some(features) -> [flag_pages.controller(config, features)]
       None -> []
     },
     case config.api {
@@ -298,6 +316,11 @@ pub fn preview_count(admin: Admin) -> Int {
 /// Whether a telemetry recorder was registered.
 pub fn has_telemetry(admin: Admin) -> Bool {
   option.is_some(admin.config.recorder)
+}
+
+/// Whether feature flags were registered.
+pub fn has_flags(admin: Admin) -> Bool {
+  option.is_some(admin.config.flags)
 }
 
 /// Whether auth was registered.

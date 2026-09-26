@@ -89,6 +89,15 @@ fn navigation(config: Config) -> List(app_shell.Group) {
         ),
       ]
     },
+    case config.flags {
+      Some(_) -> [
+        Group("Flags", [
+          Link(at("/flags"), "Flags"),
+          Link(at("/flags/groups"), "Groups"),
+        ]),
+      ]
+      None -> []
+    },
     case config.api {
       Some(_) -> [Group("API", [Link(at("/api"), "Endpoints")])]
       None -> []

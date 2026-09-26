@@ -84,6 +84,17 @@ registry of the Repo or `auth.Auth` the app built, so the app hands them over:
   failures, statements repeated five or more times (a query per row) and
   statements slower than 100 ms pointed out. See
   [`howdy_telemetry`](../telemetry/README.md).
+- `admin.flags(features)`: the feature flags of a running `howdy/flags`,
+  including stored keys the code no longer registers. Each flag's page shows
+  its rollout and ramp, and has its kill switch, the users, organizations and
+  groups it is allowed or blocked for (a user can be given by email when
+  `auth` is registered), a check of whether someone gets it and why, and its
+  history with undo. Rollouts and ramps are not set here: the admin only
+  runs in development, so set them from the app or `howdy/flags/cli`. When
+  the flags' store is read-only, the pages show everything and change
+  nothing. **Groups** creates groups and manages
+  their members. Changes are recorded as made by `howdy_admin`. See
+  [`howdy_flags`](../flags/README.md).
 - `admin.at("/somewhere")` moves the pages, and `admin.named` sets the sidebar
   title.
 

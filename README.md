@@ -656,6 +656,26 @@ mail.message()
 
 `howdy/auth/emails` gives `howdy_auth` a ready-made email for every purpose.
 
+## Feature flags
+
+[`howdy_flags`](flags/README.md) keeps feature flags defined in code and
+switched at runtime: a kill switch, users, organizations and groups a flag is
+allowed or blocked for, and a rollout to a share of users that only ever adds
+people as it grows, raised by hand or step by step on a schedule. Checks read
+memory, never the store, and every change is recorded and can be undone.
+Settings live in the app's database by default, in memory, or anywhere a
+store can load them from. In development the admin shows them under
+**Flags**; on your own servers, `howdy/flags/cli` manages them from a task
+module:
+
+```gleam
+let assert Ok(store) = flags_database.store(db)
+let assert Ok(features) =
+  flags.new(store) |> flags.register([new_checkout()]) |> flags.start
+
+flags.enabled(features, new_checkout(), for: flags.user(user.id))
+```
+
 ## Testing
 
 `howdy/testing` runs requests through an app without starting a server. The
@@ -731,7 +751,8 @@ The core package reserves `howdy/auth`, every `howdy/auth/*` module and
 `howdy/database` and `howdy/migration` for `howdy_database`,
 `howdy/remote` and every `howdy/remote/*` module for `howdy_remote`, and
 `howdy/admin` and every `howdy/admin/*` module for `howdy_admin`, and
-`howdy/mail` and every `howdy/mail/*` module for `howdy_mail`. Core must not
+`howdy/mail` and every `howdy/mail/*` module for `howdy_mail`, and
+`howdy/flags` and every `howdy/flags/*` module for `howdy_flags`. Core must not
 define these modules: Gleam/BEAM module names are
 global across dependencies. CI runs `scripts/check-auth-namespace.sh` to
 reject collisions. Applications should put their own modules in their own

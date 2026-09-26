@@ -6,6 +6,7 @@ import gloo/repo.{type Repo}
 import howdy.{type App}
 import howdy/auth.{type Auth}
 import howdy/authorization.{type Authorization}
+import howdy/flags.{type Flags}
 import howdy/mail.{type Mailer}
 import howdy/mail/outbox.{type Outbox}
 import howdy/mail/preview.{type Preview}
@@ -26,6 +27,7 @@ pub type Config {
     previews: List(Preview),
     mailer: Option(Mailer),
     recorder: Option(Recorder),
+    flags: Option(Flags),
     /// The app's OpenAPI documents, found when the admin is mounted.
     api: Option(Api),
     /// Exact request hostnames the pages answer.

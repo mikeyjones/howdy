@@ -12,6 +12,9 @@
 ////
 //// Telemetry records into memory, and the admin shows every request as a
 //// timeline of its queries, emails and logs under **Telemetry**.
+////
+//// The app's feature flags are under **Flags**: kill switches, rollouts,
+//// ramps, rules for users and groups, and their history.
 
 import gleam/erlang/process
 import howdy
@@ -33,6 +36,7 @@ pub fn main() -> Nil {
     mail.mailer(outbox.adapter(box)) |> mail.default_from(example.sender)
   let identity = example.identity(db, mailer)
   let permissions = example.permissions(db)
+  let features = example.features(db)
   let dashboard =
     admin.new()
     |> admin.named("Notes admin")
@@ -41,10 +45,11 @@ pub fn main() -> Nil {
     |> admin.mail(box)
     |> admin.mail_previews(example.previews(mailer), send_with: mailer)
     |> admin.telemetry(recorder)
+    |> admin.flags(features)
 
   let assert Ok(_) =
     dev.start(fn() {
-      example.app(db, identity, permissions)
+      example.app(db, identity, permissions, features)
       |> admin.mount(dashboard)
       |> howdy.listening(on: 8787)
     })

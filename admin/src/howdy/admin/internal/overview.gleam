@@ -19,6 +19,7 @@ import howdy/authorization
 import howdy/content.{type Content}
 import howdy/controller.{type Context, type Controller}
 import howdy/database.{Postgres, Sqlite}
+import howdy/flags.{type Flags}
 import howdy/mail/outbox.{type Outbox}
 import howdy/service
 import howdy/telemetry/recorder.{type Recorder}
@@ -71,6 +72,14 @@ fn index(config: Config, ctx: Context) -> Response(Content) {
               "Not registered. Start telemetry with a recorder and pass it to admin.telemetry to see each request's queries, calls and logs.",
             )
         },
+        case config.flags {
+          Some(features) -> flags_card(config, features)
+          None ->
+            absent(
+              "howdy_flags",
+              "Not registered. Pass your running flags to admin.flags to switch them off, roll them out and see their history.",
+            )
+        },
         case config.api {
           Some(api) -> api_card(config, api)
           None ->
@@ -82,6 +91,47 @@ fn index(config: Config, ctx: Context) -> Response(Content) {
       ]),
     ],
   )
+}
+
+fn flags_card(config: Config, features: Flags) -> Element(msg) {
+  case flags.settings(features) {
+    Error(error) -> layout.problem(error)
+    Ok(stored) -> {
+      let killed = list.count(stored, fn(row) { { row.1 }.killed })
+      let ramping =
+        list.count(stored, fn(row) {
+          case { row.1 }.ramp {
+            Some(flags.Ramp(next: Some(_), ..)) -> True
+            _ -> False
+          }
+        })
+      ui.card([], [
+        ui.card_header([], [
+          ui.card_title([text("howdy_flags")]),
+          ui.card_description([
+            text(accounts.describe(
+              list.length(flags.defined(features)),
+              "registered flag",
+            )),
+            text(" · " <> int.to_string(list.length(stored)) <> " changed"),
+            text(" · " <> int.to_string(killed) <> " killed"),
+            text(" · " <> int.to_string(ramping) <> " ramping"),
+            text(
+              " · kept in "
+              <> flags.store_name(features)
+              <> case flags.writable(features) {
+                True -> ""
+                False -> ", read-only"
+              },
+            ),
+          ]),
+        ]),
+        ui.card_footer([], [
+          ui.link(config.path(config, "/flags"), [text("Manage flags")]),
+        ]),
+      ])
+    }
+  }
 }
 
 fn database_card(config: Config, repo: Repo) -> Element(msg) {

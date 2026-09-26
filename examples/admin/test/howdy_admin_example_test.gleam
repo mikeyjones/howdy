@@ -6,6 +6,7 @@ import gleeunit
 import gloo/repo
 import howdy/admin
 import howdy/auth
+import howdy/flags
 import howdy/mail
 import howdy/mail/outbox
 import howdy/mail/preview
@@ -24,10 +25,14 @@ pub fn the_admin_sees_the_notes_table_test() {
     mail.mailer(outbox.adapter(box)) |> mail.default_from(example.sender)
   let identity = example.identity(db, mailer)
   let permissions = example.permissions(db)
+  let features = example.features(db)
   let app =
-    example.app(db, identity, permissions)
+    example.app(db, identity, permissions, features)
     |> admin.mount(
-      admin.new() |> admin.auth(identity) |> admin.authorization(permissions),
+      admin.new()
+      |> admin.auth(identity)
+      |> admin.authorization(permissions)
+      |> admin.flags(features),
     )
   let res =
     testing.get("/_howdy/data")
@@ -40,6 +45,12 @@ pub fn the_admin_sees_the_notes_table_test() {
     |> request.set_host("localhost")
     |> testing.send(app)
   assert string.contains(testing.text(res), "reader")
+  let res =
+    testing.get("/_howdy/flags")
+    |> request.set_host("localhost")
+    |> testing.send(app)
+  assert string.contains(testing.text(res), "notes_newest_first")
+  flags.stop(features)
   let assert Ok(_) = repo.close(db)
 }
 
@@ -59,7 +70,7 @@ pub fn registration_mail_reaches_the_outbox_test() {
   assert string.contains(text, example.origin <> "/auth/login#token=")
 
   let app =
-    example.app(db, identity, example.permissions(db))
+    example.app(db, identity, example.permissions(db), example.features(db))
     |> admin.mount(
       admin.new()
       |> admin.mail(box)
