@@ -1,4 +1,5 @@
 import gleam/bit_array
+import gleam/dynamic
 import gleam/dynamic/decode
 import gleam/http
 import gleam/http/response
@@ -136,4 +137,24 @@ pub fn nested_prefix_test() {
   let app = howdy.new() |> howdy.controller(api)
   let res = testing.get("/api/v1/user/7/profile") |> testing.send(app)
   assert testing.text(res) == "profile 7"
+}
+
+pub fn annotations_test() {
+  let api =
+    controller.new("api")
+    |> controller.get("/a", fn(ctx: Context) { controller.text(ctx, "a") })
+    |> controller.annotate("docs", dynamic.string("first"))
+    |> controller.annotate("docs", dynamic.string("a"))
+    |> controller.get("/b", fn(ctx: Context) { controller.text(ctx, "b") })
+
+  let assert [a, b] = howdy.routes(howdy.new() |> howdy.controller(api))
+  assert a.segments == ["api", "a"]
+  assert controller.annotation(a, "docs") == Ok(dynamic.string("a"))
+  assert a.annotations == [#("docs", dynamic.string("a"))]
+  assert controller.annotation(b, "docs") == Error(Nil)
+
+  // Annotations never change routing.
+  let res =
+    testing.get("/api/a") |> testing.send(howdy.new() |> howdy.controller(api))
+  assert testing.text(res) == "a"
 }

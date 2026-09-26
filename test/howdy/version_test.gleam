@@ -344,3 +344,25 @@ pub fn not_found_answers_for_version_groups_test() {
   assert get(app, "/v2/users", []).status == 200
   assert send(app, http.Delete, "/v2/users", []).status == 405
 }
+
+pub fn reading_a_group_test() {
+  let v1 = controller.new("users") |> controller.get("/", ok)
+  let v2 = controller.new("users") |> controller.post("/", ok)
+  let group =
+    version.new(version.header("X-API-Version"))
+    |> version.default("v1")
+    |> version.add("v1", [v1])
+    |> version.add("v2", [v2])
+
+  assert version.strategy(group) == version.HeaderStrategy("x-api-version")
+  assert version.strategy(version.new(version.path())) == version.PathStrategy
+  assert version.names(group) == ["v1", "v2"]
+  assert version.default_version(group) == Some("v1")
+  assert version.controllers(group, "v2") == Ok([v2, v1])
+  assert version.controllers(group, "v1") == Ok([v1])
+  assert version.controllers(group, "v3") == Error(Nil)
+  assert version.controllers(version.no_fallback(group), "v2") == Ok([v2])
+
+  assert howdy.version_group(howdy.new()) == None
+  let assert Some(_) = howdy.version_group(howdy.new() |> howdy.versions(group))
+}

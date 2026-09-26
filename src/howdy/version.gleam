@@ -126,6 +126,53 @@ pub fn add(group: Group, name: String, controllers: List(Controller)) -> Group {
   }
 }
 
+// -- Reading a group ---------------------------------------------------------
+//
+// For packages that describe an app's routes, such as `howdy_openapi`.
+
+/// How a group reads the version, as set by its resolver.
+pub type Strategy {
+  /// `path()`: the first path segment, as in `/v2/users`.
+  PathStrategy
+  /// `header(name)`: a request header. `name` is lowercase.
+  HeaderStrategy(name: String)
+  /// `accept(vendor)`: a vendor media type such as
+  /// `application/vnd.howdy.v2+json`.
+  AcceptStrategy(vendor: String)
+  /// `custom(fn)`: a function that cannot be described.
+  CustomStrategy
+}
+
+pub fn strategy(group: Group) -> Strategy {
+  case group.resolver {
+    Path -> PathStrategy
+    Header(name) -> HeaderStrategy(name)
+    Accept(vendor) -> AcceptStrategy(vendor)
+    Custom(_) -> CustomStrategy
+  }
+}
+
+/// The version names, in declaration order.
+pub fn names(group: Group) -> List(String) {
+  list.map(group.versions, fn(version) { version.0 })
+}
+
+/// The version a request without one gets, if the group has a default.
+pub fn default_version(group: Group) -> Option(String) {
+  group.default
+}
+
+/// The controllers that answer for a version, with fallback applied: its
+/// own first, then earlier versions', newest first. The first route that
+/// matches a request wins, so a version's overrides come before what it
+/// inherits. `Error` for a version that was never added.
+pub fn controllers(
+  group: Group,
+  name: String,
+) -> Result(List(Controller), Nil) {
+  dict.get(table(group), name)
+}
+
 /// The outcome of resolving a request's version.
 @internal
 pub type Resolved {

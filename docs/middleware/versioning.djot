@@ -279,3 +279,8 @@ pub fn unknown_version_is_rejected_test() {
 Keep a test for each old version for as long as you support it. They are
 what tells you a change to shared code has broken a client you promised not
 to break.
+
+## Documenting versions
+
+`howdy_openapi` builds an OpenAPI document for each version, showing how
+clients choose it. See [OpenAPI documents](/docs/openapi/overview).

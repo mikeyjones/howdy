@@ -21,7 +21,9 @@ import gleam/result
 import gleam/string
 import howdy/content.{type Content}
 import howdy/context.{type Body, Context}
-import howdy/controller.{type Controller, type Handler, type Middleware}
+import howdy/controller.{
+  type Controller, type Handler, type Middleware, type Route,
+}
 import howdy/router
 import howdy/service
 import howdy/trace
@@ -188,6 +190,20 @@ pub fn middleware(app: App, middleware: Middleware) -> App {
 /// Mount a controller. Controllers are matched in the order they are added.
 pub fn controller(app: App, controller: Controller) -> App {
   App(..app, controllers: list.append(app.controllers, [controller]))
+}
+
+/// The routes of every controller mounted so far, in matching order, each
+/// wrapped in its controller's middleware but not the app's. Routes in a
+/// version group are not included. For packages that describe an app's
+/// routes, such as `howdy_openapi`; call it once every controller is mounted.
+pub fn routes(app: App) -> List(Route) {
+  list.flat_map(app.controllers, controller.routes)
+}
+
+/// The version group mounted with `versions`, if any. For packages that
+/// describe an app's routes, such as `howdy_openapi`.
+pub fn version_group(app: App) -> Option(Group) {
+  app.versions
 }
 
 /// Mount a version group from `howdy/version`. Unversioned controllers are

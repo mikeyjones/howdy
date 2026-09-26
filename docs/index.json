@@ -300,6 +300,22 @@
       ]
     },
     {
+      "slug": "openapi",
+      "title": "OpenAPI",
+      "docs": [
+        {
+          "slug": "overview",
+          "title": "OpenAPI documents",
+          "description": "Document a JSON API as OpenAPI 3.1 with howdy_openapi, from endpoints that read their inputs through schemas, and serve an interactive reference."
+        },
+        {
+          "slug": "schemas",
+          "title": "Schemas",
+          "description": "Describe a JSON value once and get its decoder, its encoder and its JSON Schema, with constraints checked while decoding."
+        }
+      ]
+    },
+    {
       "slug": "telemetry",
       "title": "Telemetry",
       "docs": [

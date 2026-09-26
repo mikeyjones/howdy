@@ -12,6 +12,7 @@
 //// ```
 
 import gleam/dict
+import gleam/dynamic.{type Dynamic}
 import gleam/http.{type Method}
 import gleam/http/response.{type Response}
 import gleam/json.{type Json}
@@ -42,8 +43,15 @@ pub type Middleware =
   fn(Context, Next) -> Response(Content)
 
 /// A single route: method, path pattern (already prefixed) and handler.
+/// `annotations` hold values other packages attach with `annotate`, keyed by
+/// the package that owns them; the router ignores them.
 pub type Route {
-  Route(method: Method, segments: List(String), handler: Handler)
+  Route(
+    method: Method,
+    segments: List(String),
+    handler: Handler,
+    annotations: List(#(String, Dynamic)),
+  )
 }
 
 /// A named group of routes.
@@ -166,6 +174,7 @@ pub fn route(
     Route(
       method:,
       segments: list.append(controller.prefix, segments(path)),
+      annotations: [],
       handler: fn(ctx) {
         case check(ctx) {
           Ok(value) ->
@@ -180,6 +189,33 @@ pub fn route(
       },
     )
   Controller(..controller, routes: [route, ..controller.routes])
+}
+
+/// Attach `value` under `key` to the route added most recently. This is for
+/// packages that describe routes, such as `howdy_openapi`, not for handlers:
+/// the router never reads annotations. Use a key naming your package, and
+/// read it back with `annotation`. A later value for the same key replaces
+/// the earlier one. Panics if the controller has no routes yet.
+pub fn annotate(
+  controller: Builder(guarded),
+  key: String,
+  value: Dynamic,
+) -> Builder(guarded) {
+  case controller.routes {
+    [route, ..rest] -> {
+      let annotations = [
+        #(key, value),
+        ..list.filter(route.annotations, fn(entry) { entry.0 != key })
+      ]
+      Controller(..controller, routes: [Route(..route, annotations:), ..rest])
+    }
+    [] -> panic as "howdy/controller: annotate needs a route to annotate"
+  }
+}
+
+/// The value attached to a route under `key` with `annotate`.
+pub fn annotation(route: Route, key: String) -> Result(Dynamic, Nil) {
+  list.key_find(route.annotations, key)
 }
 
 pub fn get(
