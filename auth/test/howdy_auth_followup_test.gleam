@@ -16,6 +16,7 @@ import howdy/auth/password_check
 import howdy/auth/secret
 import howdy/auth/user
 import howdy/authorization as access
+import howdy/database as howdy_database
 import howdy/migration
 import howdy/service
 import support.{fixture, signup}
@@ -295,6 +296,26 @@ pub fn application_owned_changes_invalidate_after_callback_completion_test() {
     // A transactional read cannot return the pre-transaction cached grant.
     assert cache.run(memo, key, 60, fn() { Ok(False) }) == Ok(False)
   })
+  assert cache.run(memo, key, 60, fn() { Ok(False) }) == Ok(False)
+}
+
+pub fn changes_invalidate_after_an_application_transaction_commits_test() {
+  use database, _, _, _ <- fixture
+  let memo = cache.new()
+  let key = #("user", "session", "scope", "permission", "read")
+  assert cache.run(memo, key, 60, fn() { Ok(True) }) == Ok(True)
+  let assert Ok(Nil) =
+    howdy_database.transaction(database, fn(_) {
+      // Auth's own transaction ends here, as a savepoint of the app's.
+      cache.changing(fn() { Nil })
+      // Another request still sees the old grant until the commit.
+      let cached = process.new_subject()
+      process.spawn(fn() {
+        process.send(cached, cache.run(memo, key, 60, fn() { Ok(True) }))
+      })
+      let assert Ok(Ok(True)) = process.receive(cached, 1000)
+      Ok(Nil)
+    })
   assert cache.run(memo, key, 60, fn() { Ok(False) }) == Ok(False)
 }
 

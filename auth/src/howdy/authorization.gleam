@@ -55,10 +55,12 @@ pub fn with_cache(
   }
 }
 
-/// Wrap application-owned grant data changes or an enclosing Gloo transaction
-/// so invalidation happens after its actual commit/rollback, not a savepoint.
-/// Cached decisions are bypassed inside the callback. Without this wrapper,
-/// direct SQL/external transactions have the same bounded TTL as remote nodes.
+/// Wrap application-owned grant data changes, or a transaction opened directly
+/// through `gloo/repo` or pog, so invalidation happens after its actual
+/// commit/rollback, not a savepoint. Transactions opened with `howdy/database`
+/// or `howdy/database/postgres` need no wrapper. Cached decisions are bypassed
+/// inside the callback. Without this wrapper, direct SQL/external transactions
+/// have the same bounded TTL as remote nodes.
 pub fn with_changes(run: fn() -> a) -> a {
   cache.changing(run)
 }

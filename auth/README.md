@@ -1841,10 +1841,12 @@ This bounded in-memory cache stores successful role/permission decisions, never
 database errors. Only role definition/assignment/revocation, suspension/resume and data migrations
 invalidate caches. Login, password, throttle and session transactions preserve
 cache entries. Invalidation follows the outermost Howdy transaction, including
-rollback; uncommitted changes bypass the cache. Use `access.with_changes(fn() {
-... })` around application-owned grant SQL and its entire external transaction
-when local invalidation is required. This wrapper does not make sharing SQLite
-connections or invoking auth operations inside external transactions safe. A generation stamp prevents an older in-flight read
+rollback, so a grant changed inside your own `database.transaction` or
+`postgres.transaction` is invalidated when that transaction ends; uncommitted
+changes bypass the cache. Use `access.with_changes(fn() { ... })` around
+application-owned grant SQL, and around transactions opened directly through
+`gloo/repo` or pog, when local invalidation is required. This wrapper does not
+make sharing SQLite connections safe. A generation stamp prevents an older in-flight read
 from repopulating the current generation after a write. Changes from another
 BEAM node or direct SQL may remain stale until the TTL; use the default for
 immediate distributed revocation. Always authenticate the session on every request:

@@ -1,5 +1,6 @@
 -module(howdy_database_ffi).
--export([with_lock/2, around_runs/2, run_hooks/0, getenv/1, monotonic_ms/0]).
+-export([with_lock/2, around_runs/2, run_hooks/0, around_transactions/2, outermost_transaction/1,
+         getenv/1, monotonic_ms/0]).
 
 %% A fair mutex per key, normally a Repo. One small server hands each key's
 %% lock to waiters in arrival order, so contention costs a message round trip
@@ -119,16 +120,40 @@ grant_next(Lock, Waiters, Locks) ->
 
 %% Hooks bracketing migration runs on this node, in name order. Registration
 %% is rare and idempotent, so persistent_term's update cost is not paid twice.
-around_runs(Name, Hook) ->
-    with_lock(howdy_database_run_hooks, fun() ->
-        case persistent_term:get(howdy_database_run_hooks, #{}) of
+around_runs(Name, Hook) -> register_hook(howdy_database_run_hooks, Name, Hook).
+
+run_hooks() -> hooks(howdy_database_run_hooks).
+
+%% Hooks bracketing the outermost Howdy transaction in a process. Nested
+%% transactions, whichever Repo or pog connection they use, run bare.
+around_transactions(Name, Hook) ->
+    register_hook(howdy_database_transaction_hooks, Name, Hook).
+
+outermost_transaction(Run) ->
+    Key = howdy_database_transaction_depth,
+    case get(Key) of
+        undefined ->
+            put(Key, 1),
+            Wrapped = lists:foldr(
+                fun(Hook, Inner) -> fun() -> Hook(Inner) end end,
+                Run,
+                hooks(howdy_database_transaction_hooks)
+            ),
+            try Wrapped() after erase(Key) end;
+        _ ->
+            Run()
+    end.
+
+register_hook(Registry, Name, Hook) ->
+    with_lock(Registry, fun() ->
+        case persistent_term:get(Registry, #{}) of
             #{Name := Hook} -> nil;
-            Hooks -> persistent_term:put(howdy_database_run_hooks, Hooks#{Name => Hook}), nil
+            Hooks -> persistent_term:put(Registry, Hooks#{Name => Hook}), nil
         end
     end).
 
-run_hooks() ->
-    [Hook || {_, Hook} <- lists:sort(maps:to_list(persistent_term:get(howdy_database_run_hooks, #{})))].
+hooks(Registry) ->
+    [Hook || {_, Hook} <- lists:sort(maps:to_list(persistent_term:get(Registry, #{})))].
 
 getenv(Name) ->
     case os:getenv(unicode:characters_to_list(Name)) of

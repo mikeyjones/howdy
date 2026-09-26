@@ -169,6 +169,37 @@ pub fn registered_hooks_bracket_every_run_in_name_order_test() {
   assert process.receive(events, 0) == Error(Nil)
 }
 
+pub fn transaction_hooks_bracket_only_the_outermost_transaction_test() {
+  use db <- with_repo
+  assert migration.run(db, [notes()]) == Ok(Nil)
+  let events = process.new_subject()
+  let me = process.self()
+  database.around_transactions("test_transactions", fn(run) {
+    case process.self() == me {
+      False -> run()
+      True -> {
+        process.send(events, "before")
+        let answer = run()
+        // Outside the transaction: its rollback is already visible.
+        let rows = count(db, "SELECT COUNT(*) FROM notes_notes")
+        process.send(events, "after " <> int.to_string(rows))
+        answer
+      }
+    }
+  })
+  let answer = {
+    use conn <- database.transaction(db)
+    let assert Ok(Nil) = database.transaction(conn, insert(_, "1", "first"))
+    Error(service.Forbidden)
+  }
+  // Later tests share the node; leave a hook that reports nowhere.
+  database.around_transactions("test_transactions", fn(run) { run() })
+  assert answer == Error(service.Forbidden)
+  assert process.receive(events, 0) == Ok("before")
+  assert process.receive(events, 0) == Ok("after 0")
+  assert process.receive(events, 0) == Error(Nil)
+}
+
 pub fn transaction_keeps_the_typed_error_and_rolls_back_test() {
   use db <- with_repo
   assert migration.run(db, [notes()]) == Ok(Nil)

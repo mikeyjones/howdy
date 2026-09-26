@@ -2,6 +2,7 @@
 //// SQLite). Gloo is the storage seam. The application owns the Repo
 //// lifecycle; every Howdy module and the application itself can share it.
 
+import gleam/dynamic.{type Dynamic}
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/list
@@ -107,12 +108,39 @@ pub fn connect(
   }
 }
 
+/// Bracket the outermost `transaction` in each process on this node, for a
+/// module that keeps state derived from the database in memory, such as a
+/// cache that must be invalidated after the commit rather than after a
+/// savepoint. `hook` must call the function it is given exactly once and
+/// return its result; it runs outside the transaction. Registering `name`
+/// again replaces its hook. Transactions opened directly through
+/// `gloo/repo` or pog are not bracketed.
+pub fn around_transactions(
+  name: String,
+  hook: fn(fn() -> Dynamic) -> Dynamic,
+) -> Nil {
+  register_transaction_hook(name, hook)
+}
+
+@external(erlang, "howdy_database_ffi", "around_transactions")
+fn register_transaction_hook(
+  name: String,
+  hook: fn(fn() -> Dynamic) -> Dynamic,
+) -> Nil
+
+/// Run inside the `around_transactions` hooks unless this process is already
+/// inside a Howdy transaction.
+@external(erlang, "howdy_database_ffi", "outermost_transaction")
+@internal
+pub fn bracketed(run: fn() -> a) -> a
+
 /// Commit when `run` returns `Ok`; roll back and return its error otherwise.
 /// The transaction is a `transaction` span, with its queries inside.
 pub fn transaction(
   repo: Repo,
   run: fn(Repo) -> service.Result(a),
 ) -> service.Result(a) {
+  use <- bracketed
   use <- trace.span("transaction", [])
   use repo <- connect(repo)
   // Gloo 1.x stringifies callback errors during rollback. Keep the original

@@ -110,6 +110,45 @@ Behind a pooler such as PgBouncer that rejects unknown startup parameters,
 set the timeouts on the database role with `ALTER ROLE … SET`, and pass
 zero here.
 
+### Querying with pog or Squirrel
+
+Code that talks to pog directly, such as the functions
+[Squirrel](https://hexdocs.pm/squirrel) generates, can share the same pool.
+`start_pool` starts it like `start`, but keeps the `pog.Connection` as well
+as the Repo:
+
+```gleam
+let assert Ok(pool) =
+  postgres.from_env()
+  |> result.try(postgres.start_pool)
+
+let db = postgres.repo(pool)          // for auth and other Howdy modules
+let conn = postgres.connection(pool)  // for pog and Squirrel
+```
+
+`postgres.transaction` opens one transaction and gives you both handles to
+it. Everything commits or rolls back together, and a Howdy module's own
+transaction becomes a savepoint inside it:
+
+```gleam
+use conn, db <- postgres.transaction(pool)
+use note <- result.try(
+  sql.insert_note(conn, owner, body) |> result.map_error(postgres.error),
+)
+audit.record(db, owner, note.id)
+```
+
+Open the transaction this way, not with `database.transaction`: a Repo
+does not give up its pog connection, so Squirrel queries cannot join a
+transaction the Repo opened. `postgres.error` turns a pog error into a
+`service.Error` the way `howdy/database` does: a constraint violation
+becomes a `Conflict`, anything else an `Internal`, without the driver's
+message.
+
+If your app starts pog itself, `postgres.from_pog(started)` wraps the pool
+in the same way, without waiting for the server. Queries sent straight to
+pog skip the query spans that the Repo records.
+
 ## Sharing a SQLite Repo
 
 Gloo gives a SQLite Repo exactly one connection. Everything that goes

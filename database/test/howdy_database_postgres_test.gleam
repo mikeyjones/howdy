@@ -7,9 +7,12 @@ import gleam/result
 import gleam/string
 import gloo/migration as gloo_migration
 import gloo/repo.{type Repo}
+import gloo/value
 import howdy/database
 import howdy/database/postgres
 import howdy/migration
+import howdy/service
+import pog
 
 @external(erlang, "howdy_database_ffi", "getenv")
 fn getenv(name: String) -> Result(String, Nil)
@@ -169,6 +172,152 @@ pub fn migrators_wait_for_each_other_despite_the_lock_timeout_test() {
     repo.execute(admin, "DROP DATABASE " <> name <> " WITH (FORCE)", [])
   let assert Ok(_) = repo.close(admin)
   Nil
+}
+
+/// A table private to one test, as if a Squirrel app and a Howdy module
+/// both wrote to it.
+fn notes_table(pool: postgres.Pool) -> #(String, fn() -> List(String)) {
+  let table = "howdy_database_notes_" <> int_id()
+  let assert Ok(_) =
+    pog.query("CREATE TABLE " <> table <> " (body TEXT PRIMARY KEY)")
+    |> pog.execute(postgres.connection(pool))
+  let bodies = fn() {
+    let assert Ok(rows) =
+      repo.all(
+        postgres.repo(pool),
+        "SELECT body FROM " <> table <> " ORDER BY body",
+        [],
+        decode.field(0, decode.string, decode.success),
+      )
+    rows
+  }
+  #(table, bodies)
+}
+
+fn pog_insert(conn: pog.Connection, table: String, body: String) {
+  pog.query("INSERT INTO " <> table <> " (body) VALUES ($1)")
+  |> pog.parameter(pog.text(body))
+  |> pog.execute(conn)
+  |> result.map(fn(_) { Nil })
+  |> result.map_error(postgres.error)
+}
+
+fn repo_insert(db: Repo, table: String, body: String) {
+  database.execute(db, "INSERT INTO " <> table <> " (body) VALUES ($1)", [
+    value.GString(body),
+  ])
+}
+
+fn drop(pool: postgres.Pool, table: String) {
+  let assert Ok(_) =
+    pog.query("DROP TABLE " <> table) |> pog.execute(postgres.connection(pool))
+  let assert Ok(_) = repo.close(postgres.repo(pool))
+  Nil
+}
+
+pub fn pog_and_the_repo_share_one_pool_test() {
+  use config <- with_postgres
+  let assert Ok(pool) = postgres.start_pool(config)
+  let #(table, bodies) = notes_table(pool)
+  let assert Ok(Nil) = pog_insert(postgres.connection(pool), table, "a")
+  let assert Ok(Nil) = repo_insert(postgres.repo(pool), table, "b")
+  assert bodies() == ["a", "b"]
+  drop(pool, table)
+}
+
+pub fn transactions_commit_and_roll_back_pog_and_repo_writes_together_test() {
+  use config <- with_postgres
+  let assert Ok(pool) = postgres.start_pool(config)
+  let #(table, bodies) = notes_table(pool)
+
+  let assert Ok(Nil) = {
+    use conn, db <- postgres.transaction(pool)
+    use _ <- result.try(pog_insert(conn, table, "a"))
+    // A Howdy module's own transaction nests as a savepoint.
+    database.transaction(db, fn(tx) { repo_insert(tx, table, "b") })
+  }
+  assert bodies() == ["a", "b"]
+
+  let failed = {
+    use conn, db <- postgres.transaction(pool)
+    use _ <- result.try(pog_insert(conn, table, "c"))
+    use _ <- result.try(repo_insert(db, table, "d"))
+    Error(service.Invalid("changed my mind"))
+  }
+  assert failed == Error(service.Invalid("changed my mind"))
+  assert bodies() == ["a", "b"]
+
+  // A failed inner transaction only undoes its own savepoint.
+  let assert Ok(Nil) = {
+    use conn, db <- postgres.transaction(pool)
+    let assert Error(_) =
+      database.transaction(db, fn(tx) {
+        use _ <- result.try(repo_insert(tx, table, "e"))
+        repo_insert(tx, table, "a")
+      })
+    pog_insert(conn, table, "f")
+  }
+  assert bodies() == ["a", "b", "f"]
+  drop(pool, table)
+}
+
+pub fn transaction_hooks_bracket_pog_transactions_test() {
+  use config <- with_postgres
+  let assert Ok(pool) = postgres.start_pool(config)
+  let #(table, _) = notes_table(pool)
+  let events = process.new_subject()
+  let me = process.self()
+  database.around_transactions("test_pog_transactions", fn(run) {
+    case process.self() == me {
+      False -> run()
+      True -> {
+        process.send(events, "before")
+        let answer = run()
+        process.send(events, "after")
+        answer
+      }
+    }
+  })
+  let assert Ok(Nil) = {
+    use conn, db <- postgres.transaction(pool)
+    use _ <- result.try(pog_insert(conn, table, "a"))
+    database.transaction(db, fn(tx) { repo_insert(tx, table, "b") })
+  }
+  database.around_transactions("test_pog_transactions", fn(run) { run() })
+  assert process.receive(events, 0) == Ok("before")
+  assert process.receive(events, 0) == Ok("after")
+  assert process.receive(events, 0) == Error(Nil)
+  drop(pool, table)
+}
+
+pub fn an_application_started_pog_pool_can_be_adopted_test() {
+  use config <- with_postgres
+  let #(host, port, name, user, password, _, _) = postgres.inspect(config)
+  let assert Ok(started) =
+    pog.default_config(process.new_name(prefix: "howdy_database_test"))
+    |> pog.host(host)
+    |> pog.port(port)
+    |> pog.database(name)
+    |> pog.user(user)
+    |> pog.password(password)
+    |> pog.pool_size(2)
+    |> pog.start
+  let pool = postgres.from_pog(started)
+  let #(table, bodies) = notes_table(pool)
+  let assert Ok(Nil) = {
+    use conn, db <- postgres.transaction(pool)
+    use _ <- result.try(pog_insert(conn, table, "a"))
+    repo_insert(db, table, "b")
+  }
+  assert bodies() == ["a", "b"]
+  drop(pool, table)
+}
+
+pub fn pog_errors_map_like_gloo_errors_without_driver_detail_test() {
+  assert postgres.error(pog.ConstraintViolated("secret", "pk", "secret"))
+    == service.Conflict("the record conflicts with existing data")
+  assert postgres.error(pog.PostgresqlError("42P01", "undefined", "secret"))
+    == service.Internal("database operation failed")
 }
 
 @external(erlang, "erlang", "unique_integer")

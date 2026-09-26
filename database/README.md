@@ -152,6 +152,11 @@ pub fn rename(db, id: String, slug: String) -> service.Result(Nil) {
   `TIMESTAMPTZ` on PostgreSQL and unix seconds on SQLite.
 - `backend` reports which database a Repo is; `locked` is the fair, reentrant
   mutex beneath all of this.
+- `around_transactions` brackets the outermost `transaction` in each process,
+  including `postgres.transaction`, for a module whose in-memory state must
+  change after the commit rather than after a nested savepoint. Auth uses it
+  so a grant changed inside your own transaction invalidates its cache when
+  your transaction ends.
 
 Gloo's SQLite adapter binds `$n` placeholders by position: never reuse one
 placeholder in a query, pass the value again.

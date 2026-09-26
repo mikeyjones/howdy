@@ -1,5 +1,6 @@
 //// Optional bounded authorization cache. Never caches database errors.
 
+import howdy/database
 import howdy/migration
 import howdy/service
 
@@ -9,9 +10,13 @@ pub type Cache
 fn table() -> Cache
 
 /// Migrations can rewrite grants and suspensions under a live cache, whichever
-/// package they belong to, so every run on this node invalidates it.
+/// package they belong to, so every run on this node invalidates it. A grant
+/// change inside an application's own transaction must invalidate after that
+/// transaction commits, not after auth's savepoint, or a concurrent read could
+/// cache the old grant again in between.
 pub fn new() -> Cache {
   migration.around_runs("howdy_auth_cache", changing)
+  database.around_transactions("howdy_auth_cache", transaction)
   table()
 }
 
