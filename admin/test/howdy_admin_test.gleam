@@ -476,6 +476,8 @@ pub fn postgres_announces_changes_and_sqlite_does_not_test() {
       let assert Ok(url) = getenv("HOWDY_ADMIN_TEST_POSTGRES_URL")
       let assert Ok(settings) = pog.url_config(process.new_name("listen"), url)
       use settings <- list.each([None, Some(settings)])
+      // Each pass ends by removing the triggers, so put them back first.
+      let assert Ok(Nil) = notify.install(db, table)
       let heard = process.new_subject()
       let owner = process.spawn_unlinked(fn() { process.sleep(30_000) })
       let before = links()

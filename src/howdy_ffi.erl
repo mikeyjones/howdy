@@ -6,6 +6,7 @@
 -export([console_put/2, console_get/1]).
 -export([quiet_disconnects/0, log_disconnects/0, stop_server/2]).
 -export([rescue/1, warn_at_most_every/2, getenv/1]).
+-export([cleanup/2]).
 
 %% -- Console ---------------------------------------------------------------------
 
@@ -120,6 +121,18 @@ rescue(Fun) ->
             logger:error(#{msg => "howdy: handler crashed",
                            class => Class, reason => Reason, stacktrace => Stack}),
             {error, unicode:characters_to_binary(io_lib:format("~p:~0tP", [Class, Reason, 8]))}
+    end.
+
+%% -- Cleanup -------------------------------------------------------------------
+%%
+%% Run a test, then its cleanup whether the test returned or crashed; a
+%% crash carries on after the cleanup, so the test still fails.
+
+cleanup(After, Run) ->
+    try
+        Run()
+    after
+        After()
     end.
 
 %% -- Throttled warnings ----------------------------------------------------------

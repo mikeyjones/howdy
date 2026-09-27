@@ -308,7 +308,8 @@ pub fn start_pool(config: Config) -> Result(Pool, Error) {
 /// `startup_timeout`, so a supervisor whose database is down fails to start
 /// with a clear reason rather than serving requests that all fail. The
 /// handle keeps working across restarts of the pool; a query made while it
-/// is restarting fails, as it would while the server is away. Because the
+/// is restarting, or after the supervisor stops, exits the calling process
+/// with `noproc`, as pog does for any named pool. Because the
 /// supervisor owns the pool, `repo.close` on this handle's Repo does
 /// nothing: stop the supervisor instead.
 pub fn supervised(

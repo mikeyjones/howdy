@@ -194,6 +194,19 @@ pub fn list_todos_test() {
 }
 ```
 
+A failed assertion crashes the test, so a plain call after `run_test` would
+never close the database of a test that failed. `testing.cleanup` runs its
+function either way, and the test still fails:
+
+```gleam
+pub fn with_db(run_test: fn(Repo) -> a) -> a {
+  let assert Ok(db) = sqlite.start(sqlite.memory())
+  use <- testing.cleanup(fn() { repo.close(db) })
+  let assert Ok(_) = database.migrate(db)
+  run_test(db)
+}
+```
+
 Create test data through the same validators and services your handlers
 use, not by writing rows by hand. Fixtures built that way cannot drift out
 of step with the rules of the app.

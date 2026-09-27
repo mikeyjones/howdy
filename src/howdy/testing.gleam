@@ -173,6 +173,23 @@ pub fn send(req: Request(Body), app: App) -> Response(Content) {
   howdy.serve(app)(req)
 }
 
+// -- Cleaning up -------------------------------------------------------------
+
+/// Run `run`, then `after`, even when `run` crashes, as a test does when an
+/// assertion fails. A crash still fails the test once `after` has run. Use
+/// it to release what a test opened, such as a database:
+///
+/// ```gleam
+/// pub fn with_db(run_test: fn(Repo) -> a) -> a {
+///   let assert Ok(db) = sqlite.start(sqlite.memory())
+///   use <- testing.cleanup(fn() { repo.close(db) })
+///   let assert Ok(_) = database.migrate(db)
+///   run_test(db)
+/// }
+/// ```
+@external(erlang, "howdy_ffi", "cleanup")
+pub fn cleanup(after cleanup: fn() -> b, run run: fn() -> a) -> a
+
 // -- Reading responses -------------------------------------------------------
 
 /// The response body as text. `Empty` is `""`. Panics for bodies that are

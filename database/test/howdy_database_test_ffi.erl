@@ -1,6 +1,7 @@
 -module(howdy_database_test_ffi).
 -export([lock_serializes/0, lock_reentrant/0, lock_holder_exit/0,
-         lock_server_restart/0, children/1, putenv/2, unsetenv/1]).
+         lock_server_restart/0, children/1, putenv/2, unsetenv/1,
+         exits/1]).
 
 %% The pids of a supervisor's running children.
 children(Supervisor) ->
@@ -103,3 +104,9 @@ putenv(Name, Value) ->
 unsetenv(Name) ->
     true = os:unsetenv(unicode:characters_to_list(Name)),
     nil.
+
+%% Run Fun, turning an exit it raises into {error, nil}.
+exits(Fun) ->
+    try {ok, Fun()}
+    catch exit:_ -> {error, nil}
+    end.

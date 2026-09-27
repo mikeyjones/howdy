@@ -46,9 +46,19 @@ async function launch() {
   const browser = await connect(version.webSocketDebuggerUrl);
   return {
     browser,
-    close() {
-      child.kill();
-      rmSync(profile, { recursive: true, force: true });
+    // Chromium keeps writing its profile as it shuts down, so wait for it to
+    // exit, and never fail the run over a leftover temporary directory.
+    async close() {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = new Promise((resolve) => child.once('exit', resolve));
+        child.kill();
+        await Promise.race([exited, sleep(5000)]);
+      }
+      try {
+        rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (error) {
+        console.warn(`could not remove ${profile}: ${error.message}`);
+      }
     },
   };
 }
@@ -638,7 +648,7 @@ try {
     }
   }
 } finally {
-  close();
+  await close();
 }
 console.log(`\n${ran - failed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

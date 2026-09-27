@@ -25,6 +25,9 @@ fn now() -> Int
 @external(erlang, "howdy_database_test_ffi", "children")
 fn children(supervisor: process.Pid) -> List(process.Pid)
 
+@external(erlang, "howdy_database_test_ffi", "exits")
+fn exits(run: fn() -> a) -> Result(a, Nil)
+
 @external(erlang, "howdy_database_test_ffi", "putenv")
 fn putenv(name: String, value: String) -> Nil
 
@@ -171,10 +174,18 @@ pub fn supervised_pool_fails_to_start_when_the_server_cannot_be_reached_test() {
   let assert Ok(config) = postgres.from_url("postgres://u@127.0.0.1:1/app")
   let #(_, child) = postgres.supervised(config |> postgres.startup_timeout(300))
   let started = now()
-  let assert Error(_) =
+  // The supervisor links to whoever starts it and exits when its child
+  // fails, so start it from a helper that traps that exit.
+  let outcome = process.new_subject()
+  process.spawn_unlinked(fn() {
+    process.trap_exits(True)
     static_supervisor.new(static_supervisor.OneForOne)
     |> static_supervisor.add(child)
     |> static_supervisor.start
+    |> result.is_error
+    |> process.send(outcome, _)
+  })
+  assert process.receive(outcome, 5000) == Ok(True)
   assert now() - started < 5000
 }
 
@@ -198,16 +209,19 @@ pub fn supervised_pool_answers_and_is_restarted_test() {
   assert eventually(fn() { result.is_error(setting_result(db, "search_path")) })
 }
 
+// While the pool is restarting or stopped its name is unregistered, and pgo
+// exits the caller with noproc rather than returning an error.
 fn setting_result(db: Repo, name: String) -> Result(String, Nil) {
-  case
+  let query = fn() {
     repo.all(
       db,
       "SELECT current_setting('" <> name <> "')",
       [],
       decode.field(0, decode.string, decode.success),
     )
-  {
-    Ok([value]) -> Ok(value)
+  }
+  case exits(query) {
+    Ok(Ok([value])) -> Ok(value)
     _ -> Error(Nil)
   }
 }
