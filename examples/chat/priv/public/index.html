@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>howdy chat</title>
+  <style>
+    body { font: 15px/1.4 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    #log { border: 1px solid #ccc; height: 20rem; overflow-y: auto; padding: .5rem; margin: 1rem 0; }
+    .notice { color: #777; font-style: italic; }
+    .from { font-weight: 600; }
+    form { display: flex; gap: .5rem; }
+    input[type=text] { flex: 1; }
+  </style>
+</head>
+<body>
+  <h1>howdy chat</h1>
+  <form id="join">
+    <input type="text" id="name" placeholder="your name" required>
+    <input type="text" id="room" value="lobby" required>
+    <button>Join</button>
+  </form>
+  <div id="log"></div>
+  <form id="say" hidden>
+    <input type="text" id="text" placeholder="say something" autocomplete="off">
+    <button>Send</button>
+  </form>
+  <script>
+    const log = document.getElementById("log");
+    let socket;
+
+    function show(html, cls) {
+      const line = document.createElement("div");
+      if (cls) line.className = cls;
+      line.innerHTML = html;
+      log.append(line);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    document.getElementById("join").onsubmit = (e) => {
+      e.preventDefault();
+      const name = document.getElementById("name").value;
+      const room = document.getElementById("room").value;
+      const scheme = location.protocol === "https:" ? "wss" : "ws";
+      socket = new WebSocket(`${scheme}://${location.host}/chat/${encodeURIComponent(room)}?name=${encodeURIComponent(name)}`);
+      socket.onopen = () => {
+        document.getElementById("join").hidden = true;
+        document.getElementById("say").hidden = false;
+        document.getElementById("text").focus();
+      };
+      socket.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        const esc = (s) => s.replace(/[&<>]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"}[c]));
+        if (msg.kind === "notice") show(esc(msg.text), "notice");
+        else show(`<span class="from">${esc(msg.from)}:</span> ${esc(msg.text)}`);
+      };
+      socket.onclose = () => show("disconnected", "notice");
+    };
+
+    document.getElementById("say").onsubmit = (e) => {
+      e.preventDefault();
+      const input = document.getElementById("text");
+      if (input.value) socket.send(JSON.stringify({ text: input.value }));
+      input.value = "";
+    };
+  </script>
+</body>
+</html>
