@@ -187,7 +187,6 @@ fn announce(ctx: Context) {
 }
 ```
 
-{since="2.1"}
 ## Presence
 
 A channel knows which sockets are on a topic, but not who they belong to.
