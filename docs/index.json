@@ -104,7 +104,7 @@
         {
           "slug": "websockets",
           "title": "WebSockets",
-          "description": "Open WebSockets as ordinary routes, keep state per connection, and broadcast to groups of sockets with channels."
+          "description": "Open WebSockets as ordinary routes, keep state per connection, broadcast to groups of sockets with channels, and track who is online with presence."
         }
       ]
     },

@@ -40,7 +40,7 @@ pub fn version() -> String {
   }
 }
 
-const fallback_version = "0.1.0"
+const fallback_version = "2.0.0"
 
 @external(erlang, "howdy_ui_cli_ffi", "version")
 fn loaded_version() -> Result(String, Nil)
