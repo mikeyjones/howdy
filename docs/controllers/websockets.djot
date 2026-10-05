@@ -5,6 +5,10 @@ and either side can send a message at any time. That makes it the tool for
 anything the server needs to push: chat, notifications, live prices, a
 progress bar.
 
+If only the server needs to push, and the browser just listens,
+[server-sent events](/docs/controllers/server-sent-events) are simpler:
+they are plain HTTP, and the browser reconnects by itself.
+
 In Howdy a WebSocket is an ordinary route. It starts life as a `GET`
 request, so it is declared on a controller like any other and passes
 through the same middleware, [guards](/docs/controllers/guards) and

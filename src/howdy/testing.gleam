@@ -39,6 +39,7 @@
 import gleam/bit_array
 import gleam/bytes_tree
 import gleam/dynamic/decode.{type Decoder}
+import gleam/erlang/process.{type Subject}
 import gleam/http.{type Method}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -52,6 +53,7 @@ import howdy.{type App}
 import howdy/content.{type Content}
 import howdy/context.{type Body}
 import howdy/service.{type FieldError}
+import howdy/sse
 
 // -- Building requests -------------------------------------------------------
 
@@ -192,8 +194,9 @@ pub fn cleanup(after cleanup: fn() -> b, run run: fn() -> a) -> a
 
 // -- Reading responses -------------------------------------------------------
 
-/// The response body as text. `Empty` is `""`. Panics for bodies that are
-/// not UTF-8 or that stream, since those cannot be read in a test.
+/// The response body as text. `Empty` is `""`, and a body from
+/// `howdy/stream` is written out in full. Panics for bodies that are not
+/// UTF-8 or cannot be read in a test, such as a file or an event stream.
 pub fn text(res: Response(Content)) -> String {
   case bit_array.to_string(bytes(res)) {
     Ok(text) -> text
@@ -201,15 +204,71 @@ pub fn text(res: Response(Content)) -> String {
   }
 }
 
-/// The response body as bytes. `Empty` is `<<>>`. Panics for bodies that
-/// stream, since those cannot be read in a test.
+/// The response body as bytes. `Empty` is `<<>>`, and a body from
+/// `howdy/stream` is written out in full. Panics for bodies that cannot be
+/// read in a test, such as a file or an event stream.
 pub fn bytes(res: Response(Content)) -> BitArray {
   case res.body {
     content.Text(text) -> <<text:utf8>>
     content.Bytes(tree) -> bytes_tree.to_bit_array(tree)
     content.Empty -> <<>>
-    _ -> panic as "howdy/testing: response body is streamed and cannot be read"
+    content.Native(_) ->
+      case content.collect(res.body) {
+        Ok(bits) -> bits
+        Error(Nil) ->
+          panic as "howdy/testing: response body is streamed and cannot be read"
+      }
   }
+}
+
+// -- Event streams -----------------------------------------------------------
+
+/// An event stream from `howdy/sse`, running in a test without a socket.
+pub opaque type EventStream {
+  EventStream(events: Subject(sse.Event), close: fn() -> Nil)
+}
+
+/// Open the event stream a response describes. Its `on_open` has run by
+/// the time this returns, so it is already on its topics and anything the
+/// test broadcasts reaches it. Heartbeats are not sent. Panics if the
+/// response is not an event stream; check the status first.
+///
+/// ```gleam
+/// let stream = testing.get("/orders/events") |> testing.send(app())
+///   |> testing.open_events
+/// sse.broadcast("orders", sse.event("hello"))
+/// assert testing.next_event(stream) == Ok(sse.event("hello"))
+/// testing.close_events(stream)
+/// ```
+pub fn open_events(res: Response(Content)) -> EventStream {
+  let rehearse = case sse.rehearsal(res.body) {
+    Ok(rehearse) -> rehearse
+    Error(Nil) -> panic as "howdy/testing: response is not an event stream"
+  }
+  let events = process.new_subject()
+  let close = rehearse(fn(event) { process.send(events, event) })
+  EventStream(events:, close:)
+}
+
+/// The next event the stream sends, waiting up to a second for it.
+/// `Error(Nil)` if none arrives in time.
+pub fn next_event(stream: EventStream) -> Result(sse.Event, Nil) {
+  process.receive(stream.events, 1000)
+}
+
+/// Every event the stream has sent that the test has not yet read, without
+/// waiting for more.
+pub fn sent_events(stream: EventStream) -> List(sse.Event) {
+  case process.receive(stream.events, 0) {
+    Ok(event) -> [event, ..sent_events(stream)]
+    Error(Nil) -> []
+  }
+}
+
+/// End the stream as a client going away would, and wait for its
+/// `on_close` to run.
+pub fn close_events(stream: EventStream) -> Nil {
+  stream.close()
 }
 
 /// Decode the response body as JSON with `decoder`.

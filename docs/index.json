@@ -105,6 +105,11 @@
           "slug": "websockets",
           "title": "WebSockets",
           "description": "Open WebSockets as ordinary routes, keep state per connection, broadcast to groups of sockets with channels, and track who is online with presence."
+        },
+        {
+          "slug": "server-sent-events",
+          "title": "Server-sent events",
+          "description": "Push events to browsers over an ordinary response with howdy/sse: broadcast to topics, resume after a reconnect, keep idle streams open, and test streams without a socket."
         }
       ]
     },

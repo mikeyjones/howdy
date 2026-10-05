@@ -136,6 +136,46 @@ fn sign_out(ctx: Context) {
 
 See [Cookies](/docs/controllers/cookies) for the options.
 
+## Streaming a body
+
+A body that takes a while to produce, such as a large export, can be sent
+a piece at a time with `howdy/stream`, so the client receives each piece as
+soon as it is ready and the whole body is never held in memory:
+
+```gleam
+import gleam/list
+import gleam/result
+import howdy/stream
+
+fn export_users(_ctx: Context) {
+  response.new(200)
+  |> response.set_header("content-type", "text/csv; charset=utf-8")
+  |> stream.body(fn(writer) {
+    use writer <- result.try(stream.send_text(writer, "id,name\n"))
+    list.try_fold(users.all(), writer, fn(writer, user) {
+      stream.send_text(writer, user.id <> "," <> user.name <> "\n")
+    })
+  })
+}
+```
+
+The function runs once the status and headers have been sent. Each
+`stream.send` or `stream.send_text` hands back the writer for the next one,
+and returning `Ok` ends the body. Returning `Error` stops writing and closes
+the connection without ending the body, so the client can tell it was cut
+short rather than mistaking half an export for all of it. The error is
+logged, unless it came from a send that failed because the client had gone.
+
+Because the status has been sent before the body starts, a stream cannot
+change its mind and answer `500` part way through. Check what can be
+checked first, and answer with an error before streaming if it fails.
+
+`testing.text` and `testing.bytes` read a streamed body in full, so it is
+tested like any other.
+
+To push messages to a browser as things happen, rather than send one long
+body, use [server-sent events](/docs/controllers/server-sent-events).
+
 ## Responses you do not write
 
 Some responses never reach your handler, because Howdy sends them first:

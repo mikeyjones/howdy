@@ -532,6 +532,43 @@ these options to `live.socket(app, args)` or `live.socket_shared(runtime)` befor
 `websocket.upgrade(ctx)`; the direct `live.serve` helpers use the same-origin
 default.
 
+## Server-sent events
+
+`howdy/sse` keeps a `GET` response open and pushes events to the browser's
+`EventSource`. Like a socket it is an ordinary route, runs in its own process
+and is reached from anywhere through topics or its subject.
+
+```gleam
+import howdy/sse
+
+controller.new("orders")
+|> controller.get("/events", fn(ctx) {
+  sse.new(fn(stream) {
+    sse.join(stream, "orders")
+    Nil
+  })
+  |> sse.start(ctx)
+})
+
+// Anywhere else in the program:
+sse.broadcast("orders", sse.json(order_json) |> sse.name("order.created"))
+```
+
+- `sse.new(on_open)` returns the starting state; `on_message` handles what
+  other processes send to `sse.subject(stream)`, and `on_close` runs however
+  the stream ends. Callbacks return `sse.continue(state)` or `sse.stop()`.
+- Build events with `sse.event` or `sse.json`, then `name`, `id` and `retry`.
+  `sse.last_event_id(stream)` is the ID a reconnecting browser last saw.
+- `sse.join`, `sse.leave` and `sse.broadcast` work like WebSocket channels,
+  across nodes, but on their own topics.
+- A comment is sent every 15 seconds so proxies keep idle streams open; change
+  it with `sse.heartbeat` or turn it off with `sse.no_heartbeat`.
+- `testing.open_events(res)` runs a stream in a test, with
+  `testing.next_event` and `testing.close_events`.
+
+For one long body sent a piece at a time, such as a CSV export,
+`stream.body` from `howdy/stream` writes it in chunks as it is produced.
+
 ## Pages and live components
 
 Web pages, themes and Lustre server components live in a separate package,

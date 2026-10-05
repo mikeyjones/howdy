@@ -3,6 +3,9 @@
     "howdy": {
       "since": "2.0.0",
       "items": {
+        "Address": {
+          "since": "2.0.0"
+        },
         "App": {
           "since": "2.0.0"
         },
@@ -18,25 +21,55 @@
         "listening": {
           "since": "2.0.0"
         },
+        "log_disconnects": {
+          "since": "2.0.0"
+        },
         "middleware": {
           "since": "2.0.0"
         },
         "new": {
           "since": "2.0.0"
         },
+        "not_found": {
+          "since": "2.0.0"
+        },
+        "routes": {
+          "since": "2.0.0"
+        },
+        "shutdown_timeout": {
+          "since": "2.0.0"
+        },
         "start": {
+          "since": "2.0.0"
+        },
+        "start_application": {
           "since": "2.0.0"
         },
         "start_with": {
           "since": "2.0.0"
         },
+        "stop": {
+          "since": "2.0.0"
+        },
+        "stop_application": {
+          "since": "2.0.0"
+        },
+        "stop_within": {
+          "since": "2.0.0"
+        },
+        "supervised": {
+          "since": "2.0.0"
+        },
         "tls": {
           "since": "2.0.0"
         },
-        "tls_with": {
+        "tls_pem": {
           "since": "2.0.0"
         },
         "version": {
+          "since": "2.0.0"
+        },
+        "version_group": {
           "since": "2.0.0"
         },
         "versions": {
@@ -81,10 +114,27 @@
         }
       }
     },
+    "howdy/content": {
+      "since": "2.0.0",
+      "items": {
+        "Content": {
+          "since": "2.0.0"
+        },
+        "Native": {
+          "since": "2.0.0"
+        },
+        "SendError": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/context": {
       "since": "2.0.0",
       "items": {
         "Body": {
+          "since": "2.0.0"
+        },
+        "BodyError": {
           "since": "2.0.0"
         },
         "Context": {
@@ -123,6 +173,12 @@
           "since": "2.0.0"
         },
         "Route": {
+          "since": "2.0.0"
+        },
+        "annotate": {
+          "since": "2.0.0"
+        },
+        "annotation": {
           "since": "2.0.0"
         },
         "build": {
@@ -234,6 +290,9 @@
         },
         "string_or": {
           "since": "2.0.0"
+        },
+        "valid_name": {
+          "since": "2.0.0"
         }
       }
     },
@@ -297,6 +356,26 @@
           "since": "2.0.0"
         },
         "new": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/env": {
+      "since": "2.0.0",
+      "items": {
+        "flag": {
+          "since": "2.0.0"
+        },
+        "get": {
+          "since": "2.0.0"
+        },
+        "get_or": {
+          "since": "2.0.0"
+        },
+        "int": {
+          "since": "2.0.0"
+        },
+        "int_or": {
           "since": "2.0.0"
         }
       }
@@ -380,6 +459,9 @@
           "since": "2.0.0"
         },
         "Next": {
+          "since": "2.0.0"
+        },
+        "rescue": {
           "since": "2.0.0"
         },
         "wrap": {
@@ -523,6 +605,86 @@
         }
       }
     },
+    "howdy/sse": {
+      "since": "2.0.0",
+      "items": {
+        "Builder": {
+          "since": "2.0.0"
+        },
+        "Event": {
+          "since": "2.0.0"
+        },
+        "Next": {
+          "since": "2.0.0"
+        },
+        "Stream": {
+          "since": "2.0.0"
+        },
+        "broadcast": {
+          "since": "2.0.0"
+        },
+        "continue": {
+          "since": "2.0.0"
+        },
+        "event": {
+          "since": "2.0.0"
+        },
+        "heartbeat": {
+          "since": "2.0.0"
+        },
+        "id": {
+          "since": "2.0.0"
+        },
+        "join": {
+          "since": "2.0.0"
+        },
+        "json": {
+          "since": "2.0.0"
+        },
+        "last_event_id": {
+          "since": "2.0.0"
+        },
+        "leave": {
+          "since": "2.0.0"
+        },
+        "name": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "no_heartbeat": {
+          "since": "2.0.0"
+        },
+        "on_close": {
+          "since": "2.0.0"
+        },
+        "on_message": {
+          "since": "2.0.0"
+        },
+        "retry": {
+          "since": "2.0.0"
+        },
+        "send": {
+          "since": "2.0.0"
+        },
+        "send_comment": {
+          "since": "2.0.0"
+        },
+        "size": {
+          "since": "2.0.0"
+        },
+        "start": {
+          "since": "2.0.0"
+        },
+        "stop": {
+          "since": "2.0.0"
+        },
+        "subject": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/static": {
       "since": "2.0.0",
       "items": {
@@ -558,13 +720,39 @@
         }
       }
     },
+    "howdy/stream": {
+      "since": "2.0.0",
+      "items": {
+        "Writer": {
+          "since": "2.0.0"
+        },
+        "body": {
+          "since": "2.0.0"
+        },
+        "send": {
+          "since": "2.0.0"
+        },
+        "send_text": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/testing": {
       "since": "2.0.0",
       "items": {
+        "EventStream": {
+          "since": "2.0.0"
+        },
         "bytes": {
           "since": "2.0.0"
         },
         "bytes_body": {
+          "since": "2.0.0"
+        },
+        "cleanup": {
+          "since": "2.0.0"
+        },
+        "close_events": {
           "since": "2.0.0"
         },
         "cookie": {
@@ -600,6 +788,12 @@
         "json_body": {
           "since": "2.0.0"
         },
+        "next_event": {
+          "since": "2.0.0"
+        },
+        "open_events": {
+          "since": "2.0.0"
+        },
         "patch": {
           "since": "2.0.0"
         },
@@ -619,6 +813,9 @@
           "since": "2.0.0"
         },
         "send": {
+          "since": "2.0.0"
+        },
+        "sent_events": {
           "since": "2.0.0"
         },
         "text": {
@@ -715,6 +912,17 @@
         }
       }
     },
+    "howdy/url": {
+      "since": "2.0.0",
+      "items": {
+        "credentials": {
+          "since": "2.0.0"
+        },
+        "is_local": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/validate": {
       "since": "2.0.0",
       "items": {
@@ -777,10 +985,16 @@
         "Resolver": {
           "since": "2.0.0"
         },
+        "Strategy": {
+          "since": "2.0.0"
+        },
         "accept": {
           "since": "2.0.0"
         },
         "add": {
+          "since": "2.0.0"
+        },
+        "controllers": {
           "since": "2.0.0"
         },
         "custom": {
@@ -789,7 +1003,13 @@
         "default": {
           "since": "2.0.0"
         },
+        "default_version": {
+          "since": "2.0.0"
+        },
         "header": {
+          "since": "2.0.0"
+        },
+        "names": {
           "since": "2.0.0"
         },
         "new": {
@@ -799,6 +1019,9 @@
           "since": "2.0.0"
         },
         "path": {
+          "since": "2.0.0"
+        },
+        "strategy": {
           "since": "2.0.0"
         }
       }
@@ -816,9 +1039,6 @@
           "since": "2.0.0"
         },
         "Next": {
-          "since": "2.0.0"
-        },
-        "SendError": {
           "since": "2.0.0"
         },
         "Socket": {
@@ -919,6 +1139,47 @@
           "since": "2.0.0"
         }
       }
+    },
+    "howdy/websocket/presence": {
+      "since": "2.0.0",
+      "items": {
+        "Diff": {
+          "since": "2.0.0"
+        },
+        "Entry": {
+          "since": "2.0.0"
+        },
+        "Presence": {
+          "since": "2.0.0"
+        },
+        "client": {
+          "since": "2.0.0"
+        },
+        "client_script": {
+          "since": "2.0.0"
+        },
+        "count": {
+          "since": "2.0.0"
+        },
+        "list": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "subscribe": {
+          "since": "2.0.0"
+        },
+        "track": {
+          "since": "2.0.0"
+        },
+        "untrack": {
+          "since": "2.0.0"
+        },
+        "watch": {
+          "since": "2.0.0"
+        }
+      }
     }
   },
   "howdy_admin": {
@@ -946,6 +1207,9 @@
         "database": {
           "since": "2.0.0"
         },
+        "flags": {
+          "since": "2.0.0"
+        },
         "has_auth": {
           "since": "2.0.0"
         },
@@ -953,6 +1217,9 @@
           "since": "2.0.0"
         },
         "has_database": {
+          "since": "2.0.0"
+        },
+        "has_flags": {
           "since": "2.0.0"
         },
         "has_mail": {
@@ -976,6 +1243,9 @@
         "new": {
           "since": "2.0.0"
         },
+        "notify_via": {
+          "since": "2.0.0"
+        },
         "prefix": {
           "since": "2.0.0"
         },
@@ -995,14 +1265,213 @@
       "items": {
         "controller": {
           "since": "2.0.0"
-        },
+        }
+      }
+    },
+    "howdy/admin/internal/accounts/groups": {
+      "since": "2.0.0",
+      "items": {
         "count_groups": {
           "since": "2.0.0"
         },
+        "group_create": {
+          "since": "2.0.0"
+        },
+        "group_delete": {
+          "since": "2.0.0"
+        },
+        "group_index": {
+          "since": "2.0.0"
+        },
+        "group_rename": {
+          "since": "2.0.0"
+        },
+        "group_show": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/accounts/pieces": {
+      "since": "2.0.0",
+      "items": {
+        "group_path": {
+          "since": "2.0.0"
+        },
+        "group_select": {
+          "since": "2.0.0"
+        },
+        "members_table": {
+          "since": "2.0.0"
+        },
+        "status": {
+          "since": "2.0.0"
+        },
+        "user_path": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/accounts/users": {
+      "since": "2.0.0",
+      "items": {
         "count_users": {
           "since": "2.0.0"
         },
-        "describe": {
+        "forget_token": {
+          "since": "2.0.0"
+        },
+        "impersonate": {
+          "since": "2.0.0"
+        },
+        "role_change": {
+          "since": "2.0.0"
+        },
+        "session_revoke": {
+          "since": "2.0.0"
+        },
+        "user_action": {
+          "since": "2.0.0"
+        },
+        "user_create": {
+          "since": "2.0.0"
+        },
+        "user_delete": {
+          "since": "2.0.0"
+        },
+        "user_index": {
+          "since": "2.0.0"
+        },
+        "user_move": {
+          "since": "2.0.0"
+        },
+        "user_show": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/api": {
+      "since": "2.0.0",
+      "items": {
+        "controller": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/api/calling": {
+      "since": "2.0.0",
+      "items": {
+        "Outcome": {
+          "since": "2.0.0"
+        },
+        "call": {
+          "since": "2.0.0"
+        },
+        "field_name": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/api/documents": {
+      "since": "2.0.0",
+      "items": {
+        "documents": {
+          "since": "2.0.0"
+        },
+        "key": {
+          "since": "2.0.0"
+        },
+        "method_badge": {
+          "since": "2.0.0"
+        },
+        "monospace": {
+          "since": "2.0.0"
+        },
+        "operation_href": {
+          "since": "2.0.0"
+        },
+        "pick": {
+          "since": "2.0.0"
+        },
+        "status_badge": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/api/operation": {
+      "since": "2.0.0",
+      "items": {
+        "page": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/api_spec": {
+      "since": "2.0.0",
+      "items": {
+        "Document": {
+          "since": "2.0.0"
+        },
+        "Operation": {
+          "since": "2.0.0"
+        },
+        "Parameter": {
+          "since": "2.0.0"
+        },
+        "Reply": {
+          "since": "2.0.0"
+        },
+        "Scheme": {
+          "since": "2.0.0"
+        },
+        "Value": {
+          "since": "2.0.0"
+        },
+        "accept_for": {
+          "since": "2.0.0"
+        },
+        "choices": {
+          "since": "2.0.0"
+        },
+        "example": {
+          "since": "2.0.0"
+        },
+        "is_array": {
+          "since": "2.0.0"
+        },
+        "items": {
+          "since": "2.0.0"
+        },
+        "notes": {
+          "since": "2.0.0"
+        },
+        "parse": {
+          "since": "2.0.0"
+        },
+        "preset": {
+          "since": "2.0.0"
+        },
+        "pretty": {
+          "since": "2.0.0"
+        },
+        "pretty_text": {
+          "since": "2.0.0"
+        },
+        "properties": {
+          "since": "2.0.0"
+        },
+        "reference": {
+          "since": "2.0.0"
+        },
+        "resolve": {
+          "since": "2.0.0"
+        },
+        "security_of": {
+          "since": "2.0.0"
+        },
+        "type_text": {
+          "since": "2.0.0"
+        },
+        "value_decoder": {
           "since": "2.0.0"
         }
       }
@@ -1010,7 +1479,13 @@
     "howdy/admin/internal/config": {
       "since": "2.0.0",
       "items": {
+        "Api": {
+          "since": "2.0.0"
+        },
         "Config": {
+          "since": "2.0.0"
+        },
+        "actor": {
           "since": "2.0.0"
         },
         "path": {
@@ -1019,6 +1494,40 @@
       }
     },
     "howdy/admin/internal/data": {
+      "since": "2.0.0",
+      "items": {
+        "controller": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/data/forms": {
+      "since": "2.0.0",
+      "items": {
+        "key_from": {
+          "since": "2.0.0"
+        },
+        "row_form": {
+          "since": "2.0.0"
+        },
+        "row_path": {
+          "since": "2.0.0"
+        },
+        "submitted": {
+          "since": "2.0.0"
+        },
+        "table_path": {
+          "since": "2.0.0"
+        },
+        "with_table": {
+          "since": "2.0.0"
+        },
+        "yes_no": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/data/grid": {
       "since": "2.0.0",
       "items": {
         "Args": {
@@ -1030,10 +1539,98 @@
         "Msg": {
           "since": "2.0.0"
         },
+        "grid": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/flags": {
+      "since": "2.0.0",
+      "items": {
         "controller": {
           "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/flags/flag": {
+      "since": "2.0.0",
+      "items": {
+        "index": {
+          "since": "2.0.0"
         },
-        "grid": {
+        "show": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/flags/groups": {
+      "since": "2.0.0",
+      "items": {
+        "index": {
+          "since": "2.0.0"
+        },
+        "show": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/flags/pieces": {
+      "since": "2.0.0",
+      "items": {
+        "failure": {
+          "since": "2.0.0"
+        },
+        "flag_path": {
+          "since": "2.0.0"
+        },
+        "group_path": {
+          "since": "2.0.0"
+        },
+        "groups_failure": {
+          "since": "2.0.0"
+        },
+        "only": {
+          "since": "2.0.0"
+        },
+        "read_only_notice": {
+          "since": "2.0.0"
+        },
+        "read_target": {
+          "since": "2.0.0"
+        },
+        "target_inputs": {
+          "since": "2.0.0"
+        },
+        "target_view": {
+          "since": "2.0.0"
+        },
+        "with_group": {
+          "since": "2.0.0"
+        },
+        "with_key": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/format": {
+      "since": "2.0.0",
+      "items": {
+        "at": {
+          "since": "2.0.0"
+        },
+        "at_seconds": {
+          "since": "2.0.0"
+        },
+        "clock": {
+          "since": "2.0.0"
+        },
+        "date_time": {
+          "since": "2.0.0"
+        },
+        "describe": {
+          "since": "2.0.0"
+        },
+        "duration": {
           "since": "2.0.0"
         }
       }
@@ -1044,7 +1641,16 @@
         "clip": {
           "since": "2.0.0"
         },
+        "facts": {
+          "since": "2.0.0"
+        },
+        "failed": {
+          "since": "2.0.0"
+        },
         "failure": {
+          "since": "2.0.0"
+        },
+        "mono": {
           "since": "2.0.0"
         },
         "page": {
@@ -1071,6 +1677,58 @@
           "since": "2.0.0"
         },
         "controller": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/mail/message": {
+      "since": "2.0.0",
+      "items": {
+        "addresses": {
+          "since": "2.0.0"
+        },
+        "attachment_response": {
+          "since": "2.0.0"
+        },
+        "html_response": {
+          "since": "2.0.0"
+        },
+        "message_view": {
+          "since": "2.0.0"
+        },
+        "notice": {
+          "since": "2.0.0"
+        },
+        "page": {
+          "since": "2.0.0"
+        },
+        "query": {
+          "since": "2.0.0"
+        },
+        "source_response": {
+          "since": "2.0.0"
+        },
+        "tags": {
+          "since": "2.0.0"
+        },
+        "width_of": {
+          "since": "2.0.0"
+        },
+        "with_message": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/mail/previews": {
+      "since": "2.0.0",
+      "items": {
+        "page": {
+          "since": "2.0.0"
+        },
+        "send_preview": {
+          "since": "2.0.0"
+        },
+        "with_preview": {
           "since": "2.0.0"
         }
       }
@@ -1206,22 +1864,56 @@
         "ListMsg": {
           "since": "2.0.0"
         },
+        "Show": {
+          "since": "2.0.0"
+        },
+        "controller": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/telemetry/logs": {
+      "since": "2.0.0",
+      "items": {
         "LogsModel": {
           "since": "2.0.0"
         },
         "LogsMsg": {
           "since": "2.0.0"
         },
-        "Show": {
+        "app": {
           "since": "2.0.0"
         },
+        "card": {
+          "since": "2.0.0"
+        },
+        "page": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/telemetry/shared": {
+      "since": "2.0.0",
+      "items": {
         "Summary": {
           "since": "2.0.0"
         },
-        "controller": {
+        "every_second": {
           "since": "2.0.0"
         },
-        "duration": {
+        "failed": {
+          "since": "2.0.0"
+        },
+        "is_query": {
+          "since": "2.0.0"
+        },
+        "is_tooling": {
+          "since": "2.0.0"
+        },
+        "option": {
+          "since": "2.0.0"
+        },
+        "query_text": {
           "since": "2.0.0"
         },
         "repeated_queries": {
@@ -1233,10 +1925,33 @@
         "slow_query_us": {
           "since": "2.0.0"
         },
+        "status": {
+          "since": "2.0.0"
+        },
+        "status_badge": {
+          "since": "2.0.0"
+        },
         "summarise": {
           "since": "2.0.0"
         },
+        "ticking": {
+          "since": "2.0.0"
+        },
+        "trace_href": {
+          "since": "2.0.0"
+        },
         "tree": {
+          "since": "2.0.0"
+        },
+        "value": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/admin/internal/telemetry/trace": {
+      "since": "2.0.0",
+      "items": {
+        "page": {
           "since": "2.0.0"
         }
       }
@@ -1866,6 +2581,47 @@
         }
       }
     },
+    "howdy/auth/internal/account_flow": {
+      "since": "2.0.0",
+      "items": {
+        "add_device_session": {
+          "since": "2.0.0"
+        },
+        "approve_email_change": {
+          "since": "2.0.0"
+        },
+        "confirm_email_change": {
+          "since": "2.0.0"
+        },
+        "delete_account": {
+          "since": "2.0.0"
+        },
+        "delete_user": {
+          "since": "2.0.0"
+        },
+        "device_sessions": {
+          "since": "2.0.0"
+        },
+        "enroll": {
+          "since": "2.0.0"
+        },
+        "linked_providers": {
+          "since": "2.0.0"
+        },
+        "provision_with": {
+          "since": "2.0.0"
+        },
+        "register": {
+          "since": "2.0.0"
+        },
+        "request_email_change": {
+          "since": "2.0.0"
+        },
+        "unlink_provider": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/auth/internal/account_store": {
       "since": "2.0.0",
       "items": {
@@ -1924,6 +2680,20 @@
         }
       }
     },
+    "howdy/auth/internal/audit": {
+      "since": "2.0.0",
+      "items": {
+        "event": {
+          "since": "2.0.0"
+        },
+        "event_from": {
+          "since": "2.0.0"
+        },
+        "traced": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/auth/internal/cache": {
       "since": "2.0.0",
       "items": {
@@ -1943,6 +2713,106 @@
           "since": "2.0.0"
         },
         "transaction": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/common": {
+      "since": "2.0.0",
+      "items": {
+        "account_key": {
+          "since": "2.0.0"
+        },
+        "address_key": {
+          "since": "2.0.0"
+        },
+        "after_commit": {
+          "since": "2.0.0"
+        },
+        "bound_ceremony": {
+          "since": "2.0.0"
+        },
+        "client_key": {
+          "since": "2.0.0"
+        },
+        "consume_ceremony": {
+          "since": "2.0.0"
+        },
+        "cookie_name": {
+          "since": "2.0.0"
+        },
+        "delivery": {
+          "since": "2.0.0"
+        },
+        "email_code_digest": {
+          "since": "2.0.0"
+        },
+        "email_codes_enabled": {
+          "since": "2.0.0"
+        },
+        "existing": {
+          "since": "2.0.0"
+        },
+        "externally": {
+          "since": "2.0.0"
+        },
+        "in_bound_group": {
+          "since": "2.0.0"
+        },
+        "mfa_config": {
+          "since": "2.0.0"
+        },
+        "passkey_config": {
+          "since": "2.0.0"
+        },
+        "password_attempt": {
+          "since": "2.0.0"
+        },
+        "passwords": {
+          "since": "2.0.0"
+        },
+        "provider_enabled": {
+          "since": "2.0.0"
+        },
+        "require_email_tokens": {
+          "since": "2.0.0"
+        },
+        "secure": {
+          "since": "2.0.0"
+        },
+        "sso_config": {
+          "since": "2.0.0"
+        },
+        "target": {
+          "since": "2.0.0"
+        },
+        "valid_token": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/config": {
+      "since": "2.0.0",
+      "items": {
+        "Config": {
+          "since": "2.0.0"
+        },
+        "PasskeySetup": {
+          "since": "2.0.0"
+        },
+        "Sessions": {
+          "since": "2.0.0"
+        },
+        "in_group": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "schema": {
+          "since": "2.0.0"
+        },
+        "with_groups": {
           "since": "2.0.0"
         }
       }
@@ -2041,6 +2911,23 @@
         }
       }
     },
+    "howdy/auth/internal/email_flow": {
+      "since": "2.0.0",
+      "items": {
+        "Preparation": {
+          "since": "2.0.0"
+        },
+        "redeem": {
+          "since": "2.0.0"
+        },
+        "redeem_code": {
+          "since": "2.0.0"
+        },
+        "request_challenge": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/auth/internal/keyring": {
       "since": "2.0.0",
       "items": {
@@ -2063,6 +2950,68 @@
           "since": "2.0.0"
         },
         "with_decryption_keys": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/labels": {
+      "since": "2.0.0",
+      "items": {
+        "Ceremony": {
+          "since": "2.0.0"
+        },
+        "Factor": {
+          "since": "2.0.0"
+        },
+        "Intent": {
+          "since": "2.0.0"
+        },
+        "Method": {
+          "since": "2.0.0"
+        },
+        "MfaMethod": {
+          "since": "2.0.0"
+        },
+        "Purpose": {
+          "since": "2.0.0"
+        },
+        "ceremony_name": {
+          "since": "2.0.0"
+        },
+        "factor_from": {
+          "since": "2.0.0"
+        },
+        "factor_name": {
+          "since": "2.0.0"
+        },
+        "first_factor": {
+          "since": "2.0.0"
+        },
+        "intent_from": {
+          "since": "2.0.0"
+        },
+        "intent_name": {
+          "since": "2.0.0"
+        },
+        "method_from": {
+          "since": "2.0.0"
+        },
+        "method_name": {
+          "since": "2.0.0"
+        },
+        "mfa_method_name": {
+          "since": "2.0.0"
+        },
+        "purpose_name": {
+          "since": "2.0.0"
+        },
+        "second_factor_verified": {
+          "since": "2.0.0"
+        },
+        "sso_connection_id": {
+          "since": "2.0.0"
+        },
+        "with_second_factor": {
           "since": "2.0.0"
         }
       }
@@ -2114,6 +3063,44 @@
         }
       }
     },
+    "howdy/auth/internal/mfa_flow": {
+      "since": "2.0.0",
+      "items": {
+        "begin": {
+          "since": "2.0.0"
+        },
+        "confirm": {
+          "since": "2.0.0"
+        },
+        "disable": {
+          "since": "2.0.0"
+        },
+        "regenerate_recovery_codes": {
+          "since": "2.0.0"
+        },
+        "reseal": {
+          "since": "2.0.0"
+        },
+        "revoke_trusted_device": {
+          "since": "2.0.0"
+        },
+        "send_code": {
+          "since": "2.0.0"
+        },
+        "status": {
+          "since": "2.0.0"
+        },
+        "trusted_devices": {
+          "since": "2.0.0"
+        },
+        "use_trusted_device": {
+          "since": "2.0.0"
+        },
+        "verify": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/auth/internal/oidc": {
       "since": "2.0.0",
       "items": {
@@ -2136,6 +3123,55 @@
           "since": "2.0.0"
         },
         "https": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/origin": {
+      "since": "2.0.0",
+      "items": {
+        "check": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/passkey_flow": {
+      "since": "2.0.0",
+      "items": {
+        "begin_login": {
+          "since": "2.0.0"
+        },
+        "begin_registration": {
+          "since": "2.0.0"
+        },
+        "begin_signup": {
+          "since": "2.0.0"
+        },
+        "delete": {
+          "since": "2.0.0"
+        },
+        "enable": {
+          "since": "2.0.0"
+        },
+        "finish_login": {
+          "since": "2.0.0"
+        },
+        "finish_registration": {
+          "since": "2.0.0"
+        },
+        "finish_signup": {
+          "since": "2.0.0"
+        },
+        "list_keys": {
+          "since": "2.0.0"
+        },
+        "relying_party": {
+          "since": "2.0.0"
+        },
+        "rename": {
+          "since": "2.0.0"
+        },
+        "signup_enabled": {
           "since": "2.0.0"
         }
       }
@@ -2171,6 +3207,58 @@
           "since": "2.0.0"
         },
         "verify": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/password_flow": {
+      "since": "2.0.0",
+      "items": {
+        "change": {
+          "since": "2.0.0"
+        },
+        "register": {
+          "since": "2.0.0"
+        },
+        "set": {
+          "since": "2.0.0"
+        },
+        "validate_new_password": {
+          "since": "2.0.0"
+        },
+        "verify": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/provider_flow": {
+      "since": "2.0.0",
+      "items": {
+        "Admission": {
+          "since": "2.0.0"
+        },
+        "add": {
+          "since": "2.0.0"
+        },
+        "begin": {
+          "since": "2.0.0"
+        },
+        "begin_attempt": {
+          "since": "2.0.0"
+        },
+        "begin_link": {
+          "since": "2.0.0"
+        },
+        "complete_identity": {
+          "since": "2.0.0"
+        },
+        "consume_attempt": {
+          "since": "2.0.0"
+        },
+        "finish": {
+          "since": "2.0.0"
+        },
+        "provider_path": {
           "since": "2.0.0"
         }
       }
@@ -2387,6 +3475,100 @@
         }
       }
     },
+    "howdy/auth/internal/session_flow": {
+      "since": "2.0.0",
+      "items": {
+        "Issued": {
+          "since": "2.0.0"
+        },
+        "authenticate_digest": {
+          "since": "2.0.0"
+        },
+        "authenticate_from": {
+          "since": "2.0.0"
+        },
+        "current_account": {
+          "since": "2.0.0"
+        },
+        "fresh_principal": {
+          "since": "2.0.0"
+        },
+        "impersonate": {
+          "since": "2.0.0"
+        },
+        "issue_session": {
+          "since": "2.0.0"
+        },
+        "issue_trusting_provider": {
+          "since": "2.0.0"
+        },
+        "issue_verified_session": {
+          "since": "2.0.0"
+        },
+        "logout": {
+          "since": "2.0.0"
+        },
+        "prune_events": {
+          "since": "2.0.0"
+        },
+        "prune_expired": {
+          "since": "2.0.0"
+        },
+        "publish": {
+          "since": "2.0.0"
+        },
+        "publish_step": {
+          "since": "2.0.0"
+        },
+        "required_from": {
+          "since": "2.0.0"
+        },
+        "resume": {
+          "since": "2.0.0"
+        },
+        "revoke_session": {
+          "since": "2.0.0"
+        },
+        "revoke_session_of": {
+          "since": "2.0.0"
+        },
+        "revoke_sessions": {
+          "since": "2.0.0"
+        },
+        "session_method": {
+          "since": "2.0.0"
+        },
+        "sessions": {
+          "since": "2.0.0"
+        },
+        "sessions_of": {
+          "since": "2.0.0"
+        },
+        "suspend": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/sso_flow": {
+      "since": "2.0.0",
+      "items": {
+        "begin": {
+          "since": "2.0.0"
+        },
+        "begin_link": {
+          "since": "2.0.0"
+        },
+        "end_covered_sessions": {
+          "since": "2.0.0"
+        },
+        "finish": {
+          "since": "2.0.0"
+        },
+        "for_email": {
+          "since": "2.0.0"
+        }
+      }
+    },
     "howdy/auth/internal/sso_oidc": {
       "since": "2.0.0",
       "items": {
@@ -2441,6 +3623,9 @@
           "since": "2.0.0"
         },
         "active_user_by_email": {
+          "since": "2.0.0"
+        },
+        "active_user_version": {
           "since": "2.0.0"
         },
         "active_user_with_password": {
@@ -2575,6 +3760,9 @@
         "reserve_password_client": {
           "since": "2.0.0"
         },
+        "session_for_user": {
+          "since": "2.0.0"
+        },
         "session_user": {
           "since": "2.0.0"
         },
@@ -2628,6 +3816,9 @@
         "code": {
           "since": "2.0.0"
         },
+        "constant_time_equal": {
+          "since": "2.0.0"
+        },
         "digest": {
           "since": "2.0.0"
         },
@@ -2638,6 +3829,58 @@
           "since": "2.0.0"
         },
         "now": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/types": {
+      "since": "2.0.0",
+      "items": {
+        "Delivery": {
+          "since": "2.0.0"
+        },
+        "LoginStep": {
+          "since": "2.0.0"
+        },
+        "MfaChallenge": {
+          "since": "2.0.0"
+        },
+        "MfaSession": {
+          "since": "2.0.0"
+        },
+        "MfaSetup": {
+          "since": "2.0.0"
+        },
+        "PasskeyChallenge": {
+          "since": "2.0.0"
+        },
+        "ProviderOutcome": {
+          "since": "2.0.0"
+        },
+        "ProviderStart": {
+          "since": "2.0.0"
+        },
+        "Session": {
+          "since": "2.0.0"
+        },
+        "SessionInfo": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/auth/internal/webauthn_adapter": {
+      "since": "2.0.0",
+      "items": {
+        "aaguid": {
+          "since": "2.0.0"
+        },
+        "attestation_auth_data": {
+          "since": "2.0.0"
+        },
+        "transport_from_string": {
+          "since": "2.0.0"
+        },
+        "transport_to_string": {
           "since": "2.0.0"
         }
       }
@@ -2843,6 +4086,9 @@
         },
         "memory": {
           "since": "2.0.0"
+        },
+        "memory_supervised": {
+          "since": "2.0.0"
         }
       }
     },
@@ -2959,6 +4205,9 @@
         "Backend": {
           "since": "2.0.0"
         },
+        "around_transactions": {
+          "since": "2.0.0"
+        },
         "backend": {
           "since": "2.0.0"
         },
@@ -3024,10 +4273,25 @@
         "Error": {
           "since": "2.0.0"
         },
+        "Pool": {
+          "since": "2.0.0"
+        },
         "Ssl": {
           "since": "2.0.0"
         },
+        "connection": {
+          "since": "2.0.0"
+        },
+        "error": {
+          "since": "2.0.0"
+        },
+        "error_to_string": {
+          "since": "2.0.0"
+        },
         "from_env": {
+          "since": "2.0.0"
+        },
+        "from_pog": {
           "since": "2.0.0"
         },
         "from_url": {
@@ -3048,16 +4312,28 @@
         "pool_size": {
           "since": "2.0.0"
         },
+        "repo": {
+          "since": "2.0.0"
+        },
         "ssl": {
           "since": "2.0.0"
         },
         "start": {
           "since": "2.0.0"
         },
+        "start_pool": {
+          "since": "2.0.0"
+        },
         "startup_timeout": {
           "since": "2.0.0"
         },
         "statement_timeout": {
+          "since": "2.0.0"
+        },
+        "supervised": {
+          "since": "2.0.0"
+        },
+        "transaction": {
           "since": "2.0.0"
         }
       }
@@ -3164,6 +4440,285 @@
           "since": "2.0.0"
         },
         "snapshot": {
+          "since": "2.0.0"
+        }
+      }
+    }
+  },
+  "howdy_flags": {
+    "howdy/flags": {
+      "since": "2.0.0",
+      "items": {
+        "Actor": {
+          "since": "2.0.0"
+        },
+        "Bucketing": {
+          "since": "2.0.0"
+        },
+        "Change": {
+          "since": "2.0.0"
+        },
+        "Config": {
+          "since": "2.0.0"
+        },
+        "Decision": {
+          "since": "2.0.0"
+        },
+        "Flag": {
+          "since": "2.0.0"
+        },
+        "Flags": {
+          "since": "2.0.0"
+        },
+        "GroupSummary": {
+          "since": "2.0.0"
+        },
+        "Ramp": {
+          "since": "2.0.0"
+        },
+        "Setting": {
+          "since": "2.0.0"
+        },
+        "Snapshot": {
+          "since": "2.0.0"
+        },
+        "Store": {
+          "since": "2.0.0"
+        },
+        "Target": {
+          "since": "2.0.0"
+        },
+        "Update": {
+          "since": "2.0.0"
+        },
+        "Writer": {
+          "since": "2.0.0"
+        },
+        "add_member": {
+          "since": "2.0.0"
+        },
+        "allow": {
+          "since": "2.0.0"
+        },
+        "anonymous": {
+          "since": "2.0.0"
+        },
+        "block": {
+          "since": "2.0.0"
+        },
+        "bucketing_from_string": {
+          "since": "2.0.0"
+        },
+        "bucketing_to_string": {
+          "since": "2.0.0"
+        },
+        "cancel_ramp": {
+          "since": "2.0.0"
+        },
+        "check_every": {
+          "since": "2.0.0"
+        },
+        "create_group": {
+          "since": "2.0.0"
+        },
+        "default": {
+          "since": "2.0.0"
+        },
+        "defined": {
+          "since": "2.0.0"
+        },
+        "delete_group": {
+          "since": "2.0.0"
+        },
+        "description": {
+          "since": "2.0.0"
+        },
+        "enabled": {
+          "since": "2.0.0"
+        },
+        "explain": {
+          "since": "2.0.0"
+        },
+        "export": {
+          "since": "2.0.0"
+        },
+        "flag": {
+          "since": "2.0.0"
+        },
+        "forget": {
+          "since": "2.0.0"
+        },
+        "groups": {
+          "since": "2.0.0"
+        },
+        "history": {
+          "since": "2.0.0"
+        },
+        "in_organization": {
+          "since": "2.0.0"
+        },
+        "is_on": {
+          "since": "2.0.0"
+        },
+        "key": {
+          "since": "2.0.0"
+        },
+        "kill": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "on_by_default": {
+          "since": "2.0.0"
+        },
+        "organization": {
+          "since": "2.0.0"
+        },
+        "parse_percent": {
+          "since": "2.0.0"
+        },
+        "pause_ramp": {
+          "since": "2.0.0"
+        },
+        "percent": {
+          "since": "2.0.0"
+        },
+        "percent_to_string": {
+          "since": "2.0.0"
+        },
+        "refresh": {
+          "since": "2.0.0"
+        },
+        "register": {
+          "since": "2.0.0"
+        },
+        "remove_member": {
+          "since": "2.0.0"
+        },
+        "resume_ramp": {
+          "since": "2.0.0"
+        },
+        "revive": {
+          "since": "2.0.0"
+        },
+        "set_bucketing": {
+          "since": "2.0.0"
+        },
+        "set_rollout": {
+          "since": "2.0.0"
+        },
+        "setting": {
+          "since": "2.0.0"
+        },
+        "setting_decoder": {
+          "since": "2.0.0"
+        },
+        "setting_to_json": {
+          "since": "2.0.0"
+        },
+        "settings": {
+          "since": "2.0.0"
+        },
+        "snapshot": {
+          "since": "2.0.0"
+        },
+        "snapshot_decoder": {
+          "since": "2.0.0"
+        },
+        "snapshot_to_json": {
+          "since": "2.0.0"
+        },
+        "start": {
+          "since": "2.0.0"
+        },
+        "start_ramp": {
+          "since": "2.0.0"
+        },
+        "stop": {
+          "since": "2.0.0"
+        },
+        "store": {
+          "since": "2.0.0"
+        },
+        "store_name": {
+          "since": "2.0.0"
+        },
+        "supervised": {
+          "since": "2.0.0"
+        },
+        "target_from_string": {
+          "since": "2.0.0"
+        },
+        "target_to_string": {
+          "since": "2.0.0"
+        },
+        "to_json": {
+          "since": "2.0.0"
+        },
+        "undo": {
+          "since": "2.0.0"
+        },
+        "unlist": {
+          "since": "2.0.0"
+        },
+        "user": {
+          "since": "2.0.0"
+        },
+        "with_writer": {
+          "since": "2.0.0"
+        },
+        "writable": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/flags/cli": {
+      "since": "2.0.0",
+      "items": {
+        "Outcome": {
+          "since": "2.0.0"
+        },
+        "main": {
+          "since": "2.0.0"
+        },
+        "run": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/flags/database": {
+      "since": "2.0.0",
+      "items": {
+        "schema": {
+          "since": "2.0.0"
+        },
+        "store": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/flags/internal/time": {
+      "since": "2.0.0",
+      "items": {
+        "duration": {
+          "since": "2.0.0"
+        },
+        "now": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/flags/memory": {
+      "since": "2.0.0",
+      "items": {
+        "from": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "stop": {
           "since": "2.0.0"
         }
       }
@@ -3301,23 +4856,6 @@
         }
       }
     },
-    "howdy/mail/internal/http": {
-      "since": "2.0.0",
-      "items": {
-        "display": {
-          "since": "2.0.0"
-        },
-        "failure": {
-          "since": "2.0.0"
-        },
-        "getenv": {
-          "since": "2.0.0"
-        },
-        "send": {
-          "since": "2.0.0"
-        }
-      }
-    },
     "howdy/mail/mime": {
       "since": "2.0.0",
       "items": {
@@ -3365,6 +4903,9 @@
         "messages": {
           "since": "2.0.0"
         },
+        "pid": {
+          "since": "2.0.0"
+        },
         "start": {
           "since": "2.0.0"
         },
@@ -3372,6 +4913,12 @@
           "since": "2.0.0"
         },
         "subscribe": {
+          "since": "2.0.0"
+        },
+        "supervised": {
+          "since": "2.0.0"
+        },
+        "supervised_in": {
           "since": "2.0.0"
         }
       }
@@ -3481,6 +5028,9 @@
         "adapter": {
           "since": "2.0.0"
         },
+        "backoff": {
+          "since": "2.0.0"
+        },
         "credentials": {
           "since": "2.0.0"
         },
@@ -3505,6 +5055,9 @@
         "port_of": {
           "since": "2.0.0"
         },
+        "retries": {
+          "since": "2.0.0"
+        },
         "timeout": {
           "since": "2.0.0"
         },
@@ -3515,6 +5068,264 @@
           "since": "2.0.0"
         },
         "username": {
+          "since": "2.0.0"
+        }
+      }
+    }
+  },
+  "howdy_openapi": {
+    "howdy/openapi": {
+      "since": "2.0.0",
+      "items": {
+        "Served": {
+          "since": "2.0.0"
+        },
+        "Spec": {
+          "since": "2.0.0"
+        },
+        "api_key_cookie": {
+          "since": "2.0.0"
+        },
+        "api_key_header": {
+          "since": "2.0.0"
+        },
+        "bearer_auth": {
+          "since": "2.0.0"
+        },
+        "description": {
+          "since": "2.0.0"
+        },
+        "document": {
+          "since": "2.0.0"
+        },
+        "new": {
+          "since": "2.0.0"
+        },
+        "reference": {
+          "since": "2.0.0"
+        },
+        "require": {
+          "since": "2.0.0"
+        },
+        "serve": {
+          "since": "2.0.0"
+        },
+        "served": {
+          "since": "2.0.0"
+        },
+        "server": {
+          "since": "2.0.0"
+        },
+        "version_document": {
+          "since": "2.0.0"
+        },
+        "versions": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/openapi/endpoint": {
+      "since": "2.0.0",
+      "items": {
+        "Doc": {
+          "since": "2.0.0"
+        },
+        "Endpoint": {
+          "since": "2.0.0"
+        },
+        "body": {
+          "since": "2.0.0"
+        },
+        "body_with_limit": {
+          "since": "2.0.0"
+        },
+        "delete": {
+          "since": "2.0.0"
+        },
+        "deprecated": {
+          "since": "2.0.0"
+        },
+        "describe": {
+          "since": "2.0.0"
+        },
+        "description": {
+          "since": "2.0.0"
+        },
+        "empty_response": {
+          "since": "2.0.0"
+        },
+        "error": {
+          "since": "2.0.0"
+        },
+        "get": {
+          "since": "2.0.0"
+        },
+        "handle": {
+          "since": "2.0.0"
+        },
+        "header": {
+          "since": "2.0.0"
+        },
+        "operation_id": {
+          "since": "2.0.0"
+        },
+        "optional_header": {
+          "since": "2.0.0"
+        },
+        "optional_query": {
+          "since": "2.0.0"
+        },
+        "patch": {
+          "since": "2.0.0"
+        },
+        "path": {
+          "since": "2.0.0"
+        },
+        "post": {
+          "since": "2.0.0"
+        },
+        "put": {
+          "since": "2.0.0"
+        },
+        "query": {
+          "since": "2.0.0"
+        },
+        "response": {
+          "since": "2.0.0"
+        },
+        "route": {
+          "since": "2.0.0"
+        },
+        "security": {
+          "since": "2.0.0"
+        },
+        "summary": {
+          "since": "2.0.0"
+        },
+        "tag": {
+          "since": "2.0.0"
+        },
+        "wrap": {
+          "since": "2.0.0"
+        }
+      }
+    },
+    "howdy/openapi/internal/annotation": {
+      "since": "2.0.0",
+      "items": {}
+    },
+    "howdy/openapi/schema": {
+      "since": "2.0.0",
+      "items": {
+        "Components": {
+          "since": "2.0.0"
+        },
+        "Node": {
+          "since": "2.0.0"
+        },
+        "Schema": {
+          "since": "2.0.0"
+        },
+        "Variant": {
+          "since": "2.0.0"
+        },
+        "bool": {
+          "since": "2.0.0"
+        },
+        "decoder": {
+          "since": "2.0.0"
+        },
+        "deprecated": {
+          "since": "2.0.0"
+        },
+        "description": {
+          "since": "2.0.0"
+        },
+        "dict": {
+          "since": "2.0.0"
+        },
+        "email": {
+          "since": "2.0.0"
+        },
+        "enum": {
+          "since": "2.0.0"
+        },
+        "example": {
+          "since": "2.0.0"
+        },
+        "field": {
+          "since": "2.0.0"
+        },
+        "float": {
+          "since": "2.0.0"
+        },
+        "float_maximum": {
+          "since": "2.0.0"
+        },
+        "float_minimum": {
+          "since": "2.0.0"
+        },
+        "format": {
+          "since": "2.0.0"
+        },
+        "int": {
+          "since": "2.0.0"
+        },
+        "list": {
+          "since": "2.0.0"
+        },
+        "map": {
+          "since": "2.0.0"
+        },
+        "max_items": {
+          "since": "2.0.0"
+        },
+        "max_length": {
+          "since": "2.0.0"
+        },
+        "maximum": {
+          "since": "2.0.0"
+        },
+        "min_items": {
+          "since": "2.0.0"
+        },
+        "min_length": {
+          "since": "2.0.0"
+        },
+        "minimum": {
+          "since": "2.0.0"
+        },
+        "named": {
+          "since": "2.0.0"
+        },
+        "not_empty": {
+          "since": "2.0.0"
+        },
+        "nullable": {
+          "since": "2.0.0"
+        },
+        "one_of": {
+          "since": "2.0.0"
+        },
+        "optional_field": {
+          "since": "2.0.0"
+        },
+        "rule": {
+          "since": "2.0.0"
+        },
+        "string": {
+          "since": "2.0.0"
+        },
+        "success": {
+          "since": "2.0.0"
+        },
+        "to_json": {
+          "since": "2.0.0"
+        },
+        "try_map": {
+          "since": "2.0.0"
+        },
+        "variant": {
           "since": "2.0.0"
         }
       }
@@ -3558,6 +5369,12 @@
           "since": "2.0.0"
         },
         "connect": {
+          "since": "2.0.0"
+        },
+        "connect_to": {
+          "since": "2.0.0"
+        },
+        "connector_supervised": {
           "since": "2.0.0"
         },
         "controller": {
@@ -4068,6 +5885,9 @@
         "row": {
           "since": "2.0.0"
         },
+        "rules": {
+          "since": "2.0.0"
+        },
         "scroll_area": {
           "since": "2.0.0"
         },
@@ -4386,6 +6206,9 @@
       "since": "2.0.0",
       "items": {
         "script": {
+          "since": "2.0.0"
+        },
+        "source": {
           "since": "2.0.0"
         }
       }
@@ -5487,6 +7310,9 @@
         "header": {
           "since": "2.0.0"
         },
+        "rules": {
+          "since": "2.0.0"
+        },
         "snap_points": {
           "since": "2.0.0"
         },
@@ -5502,6 +7328,9 @@
       "since": "2.0.0",
       "items": {
         "classes": {
+          "since": "2.0.0"
+        },
+        "rules": {
           "since": "2.0.0"
         },
         "scroll_fade": {
@@ -5559,6 +7388,9 @@
         "new": {
           "since": "2.0.0"
         },
+        "rules": {
+          "since": "2.0.0"
+        },
         "to_css": {
           "since": "2.0.0"
         },
@@ -5598,334 +7430,6 @@
           "since": "2.0.0"
         },
         "legend_class": {
-          "since": "2.0.0"
-        }
-      }
-    },
-    "howdy/ui/gallery": {
-      "since": "2.0.0",
-      "items": {
-        "bar_class": {
-          "since": "2.0.0"
-        },
-        "classes": {
-          "since": "2.0.0"
-        },
-        "code_class": {
-          "since": "2.0.0"
-        },
-        "content_class": {
-          "since": "2.0.0"
-        },
-        "controller": {
-          "since": "2.0.0"
-        },
-        "example_class": {
-          "since": "2.0.0"
-        },
-        "frame_class": {
-          "since": "2.0.0"
-        },
-        "grid_class": {
-          "since": "2.0.0"
-        },
-        "group_class": {
-          "since": "2.0.0"
-        },
-        "heading_class": {
-          "since": "2.0.0"
-        },
-        "home_class": {
-          "since": "2.0.0"
-        },
-        "muted_class": {
-          "since": "2.0.0"
-        },
-        "nav_link_class": {
-          "since": "2.0.0"
-        },
-        "pair_class": {
-          "since": "2.0.0"
-        },
-        "preview_class": {
-          "since": "2.0.0"
-        },
-        "section_class": {
-          "since": "2.0.0"
-        },
-        "source_class": {
-          "since": "2.0.0"
-        },
-        "swatch_class": {
-          "since": "2.0.0"
-        },
-        "theme_select_class": {
-          "since": "2.0.0"
-        },
-        "tile_class": {
-          "since": "2.0.0"
-        },
-        "tile_title_class": {
-          "since": "2.0.0"
-        }
-      }
-    },
-    "howdy/ui/gallery/examples": {
-      "since": "2.0.0",
-      "items": {
-        "Example": {
-          "since": "2.0.0"
-        },
-        "accordion": {
-          "since": "2.0.0"
-        },
-        "alert_dialog": {
-          "since": "2.0.0"
-        },
-        "alerts": {
-          "since": "2.0.0"
-        },
-        "area_chart": {
-          "since": "2.0.0"
-        },
-        "aspect_ratio": {
-          "since": "2.0.0"
-        },
-        "attachments": {
-          "since": "2.0.0"
-        },
-        "autoplay_carousel": {
-          "since": "2.0.0"
-        },
-        "avatars": {
-          "since": "2.0.0"
-        },
-        "badges": {
-          "since": "2.0.0"
-        },
-        "bar_chart": {
-          "since": "2.0.0"
-        },
-        "breadcrumb": {
-          "since": "2.0.0"
-        },
-        "button_group": {
-          "since": "2.0.0"
-        },
-        "button_sizes": {
-          "since": "2.0.0"
-        },
-        "button_variants": {
-          "since": "2.0.0"
-        },
-        "calendar_month": {
-          "since": "2.0.0"
-        },
-        "calendar_range": {
-          "since": "2.0.0"
-        },
-        "card_parts": {
-          "since": "2.0.0"
-        },
-        "carousel": {
-          "since": "2.0.0"
-        },
-        "choices": {
-          "since": "2.0.0"
-        },
-        "collapsible": {
-          "since": "2.0.0"
-        },
-        "combobox": {
-          "since": "2.0.0"
-        },
-        "command_menu": {
-          "since": "2.0.0"
-        },
-        "context_menu": {
-          "since": "2.0.0"
-        },
-        "conversation": {
-          "since": "2.0.0"
-        },
-        "data_table_example": {
-          "since": "2.0.0"
-        },
-        "date_picker": {
-          "since": "2.0.0"
-        },
-        "dialog_form": {
-          "since": "2.0.0"
-        },
-        "donut_chart": {
-          "since": "2.0.0"
-        },
-        "drawer": {
-          "since": "2.0.0"
-        },
-        "dropdown_menu": {
-          "since": "2.0.0"
-        },
-        "empty_state": {
-          "since": "2.0.0"
-        },
-        "field_states": {
-          "since": "2.0.0"
-        },
-        "fieldset": {
-          "since": "2.0.0"
-        },
-        "for": {
-          "since": "2.0.0"
-        },
-        "grouped_code": {
-          "since": "2.0.0"
-        },
-        "headings": {
-          "since": "2.0.0"
-        },
-        "hover_card": {
-          "since": "2.0.0"
-        },
-        "input_group": {
-          "since": "2.0.0"
-        },
-        "items": {
-          "since": "2.0.0"
-        },
-        "keys": {
-          "since": "2.0.0"
-        },
-        "layouts": {
-          "since": "2.0.0"
-        },
-        "line_chart": {
-          "since": "2.0.0"
-        },
-        "loading": {
-          "since": "2.0.0"
-        },
-        "long_history": {
-          "since": "2.0.0"
-        },
-        "menu_submenus": {
-          "since": "2.0.0"
-        },
-        "menubar": {
-          "since": "2.0.0"
-        },
-        "navigation_menu": {
-          "since": "2.0.0"
-        },
-        "one_time_code": {
-          "since": "2.0.0"
-        },
-        "pagination": {
-          "since": "2.0.0"
-        },
-        "popover": {
-          "since": "2.0.0"
-        },
-        "price_range": {
-          "since": "2.0.0"
-        },
-        "progress": {
-          "since": "2.0.0"
-        },
-        "prose": {
-          "since": "2.0.0"
-        },
-        "questionnaire": {
-          "since": "2.0.0"
-        },
-        "radar_chart": {
-          "since": "2.0.0"
-        },
-        "radial_chart": {
-          "since": "2.0.0"
-        },
-        "resizable": {
-          "since": "2.0.0"
-        },
-        "right_to_left": {
-          "since": "2.0.0"
-        },
-        "scroll_area": {
-          "since": "2.0.0"
-        },
-        "scroll_fade": {
-          "since": "2.0.0"
-        },
-        "select_menu": {
-          "since": "2.0.0"
-        },
-        "several_toppings": {
-          "since": "2.0.0"
-        },
-        "sheet": {
-          "since": "2.0.0"
-        },
-        "shell": {
-          "since": "2.0.0"
-        },
-        "shimmer": {
-          "since": "2.0.0"
-        },
-        "sidebar_layout": {
-          "since": "2.0.0"
-        },
-        "signing_in": {
-          "since": "2.0.0"
-        },
-        "signing_up": {
-          "since": "2.0.0"
-        },
-        "slider": {
-          "since": "2.0.0"
-        },
-        "stat_cards": {
-          "since": "2.0.0"
-        },
-        "switches": {
-          "since": "2.0.0"
-        },
-        "table": {
-          "since": "2.0.0"
-        },
-        "tabs": {
-          "since": "2.0.0"
-        },
-        "text_inputs": {
-          "since": "2.0.0"
-        },
-        "text_styles": {
-          "since": "2.0.0"
-        },
-        "theme_sample": {
-          "since": "2.0.0"
-        },
-        "toasts": {
-          "since": "2.0.0"
-        },
-        "toggle": {
-          "since": "2.0.0"
-        },
-        "toggle_group": {
-          "since": "2.0.0"
-        },
-        "tooltip": {
-          "since": "2.0.0"
-        },
-        "upright_sliders": {
-          "since": "2.0.0"
-        },
-        "vertical_carousel": {
-          "since": "2.0.0"
-        },
-        "vertical_tabs": {
-          "since": "2.0.0"
-        },
-        "working": {
           "since": "2.0.0"
         }
       }
@@ -6087,13 +7591,22 @@
         "css_of": {
           "since": "2.0.0"
         },
+        "css_of_rules": {
+          "since": "2.0.0"
+        },
         "document_css": {
           "since": "2.0.0"
         },
         "etag": {
           "since": "2.0.0"
         },
+        "rule": {
+          "since": "2.0.0"
+        },
         "scoped": {
+          "since": "2.0.0"
+        },
+        "scoped_names": {
           "since": "2.0.0"
         }
       }
@@ -6242,6 +7755,9 @@
       "since": "2.0.0",
       "items": {
         "classes": {
+          "since": "2.0.0"
+        },
+        "rules": {
           "since": "2.0.0"
         },
         "skeleton": {
@@ -6478,6 +7994,9 @@
           "since": "2.0.0"
         },
         "progress": {
+          "since": "2.0.0"
+        },
+        "rules": {
           "since": "2.0.0"
         },
         "sweep_class": {
@@ -6829,7 +8348,40 @@
         "anchor_name": {
           "since": "2.0.0"
         },
+        "border_line": {
+          "since": "2.0.0"
+        },
+        "bordered": {
+          "since": "2.0.0"
+        },
+        "bordered_side": {
+          "since": "2.0.0"
+        },
         "class": {
+          "since": "2.0.0"
+        },
+        "disabled_look": {
+          "since": "2.0.0"
+        },
+        "disabled_look_with": {
+          "since": "2.0.0"
+        },
+        "focus_outline": {
+          "since": "2.0.0"
+        },
+        "focus_ring": {
+          "since": "2.0.0"
+        },
+        "focus_ring_offset": {
+          "since": "2.0.0"
+        },
+        "pill": {
+          "since": "2.0.0"
+        },
+        "radius": {
+          "since": "2.0.0"
+        },
+        "rule": {
           "since": "2.0.0"
         },
         "styles": {
@@ -7227,6 +8779,9 @@
           "since": "2.0.0"
         },
         "region_class": {
+          "since": "2.0.0"
+        },
+        "rules": {
           "since": "2.0.0"
         },
         "title": {

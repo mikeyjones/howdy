@@ -39,7 +39,7 @@ import gleam/http/response.{type Response}
 import gleam/json.{type Json}
 import gleam/option.{None, Some}
 import gleam/result
-import howdy/content.{type Content}
+import howdy/content.{type Content, type SendError}
 import howdy/context
 import howdy/controller.{type GuardedContext}
 import howdy/service
@@ -119,18 +119,6 @@ pub type CloseCode {
   ApplicationCode(code: Int)
 }
 
-/// Why a frame could not be sent.
-pub type SendError {
-  /// The client is gone, so nothing further can be written.
-  ConnectionClosed
-  /// The client cancelled the HTTP/2 stream the socket runs on.
-  StreamReset
-  /// The client stopped reading for long enough that the write gave up.
-  SendTimedOut
-  /// The socket refused the write for another reason, described by `reason`.
-  SocketError(reason: String)
-}
-
 fn to_ewe_close_code(code: CloseCode) -> ewe.CloseCode {
   case code {
     NormalClosure -> ewe.NormalClosure
@@ -145,16 +133,6 @@ fn to_ewe_close_code(code: CloseCode) -> ewe.CloseCode {
     TryAgainLater -> ewe.TryAgainLater
     BadGateway -> ewe.BadGateway
     ApplicationCode(code:) -> ewe.ApplicationCode(code:)
-  }
-}
-
-fn from_ewe_send_error(error: ewe.SendError) -> SendError {
-  case error {
-    ewe.ConnectionClosed -> ConnectionClosed
-    ewe.StreamReset -> StreamReset
-    ewe.SendTimedOut -> SendTimedOut
-    ewe.SocketError(reason:) ->
-      SocketError(reason: ewe.socket_reason_to_string(reason))
   }
 }
 
@@ -400,7 +378,7 @@ fn inbound(
 /// Send a text frame.
 pub fn send_text(socket: Socket(msg), text: String) -> Result(Nil, SendError) {
   ewe.send_text_frame(socket.conn, text)
-  |> result.map_error(from_ewe_send_error)
+  |> result.map_error(content.send_error)
 }
 
 /// Send a binary frame.
@@ -409,7 +387,7 @@ pub fn send_binary(
   data: BitArray,
 ) -> Result(Nil, SendError) {
   ewe.send_binary_frame(socket.conn, data)
-  |> result.map_error(from_ewe_send_error)
+  |> result.map_error(content.send_error)
 }
 
 /// Send JSON as a text frame.

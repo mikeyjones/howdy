@@ -123,6 +123,10 @@ For the body, and the things Howdy puts in it, there are helpers:
 - `testing.field_errors(res)` is the list of field errors from a `422`.
 - `testing.cookies(res)` is every cookie the response sets, as name and
   decoded value pairs. A deleted cookie has an empty value.
+- `testing.open_events(res)` runs a
+  [server-sent event](/docs/controllers/server-sent-events) stream without
+  a socket. Read what it sends with `testing.next_event` and end it with
+  `testing.close_events`.
 
 Prefer `testing.json` to comparing body text. A test that decodes the body
 into a typed value keeps passing when the order of the fields changes:
@@ -217,9 +221,9 @@ of step with the rules of the app.
   [WebSocket](/docs/controllers/websockets) route answers `426` once it
   reaches `upgrade`. Everything in front of it, including the guard, the
   parameters and the origin check, is tested as normal.
-- `testing.text` and `testing.bytes` cannot read a streamed body, such as a
-  large file from `howdy/static`, and panic if asked to. Check the status
-  and headers of those responses instead.
+- `testing.text` and `testing.bytes` read a body from `howdy/stream` in
+  full, but cannot read a file from `howdy/static`, and panic if asked to.
+  Check the status and headers of those responses instead.
 - Nothing is sent over the network, so the server's own behaviour is not
   covered: timeouts, TLS, HTTP/2. Start the app with `howdy.start` on
   port `0` and read the chosen port from `started.data.port` to test those.

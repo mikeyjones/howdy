@@ -221,6 +221,17 @@ pub fn joining_twice_delivers_once_test() {
 @external(erlang, "howdy_test_ffi", "scope_pid")
 fn scope_pid() -> Result(process.Pid, Nil)
 
+fn await_dead(pid: process.Pid, tries: Int) -> Nil {
+  case process.is_alive(pid) {
+    False -> Nil
+    True if tries > 0 -> {
+      process.sleep(5)
+      await_dead(pid, tries - 1)
+    }
+    True -> panic as "process did not die"
+  }
+}
+
 // The channel scope belongs to the howdy application's supervisor, so it
 // comes back if it dies and channels keep working.
 pub fn the_channel_scope_is_restarted_test() {
@@ -228,6 +239,9 @@ pub fn the_channel_scope_is_restarted_test() {
   let _ = channel_member([topic])
   let assert Ok(first) = scope_pid()
   process.kill(first)
+  // The kill is asynchronous: until it lands the old scope is still
+  // registered, and joining it would fail.
+  await_dead(first, 100)
   // Membership is lost with the scope, but the scope itself returns and
   // takes new members.
   let member = channel_member([topic])
