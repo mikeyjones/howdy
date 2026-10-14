@@ -257,7 +257,8 @@ pub fn start_with(
     True -> quiet_disconnects()
     False -> log_disconnects_now()
   }
-  ewe.new(handler: to_ewe(handler))
+  let key = share_handler(to_ewe(handler))
+  ewe.new(handler: call_shared(key, _))
   |> ewe.bind(to: app.bind_address)
   |> ewe.listening(on: app.port)
   |> ewe.shutdown_timeout(app.shutdown_timeout)
@@ -267,9 +268,35 @@ pub fn start_with(
   })
   |> ewe.start
   |> result.map(fn(started) {
+    forget_when_down(key, started.pid)
     actor.Started(..started, data: to_address(started.data))
   })
+  |> result.map_error(fn(error) {
+    forget_handler(key)
+    error
+  })
 }
+
+/// Where a server's handler is kept, for every process to read in place
+/// rather than each holding a copy of every route (`howdy_ffi.erl`).
+type HandlerKey
+
+@external(erlang, "howdy_ffi", "share_handler")
+fn share_handler(
+  handler: fn(Request(ewe.Connection)) -> Response(ewe.Body),
+) -> HandlerKey
+
+@external(erlang, "howdy_ffi", "call_shared")
+fn call_shared(
+  key: HandlerKey,
+  request: Request(ewe.Connection),
+) -> Response(ewe.Body)
+
+@external(erlang, "howdy_ffi", "forget_when_down")
+fn forget_when_down(key: HandlerKey, server: Pid) -> Nil
+
+@external(erlang, "howdy_ffi", "forget_handler")
+fn forget_handler(key: HandlerKey) -> Nil
 
 /// Stop OTP reporting a client that went away mid write as a crashed
 /// connection. Installed once per node; other reports are untouched.
@@ -385,9 +412,15 @@ pub fn not_found(app: App, handler: Handler) -> App {
 /// Pass the result to `ewe.new`; construct it once and reuse it for every
 /// request. This is the one part of howdy's API that uses ewe's types.
 ///
+/// The routes are kept where every process reads them in place, as `start`
+/// keeps them, so ewe's processes do not each hold a copy; they are kept
+/// until the node stops, so make one handler per server rather than one per
+/// request.
+///
 /// To exercise an app without a server, see `howdy/testing`.
 pub fn handler(app: App) -> fn(Request(ewe.Connection)) -> Response(ewe.Body) {
-  to_ewe(serve(app))
+  let key = share_handler(to_ewe(serve(app)))
+  call_shared(key, _)
 }
 
 fn to_ewe(

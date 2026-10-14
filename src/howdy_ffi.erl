@@ -1,9 +1,11 @@
 %% Node-wide odds and ends for the howdy package: the console registry, the
-%% disconnect log filter, stopping a server, rescuing a crashed handler,
-%% throttled warnings and the environment. Query parsing, rate limiting and
-%% WebSocket channels each have their own module.
+%% disconnect log filter, a server's shared handler, stopping a server,
+%% rescuing a crashed handler, throttled warnings and the environment. Query
+%% parsing, rate limiting and WebSocket channels each have their own module.
 -module(howdy_ffi).
 -export([console_put/2, console_get/1]).
+-export([share_handler/1, call_shared/2, forget_when_down/2, forget_handler/1,
+         shared_handlers/0]).
 -export([quiet_disconnects/0, log_disconnects/0, stop_server/2]).
 -export([rescue/1, warn_at_most_every/2, getenv/1]).
 -export([cleanup/2]).
@@ -20,6 +22,43 @@ console_get(Name) ->
         Missing -> {error, nil};
         Value -> {ok, Value}
     end.
+
+%% -- A server's handler ------------------------------------------------------------
+%%
+%% A server's handler closes over the app's every route, and the routes over
+%% whatever the app gave them, such as its services. Within one term all of
+%% that is shared, but a term sent to another process is copied flat: each
+%% shared part once for every place it is referred to. The web server hands
+%% its handler to each acceptor and connection process, so an app whose
+%% routes share large values took tens of megabytes a process, gigabytes in
+%% all. Instead the handler is kept as a persistent term, which every
+%% process reads in place, and the server is given a closure holding only
+%% its key.
+
+share_handler(Handler) ->
+    Key = {howdy_handler, make_ref()},
+    persistent_term:put(Key, Handler),
+    Key.
+
+call_shared(Key, Request) ->
+    (persistent_term:get(Key))(Request).
+
+%% Forget the handler once the server has gone, however it went: stopped,
+%% killed, or ended by its supervisor, which may start another.
+forget_when_down(Key, Server) ->
+    spawn(fun() ->
+        Ref = monitor(process, Server),
+        receive {'DOWN', Ref, process, Server, _} -> forget_handler(Key) end
+    end),
+    nil.
+
+forget_handler(Key) ->
+    _ = persistent_term:erase(Key),
+    nil.
+
+%% How many handlers are kept, for tests.
+shared_handlers() ->
+    length([K || {{howdy_handler, _} = K, _} <- persistent_term:get()]).
 
 %% -- Quiet disconnects -----------------------------------------------------------
 %%

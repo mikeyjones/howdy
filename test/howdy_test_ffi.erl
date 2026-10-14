@@ -3,7 +3,7 @@
 -export([spawn_task/1, await/1, catch_panic/1, channel_member/1, stop_member/1]).
 -export([parallel_at_once/1, await/2, await_no_connections/1, scope_pid/0, putenv/2, unsetenv/1]).
 -export([with_static_tree/1]).
--export([with_http_server/2, http_status/3]).
+-export([with_http_server/2, http_status/3, plain_get/2, flat_size/1]).
 -export([test_certificate/0, tls_probe/2, h2c_probe/1]).
 -export([open_websocket/1, receive_close_frame/1, socket_closed/1, tcp_connect/1, single_child/1]).
 
@@ -255,3 +255,28 @@ putenv(Name, Value) ->
 unsetenv(Name) ->
     true = os:unsetenv(unicode:characters_to_list(Name)),
     nil.
+
+%% A plain GET of Path: {Status, Body}.
+plain_get(Port, Path) ->
+    {ok, Socket} = gen_tcp:connect({127,0,0,1}, Port, [binary, {active, false}], 5000),
+    try
+        ok = gen_tcp:send(Socket, ["GET ", Path, " HTTP/1.1\r\nHost: localhost\r\n",
+                                   "Connection: close\r\n\r\n"]),
+        Response = read_all(Socket, <<>>),
+        [Head, Body] = binary:split(Response, <<"\r\n\r\n">>),
+        [StatusLine | _] = binary:split(Head, <<"\r\n">>),
+        [_, Status | _] = binary:split(StatusLine, <<" ">>, [global]),
+        {binary_to_integer(Status), Body}
+    after gen_tcp:close(Socket)
+    end.
+
+read_all(Socket, Acc) ->
+    case gen_tcp:recv(Socket, 0, 5000) of
+        {ok, Data} -> read_all(Socket, <<Acc/binary, Data/binary>>);
+        {error, closed} -> Acc
+    end.
+
+%% The words a term takes once copied to another process, which keeps
+%% nothing shared within it.
+flat_size(Term) ->
+    erts_debug:flat_size(Term).
