@@ -25,8 +25,8 @@ fn now() -> Int
 @external(erlang, "howdy_database_test_ffi", "children")
 fn children(supervisor: process.Pid) -> List(process.Pid)
 
-@external(erlang, "howdy_database_test_ffi", "exits")
-fn exits(run: fn() -> a) -> Result(a, Nil)
+@external(erlang, "howdy_database_test_ffi", "crashes")
+fn crashes(run: fn() -> a) -> Result(a, Nil)
 
 @external(erlang, "howdy_database_test_ffi", "putenv")
 fn putenv(name: String, value: String) -> Nil
@@ -209,8 +209,10 @@ pub fn supervised_pool_answers_and_is_restarted_test() {
   assert eventually(fn() { result.is_error(setting_result(db, "search_path")) })
 }
 
-// While the pool is restarting or stopped its name is unregistered, and pgo
-// exits the caller with noproc rather than returning an error.
+// While the pool is restarting or stopped, a query crashes the caller rather
+// than returning an error. Usually pgo exits it with noproc, as the pool's
+// name is unregistered. Mid-restart pgo can instead return an error pog 4.1.0
+// has no clause for, raising function_clause in `pog_ffi:convert_error/1`.
 fn setting_result(db: Repo, name: String) -> Result(String, Nil) {
   let query = fn() {
     repo.all(
@@ -220,7 +222,7 @@ fn setting_result(db: Repo, name: String) -> Result(String, Nil) {
       decode.field(0, decode.string, decode.success),
     )
   }
-  case exits(query) {
+  case crashes(query) {
     Ok(Ok([value])) -> Ok(value)
     _ -> Error(Nil)
   }
