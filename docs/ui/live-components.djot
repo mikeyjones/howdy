@@ -222,7 +222,8 @@ about [WebSockets](/docs/controllers/websockets) applies:
   require a signed-in user, and pass the user to the component with `with:`.
 - Browsers cannot set headers on a WebSocket handshake, so the guard must
   read a cookie or a query parameter.
-- Only your own site may connect by default. Other origins answer `403`.
+- Only your own site may connect by default, including behind a proxy that
+  terminates TLS. Other origins answer `403`.
 
 Remember that messages come from the browser. A visitor can send any
 message your `Msg` type allows, at any time, whether or not the button for

@@ -513,12 +513,17 @@ See `examples/chat` for a working chat room.
 
 Socket upgrades check browser `Origin` before opening the connection. The
 default accepts only the request's own HTTP(S) scheme, hostname and port;
-malformed, duplicate and `null` origins receive `403`. Non-browser clients
+malformed, duplicate and `null` origins receive `403`. Behind a reverse proxy
+that terminates TLS, the scheme comes from `X-Forwarded-Proto` and the host
+from `X-Forwarded-Host` when the proxy sends them, so live pages work behind
+Traefik, Caddy, nginx and most hosting platforms without configuration. A
+hostile page cannot set those headers on a browser's handshake, so the check
+is no weaker for it; client addresses still ignore them. Non-browser clients
 without Origin remain supported; add `websocket.require_origin` for a
 browser-only endpoint. Origin checks complement authentication, not replace it.
 
-For a separate frontend or a TLS-terminating reverse proxy, configure exact
-public origins on the socket builder:
+For pages served from another origin, such as a separate frontend, configure
+exact public origins on the socket builder:
 
 ```gleam
 websocket.new(on_open)
@@ -527,8 +532,7 @@ websocket.new(on_open)
 |> websocket.upgrade(ctx)
 ```
 
-Forwarded headers are not trusted automatically. For live components, apply
-these options to `live.socket(app, args)` or `live.socket_shared(runtime)` before
+For live components, apply these options to `live.socket(app, args)` or `live.socket_shared(runtime)` before
 `websocket.upgrade(ctx)`; the direct `live.serve` helpers use the same-origin
 default.
 

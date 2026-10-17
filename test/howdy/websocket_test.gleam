@@ -159,6 +159,65 @@ pub fn explicit_origins_support_proxies_and_required_origin_test() {
     == 403
 }
 
+/// Sent through a proxy that ends TLS and passes the browser's host on, as
+/// Traefik and Caddy do: the app sees plain HTTP.
+fn behind_proxy(headers: List(#(String, String))) {
+  let req = testing.get("/ws")
+  let req =
+    request.Request(..req, scheme: http.Http, host: "app.example", port: None)
+  list.fold(headers, req, fn(req, header) {
+    testing.header(req, header.0, header.1)
+  })
+}
+
+fn from(req, origin: String) -> Int {
+  { req |> testing.header("origin", origin) |> testing.send(app()) }.status
+}
+
+pub fn same_origin_follows_a_tls_terminating_proxy_test() {
+  let proxied = behind_proxy([#("x-forwarded-proto", "https")])
+  assert from(proxied, "https://app.example") == 426
+  assert from(proxied, "https://APP.example:443") == 426
+  // Still exact: not the plain HTTP page, another port, or another site.
+  assert from(proxied, "http://app.example") == 403
+  assert from(proxied, "https://app.example:8443") == 403
+  assert from(proxied, "https://evil.example") == 403
+  // The browser's port reaches the app in its host header.
+  let on_port =
+    request.Request(..proxied, port: Some(8443))
+    |> testing.header("origin", "https://app.example:8443")
+  assert { testing.send(on_port, app()) }.status == 426
+  // Without the header the request's own scheme decides, as before.
+  assert from(behind_proxy([]), "https://app.example") == 403
+  assert from(behind_proxy([]), "http://app.example") == 426
+}
+
+pub fn same_origin_follows_a_forwarded_host_test() {
+  // A proxy that rewrote the host, behind another that appended its own.
+  let proxied =
+    behind_proxy([
+      #("x-forwarded-proto", "HTTPS, http"),
+      #("x-forwarded-host", "public.example:8443, app.example"),
+    ])
+  assert from(proxied, "https://public.example:8443") == 426
+  assert from(proxied, "https://public.example") == 403
+  assert from(proxied, "https://app.example") == 403
+  assert from(proxied, "http://app.example") == 403
+}
+
+pub fn malformed_forwarded_values_fail_closed_test() {
+  // An unknown scheme is ignored; a host that is not one matches nothing.
+  let ignored = behind_proxy([#("x-forwarded-proto", "wss")])
+  assert from(ignored, "http://app.example") == 426
+  use host <- list.each([
+    "app.example/path", "user@app.example", "app.example?x", "*.example",
+    "app.example:0", "app.example:99999",
+  ])
+  let proxied =
+    behind_proxy([#("x-forwarded-proto", "https"), #("x-forwarded-host", host)])
+  assert from(proxied, "https://app.example") == 403
+}
+
 // -- channel -----------------------------------------------------------------
 
 pub fn broadcast_reaches_every_member_test() {

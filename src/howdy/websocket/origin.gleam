@@ -1,9 +1,18 @@
 //// Internal browser-origin validation shared by every socket upgrade.
+////
+//// The same-origin policy compares the browser's `origin` with the origin
+//// it reached the app at. Behind a proxy that ends TLS, the app sees plain
+//// HTTP, so the scheme comes from `x-forwarded-proto` and, for proxies that
+//// rewrite `host`, the authority from `x-forwarded-host`. Trusting them is
+//// safe here, unlike for a client's address: a hostile page cannot set
+//// either header on a browser's socket handshake, and a client outside a
+//// browser can send any `origin` it likes anyway.
 
 import gleam/http
 import gleam/http/request.{type Request}
 import gleam/list
 import gleam/option.{None, Some}
+import gleam/result
 import gleam/string
 import gleam/uri
 
@@ -36,16 +45,42 @@ pub fn allowed(req: Request(body), policy: Policy, required: Bool) -> Bool {
         Ok(origin) ->
           case policy {
             Allowlist(origins) -> list.contains(origins, origin)
-            SameOrigin ->
-              origin
-              == Origin(
-                http.scheme_to_string(req.scheme),
-                normalize_host(req.host),
-                effective_port(http.scheme_to_string(req.scheme), req.port),
-              )
+            SameOrigin -> served_at(req) == Ok(origin)
           }
       }
     _ -> False
+  }
+}
+
+/// The origin the browser reached the app at: the request's own, with the
+/// scheme and authority a proxy forwarded in place of what it sent on.
+fn served_at(req: Request(body)) -> Result(Origin, Nil) {
+  let scheme = case forwarded(req, "x-forwarded-proto") {
+    Ok("https") -> "https"
+    Ok("http") -> "http"
+    _ -> http.scheme_to_string(req.scheme)
+  }
+  case forwarded(req, "x-forwarded-host") {
+    Ok(authority) -> parse(scheme <> "://" <> authority)
+    Error(Nil) ->
+      Ok(Origin(
+        scheme,
+        normalize_host(req.host),
+        effective_port(scheme, req.port),
+      ))
+  }
+}
+
+/// The value the outermost proxy gave a forwarded header, lowercased: the
+/// first of a list that later proxies appended to.
+fn forwarded(req: Request(body), name: String) -> Result(String, Nil) {
+  use #(_, value) <- result.try(
+    list.find(req.headers, fn(header) { header.0 == name }),
+  )
+  let assert [first, ..] = string.split(value, ",")
+  case string.trim(first) |> string.lowercase {
+    "" -> Error(Nil)
+    first -> Ok(first)
   }
 }
 

@@ -177,9 +177,10 @@ pub fn untraced(builder: Builder(state, msg)) -> Builder(state, msg) {
   Builder(..builder, traced: False)
 }
 
-/// Replace the default same-origin policy with an exact HTTP(S) allowlist.
-/// Use public origins here behind a TLS-terminating proxy. Forwarded headers
-/// are not trusted. Invalid entries panic as configuration errors.
+/// Replace the default same-origin policy with an exact HTTP(S) allowlist,
+/// for pages served from somewhere else, such as a separate frontend. A
+/// proxy that ends TLS needs none: the default follows it (see `upgrade`).
+/// Invalid entries panic as configuration errors.
 pub fn allow_origins(
   builder: Builder(state, msg),
   origins: List(String),
@@ -283,7 +284,12 @@ fn tuple_second(message: Dynamic) -> Frame
 /// A request that is not a valid handshake is answered with `400`. In tests
 /// there is no connection to upgrade, so the answer is `426 Upgrade
 /// Required`.
-/// Disallowed origins receive `403` before the handshake or `on_open`.
+/// Disallowed origins receive `403` before the handshake or `on_open`. By
+/// default the browser's origin must be the one it reached the app at:
+/// the request's scheme, host and port, or, behind a proxy, the scheme in
+/// `x-forwarded-proto` and the host in `x-forwarded-host`. A hostile page
+/// cannot set those on a browser's handshake, so trusting them for this
+/// check gives nothing away.
 pub fn upgrade(
   builder: Builder(state, msg),
   ctx: GuardedContext(guarded),

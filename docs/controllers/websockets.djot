@@ -327,11 +327,16 @@ the `origin` header that browsers attach:
 
 - By default only your own site may connect: the origin must have the same
   scheme, host and port as the request. Anything else answers `403`.
+- Behind a proxy that terminates TLS, such as Traefik, Caddy or nginx, your
+  app sees plain HTTP. The check then takes the scheme from the proxy's
+  `x-forwarded-proto` header, and the host from `x-forwarded-host` if it
+  sends one, so it works with no configuration. A hostile page cannot set
+  those headers on a visitor's handshake, so this gives nothing away.
 - A request with no `origin` header is allowed, because command line tools
   and other servers do not send one. Add `websocket.require_origin` to
   refuse those too, for an endpoint only browsers should use.
-- If your pages are served from somewhere else, such as a separate frontend
-  or behind a proxy that terminates TLS, list the public origins exactly:
+- If your pages are served from somewhere else, such as a separate
+  frontend, list their origins exactly:
 
 ```gleam
 websocket.new(on_open)
