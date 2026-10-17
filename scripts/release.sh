@@ -70,6 +70,27 @@ if (( ${#unbumped[@]} > 0 )); then
   exit 1
 fi
 
+# A manifest still locking a bumped package to its old version passes with
+# newer Gleam but fails CI's `gleam deps download` ("Incompatible locked
+# version"), and only for a fresh checkout.
+stale=()
+for entry in "${packages[@]}"; do
+  name="${entry%%:*}"
+  path="${entry#*:}"
+  package_version="$(sed -n -E 's/^version = "([^"]+)"$/\1/p' "$path/gleam.toml" | head -n 1)"
+  while IFS= read -r manifest; do
+    locked="$(sed -n -E "s/^  \{ name = \"$name\", version = \"([^\"]+)\".*source = \"local\".*/\1/p" "$manifest")"
+    if [[ -n "$locked" && "$locked" != "$package_version" ]]; then
+      stale+=("$manifest ($name $locked, now $package_version)")
+    fi
+  done < <(git ls-files '*manifest.toml')
+done
+if (( ${#stale[@]} > 0 )); then
+  echo "These manifests lock an old version. Run \`gleam deps download\` in each:" >&2
+  printf '  %s\n' "${stale[@]}" >&2
+  exit 1
+fi
+
 echo "== Exporting each package's public API"
 interfaces="$(mktemp -d)"
 trap 'rm -rf "$interfaces"' EXIT
