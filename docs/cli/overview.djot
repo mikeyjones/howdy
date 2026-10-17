@@ -1,0 +1,63 @@
+# The howdy command
+
+`howdy` is the command line for Howdy. It creates new projects, adds code to
+the project you are working in, and runs the development server. It is a
+single program written in Go, and
+[Getting started](/docs/guides/getting-started) shows how to install it.
+
+## Commands
+
+- `howdy new <project_name>` creates a project. See
+  [Creating a project](/docs/cli/new).
+- `howdy create controller`, `howdy create pages`, `howdy create repo` and
+  `howdy create migration` add a database table to the current project, with
+  as much code around it as you ask for, from a JSON API to a full set of
+  pages to list, add, edit and delete records. See
+  [Generating code](/docs/cli/create).
+- `howdy dev` runs the current project with hot reload.
+
+Every command explains itself with `--help`, including its arguments, flags
+and examples:
+
+```sh
+howdy --help
+howdy new --help
+howdy create controller --help
+```
+
+`howdy --version` prints the version you have installed.
+
+## What it needs
+
+The CLI writes Gleam code and then hands over to Gleam's own tools, so it
+looks for `gleam` on your `PATH` before it writes anything, and stops with an
+error if it is missing. It warns you if `erl` is missing too, because the
+project will not run without Erlang.
+
+Howdy, Howdy UI and Howdy Dev are downloaded from GitHub as Git
+dependencies, so `howdy new` also needs *Git* installed. You do not need a
+copy of Howdy on your machine.
+
+## Running the project
+
+```sh
+howdy dev
+```
+
+`howdy dev` finds the project you are in and runs `gleam dev` there, which
+rebuilds and refreshes the browser as you change the code. It looks for the
+nearest directory with a `gleam.toml`, starting where you are and walking up,
+so it works from any folder inside the project. Output is streamed to your
+terminal, and Ctrl-C stops the server.
+
+Outside a Gleam project it stops with an error rather than guessing.
+
+## Progress output
+
+`howdy new` and the `howdy create` commands animate their progress when they
+run in a terminal. Pass `--plain` to print one line per step instead, which
+reads better in CI logs and scripts:
+
+```sh
+howdy new my_app --plain
+```
