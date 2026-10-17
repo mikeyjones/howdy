@@ -90,9 +90,10 @@ pub fn verify(
     [#(_, encoded, normalized)] -> #(encoded, normalized)
     _ -> #(password_hash.dummy(hasher), True)
   }
-  // Argus verification runs outside the transaction and performs the same
+  // Verification runs outside the transaction and performs the same
   // expensive work for missing accounts, avoiding a fast unknown-user path.
   use #(valid, legacy_input) <- result.try(password_hash.verify(
+    hasher,
     encoded,
     password,
     normalized,
@@ -100,7 +101,7 @@ pub fn verify(
   case valid, found {
     True, [#(candidate, _, _)] -> {
       use upgraded <- result.try(
-        case password_hash.needs_rehash(encoded) || legacy_input {
+        case password_hash.needs_rehash(hasher, encoded) || legacy_input {
           True ->
             password_hash.rehash(hasher, encoded, password) |> result.map(Some)
           False -> Ok(None)
@@ -119,7 +120,7 @@ pub fn verify(
         encoded,
         normalized,
       ))
-      // The login identifier may have changed while Argon2 was running.
+      // The login identifier may have changed during hashing.
       use user <- result.try(case users {
         [user] if user.email == email && user.group_id == candidate.group_id ->
           Ok(user)
@@ -261,6 +262,7 @@ pub fn change(
   })
   use _ <- result.try(common.password_attempt(config, address_key, client_key))
   use #(valid, _) <- result.try(password_hash.verify(
+    hasher,
     encoded,
     current,
     normalized,
@@ -288,7 +290,7 @@ pub fn change(
   use _ <- result.try({
     use conn <- db.write_transaction(config.repo, touching: "howdy_auth_users")
     // Lock the account and recheck both proofs after hashing: the session may
-    // have been revoked, or the password replaced, while Argon2 was running.
+    // have been revoked, or the password replaced, during hashing.
     use _ <- result.try(session_flow.current_account(
       conn,
       config,

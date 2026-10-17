@@ -1,6 +1,6 @@
 //// Password registration, login and storage.
 
-import argus
+import gleam/bit_array
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/int
@@ -11,6 +11,7 @@ import gleam/string
 import gloo/repo
 import howdy/auth
 import howdy/auth/internal/token as auth_token
+import howdy/auth/password_hasher
 import howdy/auth/secret
 import howdy/auth/user
 import howdy/service
@@ -62,7 +63,7 @@ fn password_signup(
   session
 }
 
-pub fn password_registration_requires_email_and_stores_argon2id_only_test() {
+pub fn password_registration_requires_email_and_stores_only_a_salted_hash_test() {
   use database, identity, _, mailbox <- fixture
   let assert Ok(identity) = auth.with_passwords(identity)
   let assert Ok(Nil) =
@@ -76,9 +77,10 @@ pub fn password_registration_requires_email_and_stores_argon2id_only_test() {
       [],
       decode.field(0, decode.string, decode.success),
     )
-  assert string.starts_with(encoded, "$argon2id$v=19$m=19456,t=2,p=1$")
+  assert string.starts_with(encoded, "$pbkdf2-sha256$i=600000,l=32$")
   assert !string.contains(encoded, strong_password)
-  assert argus.verify(encoded, strong_password) == Ok(True)
+  assert password_hasher.pbkdf2_sha256().verify(encoded, strong_password)
+    == Ok(True)
   assert auth.login_password(identity, "ada@example.com", strong_password)
     == Error(service.Unauthorized)
   let assert Ok(delivery) = process.receive(mailbox, 1000)
@@ -242,59 +244,60 @@ pub fn password_corrupt_hash_fails_closed_test() {
   assert count(database, "SELECT COUNT(*) FROM howdy_auth_sessions") == 1
 }
 
-// Independent known-answer vector generated with system libargon2's
-// argon2id_hash_encoded(2, 19456, 1, password, salt, 32, ...), version 0x13.
-// Tests the actual hash bytes, not just the encoded version label.
-pub fn argus_matches_standard_argon2id_test() {
-  let strong_password = "correct horse battery staple"
-  let hasher =
-    argus.hasher()
-    |> argus.algorithm(argus.Argon2id)
-    |> argus.memory_cost(19_456)
-    |> argus.time_cost(2)
-    |> argus.parallelism(1)
-    |> argus.hash_length(32)
-  let assert Ok(salt) = argus.make_salt(<<"howdy-test-salt!":utf8>>)
-  assert argus.derive_encryption_key(hasher, strong_password, salt)
-    == Ok(<<
-      188,
-      83,
-      152,
-      155,
-      145,
-      169,
-      114,
-      183,
-      168,
-      193,
-      23,
-      166,
-      183,
-      253,
-      237,
-      200,
-      199,
-      244,
-      55,
-      120,
-      139,
-      105,
-      162,
-      87,
-      7,
-      48,
-      64,
-      240,
-      176,
-      154,
-      105,
-      115,
-    >>)
-  assert argus.verify(
-      "$argon2id$v=19$m=19456,t=2,p=1$aG93ZHktdGVzdC1zYWx0IQ$vFOYm5GpcreowRemt/3tyMf0N3iLaaJXBzBA8LCaaXM",
-      strong_password,
+// RFC 7914 section 11 publishes this PBKDF2-HMAC-SHA256 vector.
+pub fn pbkdf2_matches_rfc_7914_test() {
+  let assert Ok(expected) =
+    bit_array.base16_decode(
+      "55AC046E56E3089FEC1691C22544B605F94185216DDE0465E68B9D57C20DACBC49CA9CCCF179B645991664B39D77EF317C71B845B1E30BD509112041D3A19783",
     )
-    == Ok(True)
+  assert password_hasher.encode("passwd", <<"salt":utf8>>, 1, 64)
+    == "$pbkdf2-sha256$i=1,l=64$c2FsdA$"
+    <> bit_array.base64_encode(expected, False)
+}
+
+// Independent vector at the production cost, from Python's
+// hashlib.pbkdf2_hmac("sha256", password, b"howdy-test-salt!", 600000, 32).
+pub fn pbkdf2_matches_independent_production_cost_vector_test() {
+  let hasher = password_hasher.pbkdf2_sha256()
+  let encoded =
+    "$pbkdf2-sha256$i=600000,l=32$aG93ZHktdGVzdC1zYWx0IQ$Q1xdrHPFCPNbbmkCF5W1ZRzJrl5Dua7D+Wf98ZKNNUM"
+  assert password_hasher.encode(
+      "correct horse battery staple",
+      <<"howdy-test-salt!":utf8>>,
+      600_000,
+      32,
+    )
+    == encoded
+  assert hasher.verify(encoded, "correct horse battery staple") == Ok(True)
+  assert hasher.verify(encoded, "correct horse battery stapler") == Ok(False)
+  assert !hasher.needs_rehash(encoded)
+}
+
+pub fn pbkdf2_rejects_malformed_and_foreign_hashes_test() {
+  let hasher = password_hasher.pbkdf2_sha256()
+  let argon2 =
+    "$argon2id$v=19$m=19456,t=2,p=1$aG93ZHktdGVzdC1zYWx0IQ$vFOYm5GpcreowRemt/3tyMf0N3iLaaJXBzBA8LCaaXM"
+  let salt =
+    "$aG93ZHktdGVzdC1zYWx0IQ$Q1xdrHPFCPNbbmkCF5W1ZRzJrl5Dua7D+Wf98ZKNNUM"
+  list.each(
+    [
+      argon2,
+      "invalid",
+      "",
+      // Declared length disagrees with the hash.
+      "$pbkdf2-sha256$i=600000,l=31" <> salt,
+      // Unbounded or absent work.
+      "$pbkdf2-sha256$i=0,l=32" <> salt,
+      "$pbkdf2-sha256$i=99999999,l=32" <> salt,
+      "$pbkdf2-sha256$i=600000,l=32$aG93ZHk$Q1xdrHPFCPNbbmkCF5W1ZRzJrl5Dua7D+Wf98ZKNNUM",
+      "$pbkdf2-sha512$i=600000,l=32" <> salt,
+    ],
+    fn(encoded) {
+      assert hasher.verify(encoded, "correct horse battery staple")
+        == Error(Nil)
+      assert hasher.needs_rehash(encoded)
+    },
+  )
 }
 
 const replacement = "a second unlikely harbour phrase 512!"

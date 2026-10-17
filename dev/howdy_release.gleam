@@ -337,7 +337,10 @@ pub fn update_since(
 ) -> Since {
   list.fold(apis, previous, fn(since, package) {
     let #(name, modules) = package
-    let known = dict.get(since, name) |> result.unwrap(dict.new())
+    let known =
+      dict.get(since, name)
+      |> result.unwrap(dict.new())
+      |> dict.filter(fn(module, _) { !is_internal(module) })
     let present =
       dict.map_values(modules, fn(module, items) {
         let #(life, known_items) =
@@ -371,6 +374,13 @@ pub fn update_since(
       })
     dict.insert(since, name, dict.merge(gone, present))
   })
+}
+
+/// Package interfaces leave out internal modules. Ones recorded before their
+/// package marked them internal are dropped rather than marked as removed:
+/// they were never meant to be public.
+fn is_internal(module: String) -> Bool {
+  string.split(module, "/") |> list.contains("internal")
 }
 
 fn removed(life: Life, version: String) -> Life {

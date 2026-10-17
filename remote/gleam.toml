@@ -3,6 +3,7 @@ version = "2.0.0"
 gleam = ">= 1.18.0"
 description = "Typed remote procedure calls between Howdy services, over Erlang distribution or HTTP"
 licences = ["Apache-2.0"]
+repository = { type = "github", user = "mikeyjones", repo = "howdy", path = "remote", tag-prefix = "howdy_remote-" }
 target = "erlang"
 
 [dependencies]

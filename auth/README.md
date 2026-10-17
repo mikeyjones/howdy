@@ -229,34 +229,17 @@ policy; see the deployment note above.
 The native verifier is pinned to **glasslock 1.0.0-rc1**, a recent prerelease,
 including internal metadata parsing APIs. It has not been independently audited
 as part of this work. Review upgrades explicitly; keep signed-ceremony regression
-tests. See [comparison and dependency research](../manual/passkey-mfa-research.md)
+tests. See [comparison and dependency research](https://github.com/mikeyjones/howdy/blob/v2/manual/passkey-mfa-research.md)
 for the official Better Auth references and inspected verifier behavior.
 
 ## Install and migrate
 
-In this repository, add the optional package using a path dependency:
-
-```toml
-[dependencies]
-howdy_auth = { path = "../howdy-v2/auth" }
-howdy_database = { path = "../howdy-v2/database" }
-```
-
-[`howdy_database`](../database/README.md) provides `howdy/migration` and the
-transactions auth runs on. Applications can use it for their own tables too.
-
-Build the native password dependency once before building or running the app:
-
 ```sh
-make -C auth/vendor/jargon/c_src  # from the howdy-v2 repository root
+gleam add howdy_auth@2 howdy_database@2
 ```
 
-This requires make, a C compiler and Erlang headers. Argus 2.0.0 uses Jargon
-1.1.0, which has an incorrect Argon2 version constant. A local source copy fixes
-that constant; see [the patch and build notes](vendor/jargon/README.md). The
-problem is tracked in [Pevensie/jargon#9](https://github.com/Pevensie/jargon/issues/9); `vendor/jargon/verify.sh` proves the copy is the
-published package plus the recorded version correction and build-selection patch. A corrected published dependency
-is required before publishing this prototype to Hex. Existing builds switching from Hex Jargon need `gleam clean` once.
+[`howdy_database`](https://github.com/mikeyjones/howdy/blob/v2/database/README.md) provides `howdy/migration` and the
+transactions auth runs on. Applications can use it for their own tables too.
 
 Run migrations explicitly during deployment, before starting the new version:
 
@@ -405,7 +388,7 @@ enabled and creates the user only after email verification.
 ### Ready-made emails
 
 `howdy/auth/emails` writes these emails for you with
-[`howdy_mail`](../mail/README.md), one for each purpose and one for MFA codes:
+[`howdy_mail`](https://github.com/mikeyjones/howdy/blob/v2/mail/README.md), one for each purpose and one for MFA codes:
 
 ```gleam
 import howdy/auth/emails
@@ -1117,7 +1100,7 @@ Build this once at startup. The checker holds normalized SHA-256 digests,
 compares case-sensitively without trimming, and sends no password over the
 network. Load an appropriate maintained corpus in the application.
 
-Successful login upgrades older Argon2 parameters and pre-normalization hashes.
+Successful login upgrades hashes with older, lower costs and pre-normalization hashes.
 Migration 5 adds normalization metadata to credentials and pending registration
 challenges. Existing rows start unknown, preserving normalized-first/exact-input
 fallback. A successful login marks or rehashes them as NFC. New credentials and
@@ -1134,12 +1117,19 @@ word however it is decorated, one unit repeated, a keyboard run, or very few
 distinct characters. That is a shape check, not a breach corpus; supply one with
 `auth.with_password_check` and `howdy/auth/password_check.blocklist`.
 
-Passwords use Argus Argon2id v19 with a fresh random 16-byte salt, 19 MiB memory,
-two iterations, one lane and a 32-byte hash. Only the encoded salted hash is
-stored, including while email verification is pending. Hashing happens outside
-database transactions. Missing, email-only and suspended accounts perform a
-dummy hash verification and return the same unauthorized result as a wrong
-password. `auth.login_password_from(identity, email, password, client)` uses a
+Passwords use PBKDF2-HMAC-SHA256 from OTP's `crypto`, with 600,000 iterations,
+a fresh random 16-byte salt and a 32-byte hash, stored in PHC string format
+(`$pbkdf2-sha256$i=600000,l=32$...`). No native code is built. PBKDF2 is not
+memory-hard, so a leaked database is cheaper to attack on GPUs than an Argon2id
+one; the 15 character minimum and the common-password check offset that. To use
+another algorithm, implement `howdy/auth/password_hasher.PasswordHasher` and
+enable passwords with `auth.with_password_hasher(identity, hasher)` instead of
+`auth.with_passwords`. Existing credentials must be readable by that hasher.
+
+Only the encoded salted hash is stored, including while email verification is
+pending. Hashing happens outside database transactions. Missing, email-only
+and suspended accounts perform a dummy hash verification and return the same
+unauthorized result as a wrong password. `auth.login_password_from(identity, email, password, client)` uses a
 persistent budget per normalized address and trusted client key. Five attempts
 are initially allowed; subsequent failures require a 60-second wait that doubles
 to one hour. Rejected attempts do not prolong the wait. A successful login clears
@@ -1705,7 +1695,7 @@ operator, with no session marked current, and
 recorded as `session.revoked` with the actor. Both are privileged.
 
 `auth.impersonate(identity, user_id, by:)` issues a session for a user without
-a credential, for an operator console or the [`howdy_admin`](../admin/README.md)
+a credential, for an operator console or the [`howdy_admin`](https://github.com/mikeyjones/howdy/blob/v2/admin/README.md)
 development area. The session's method is `auth.Impersonation` and the event
 is `session.impersonated`, so it is distinguishable from the user's own in
 `auth.sessions` and the audit trail. It skips second factors and SSO
@@ -1792,21 +1782,20 @@ matched against a guessed address. Token and session digests are unkeyed:
 those values are already random secrets.
 
 Concurrent password hashing is bounded by the runtime rather than by this
-package. Argon2 runs on the BEAM's dirty CPU schedulers, so at most that many
-hashes are ever in flight whatever the request rate: a burst of 200 concurrent
-logins on a six-core machine measured 120 MiB of hashing memory, not 200 x 19
-MiB. Bound the arrival rate with the route limiter described above.
+package. OTP runs PBKDF2 on the BEAM's dirty CPU schedulers, so at most that
+many hashes are ever in flight whatever the request rate, and normal schedulers
+keep serving requests. One hash takes roughly 100 ms of CPU. Bound the arrival
+rate with the route limiter described above.
 
 Token/session digests are stored instead of raw secrets. Expired rows are
 pruned as a side effect of email requests and logins. For quiet installations
 call `auth.prune_expired(identity)` from a scheduled job; nothing is scheduled
 automatically.
 
-See [the runnable examples](../examples/auth/README.md), one per sign-in flow. Run verification with:
+See [the runnable examples](https://github.com/mikeyjones/howdy/blob/v2/examples/auth/README.md), one per sign-in flow. Run verification with:
 
 ```sh
 cd auth
-make -C vendor/jargon/c_src
 gleam test                                      # Gloo SQLite, isolated in memory
 HOWDY_AUTH_TEST_BACKEND=postgres gleam test      # same suite, real PostgreSQL
 gleam format --check src test

@@ -3,8 +3,9 @@ version = "2.0.0"
 gleam = ">= 1.18.0"
 description = "Pages, themes and live server components for howdy, built on Lustre and Sketch"
 licences = ["Apache-2.0"]
+repository = { type = "github", user = "mikeyjones", repo = "howdy", path = "ui", tag-prefix = "howdy_ui-" }
+internal_modules = ["howdy/ui/internal/*", "howdy/ui/gallery", "howdy/ui/gallery/*"]
 target = "erlang"
-internal_modules = ["howdy/ui/gallery", "howdy/ui/gallery/*"]
 
 [erlang]
 application_start_module = "howdy_ui_app"

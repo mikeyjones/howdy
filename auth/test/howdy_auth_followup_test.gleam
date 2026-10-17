@@ -1,4 +1,3 @@
-import argus
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/list
@@ -13,6 +12,7 @@ import howdy/auth/internal/password as password_hash
 import howdy/auth/internal/store
 import howdy/auth/internal/token
 import howdy/auth/password_check
+import howdy/auth/password_hasher
 import howdy/auth/secret
 import howdy/auth/user
 import howdy/authorization as access
@@ -135,7 +135,8 @@ pub fn migration_preserves_pending_legacy_password_challenges_test() {
     migration.Package(..current, migrations: list.take(current.migrations, 4))
   let assert Ok(Nil) = migration.run(database, [old])
   let raw = "another cafe\u{0301} password"
-  let assert Ok(hash) = argus.hash(argus.hasher(), raw)
+  let hasher = password_hasher.pbkdf2_sha256()
+  let assert Ok(hash) = hasher.hash(raw)
   let challenge = token.new()
   let assert Ok(_) =
     repo.execute(
@@ -144,7 +145,7 @@ pub fn migration_preserves_pending_legacy_password_challenges_test() {
       [
         sql.string(token.digest(challenge)),
         sql.int(token.now() + 600),
-        sql.string(hash.encoded_hash),
+        sql.string(hash),
         sql.int(token.now()),
       ],
     )
@@ -330,7 +331,9 @@ pub fn normalization_metadata_upgrade_is_not_a_credential_change_test() {
   // The second login snapshots/verifies before the first marks the same hash.
   let assert Ok([#(candidate, encoded, False)]) =
     store.password_candidates(database, "ada@example.com", option.None)
-  assert password_hash.verify(encoded, password, False) == Ok(#(True, False))
+  let assert Ok(passwords) = password_hash.new(password_hasher.pbkdf2_sha256())
+  assert password_hash.verify(passwords, encoded, password, False)
+    == Ok(#(True, False))
   let assert Ok(_) = auth.login_password(identity, "ada@example.com", password)
   let accepted =
     db.write_transaction(database, "howdy_auth_users", fn(conn) {

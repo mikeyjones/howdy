@@ -124,7 +124,7 @@
           "since": "2.0.0"
         },
         "SendError": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         }
       }
     },
@@ -606,82 +606,82 @@
       }
     },
     "howdy/sse": {
-      "since": "2.0.0",
+      "since": "2.1.0",
       "items": {
         "Builder": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "Event": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "Next": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "Stream": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "broadcast": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "continue": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "event": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "heartbeat": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "id": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "join": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "json": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "last_event_id": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "leave": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "name": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "new": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "no_heartbeat": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "on_close": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "on_message": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "retry": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "send": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "send_comment": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "size": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "start": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "stop": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "subject": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         }
       }
     },
@@ -721,19 +721,19 @@
       }
     },
     "howdy/stream": {
-      "since": "2.0.0",
+      "since": "2.1.0",
       "items": {
         "Writer": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "body": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "send": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "send_text": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         }
       }
     },
@@ -741,7 +741,7 @@
       "since": "2.0.0",
       "items": {
         "EventStream": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "bytes": {
           "since": "2.0.0"
@@ -753,7 +753,7 @@
           "since": "2.0.0"
         },
         "close_events": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "cookie": {
           "since": "2.0.0"
@@ -789,10 +789,10 @@
           "since": "2.0.0"
         },
         "next_event": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "open_events": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "patch": {
           "since": "2.0.0"
@@ -816,7 +816,7 @@
           "since": "2.0.0"
         },
         "sent_events": {
-          "since": "2.0.0"
+          "since": "2.1.0"
         },
         "text": {
           "since": "2.0.0"
@@ -1040,6 +1040,10 @@
         },
         "Next": {
           "since": "2.0.0"
+        },
+        "SendError": {
+          "since": "2.0.0",
+          "removed": "2.1.0"
         },
         "Socket": {
           "since": "2.0.0"

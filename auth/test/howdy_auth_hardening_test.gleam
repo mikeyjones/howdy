@@ -1,4 +1,4 @@
-import argus
+import gleam/crypto
 import gleam/dynamic/decode
 import gleam/erlang/process
 import gleam/http/request as gleam_http_request
@@ -12,6 +12,7 @@ import howdy
 import howdy/auth
 import howdy/auth/internal/cache
 import howdy/auth/pages
+import howdy/auth/password_hasher
 import howdy/auth/policy
 import howdy/auth/routes
 import howdy/auth/secret
@@ -177,15 +178,20 @@ pub fn unicode_passwords_and_legacy_hashes_are_upgraded_test() {
   let assert Ok(_) =
     auth.login_password(identity, "ada@example.com", decomposed)
   // Simulate a pre-normalization, lower-cost stored credential.
-  let assert Ok(legacy) =
-    argus.hash(argus.hasher() |> argus.memory_cost(8192), decomposed)
-  let _ = credential(database, session.user.id, legacy.encoded_hash)
+  let legacy =
+    password_hasher.encode(
+      decomposed,
+      crypto.strong_random_bytes(16),
+      100_000,
+      32,
+    )
+  let _ = credential(database, session.user.id, legacy)
   let assert Ok(_) =
     auth.login_password(identity, "ada@example.com", decomposed)
   let upgraded = stored_hash(database)
-  assert upgraded != legacy.encoded_hash
-  assert string.starts_with(upgraded, "$argon2id$v=19$m=19456,t=2,p=1$")
-  assert argus.verify(upgraded, composed) == Ok(True)
+  assert upgraded != legacy
+  assert string.starts_with(upgraded, "$pbkdf2-sha256$i=600000,l=32$")
+  assert password_hasher.pbkdf2_sha256().verify(upgraded, composed) == Ok(True)
   let assert Ok(_) = auth.login_password(identity, "ada@example.com", composed)
   // Once upgraded, ordinary successful logins do not pay for another rehash.
   assert stored_hash(database) == upgraded
@@ -463,14 +469,23 @@ pub fn stronger_hash_costs_are_preserved_during_normalization_upgrade_test() {
     auth.authenticate(identity, secret.reveal(session.token))
   let assert Ok(Nil) = auth.set_password(identity, principal, password)
   let decomposed = "a cafe\u{0301} beside the orchard 947!"
-  let assert Ok(legacy) =
-    argus.hash(argus.hasher() |> argus.time_cost(3), decomposed)
-  let _ = credential(database, session.user.id, legacy.encoded_hash)
+  let legacy =
+    password_hasher.encode(
+      decomposed,
+      crypto.strong_random_bytes(16),
+      700_000,
+      48,
+    )
+  let _ = credential(database, session.user.id, legacy)
   let assert Ok(_) =
     auth.login_password(identity, "ada@example.com", decomposed)
   let upgraded = stored_hash(database)
-  assert string.starts_with(upgraded, "$argon2id$v=19$m=19456,t=3,p=1$")
-  assert argus.verify(upgraded, "a café beside the orchard 947!") == Ok(True)
+  assert string.starts_with(upgraded, "$pbkdf2-sha256$i=700000,l=48$")
+  assert password_hasher.pbkdf2_sha256().verify(
+      upgraded,
+      "a café beside the orchard 947!",
+    )
+    == Ok(True)
   let assert Ok(_) =
     auth.login_password(
       identity,

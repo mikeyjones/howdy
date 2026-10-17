@@ -307,7 +307,6 @@ jobs:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - run: make -C ../auth/vendor/jargon/c_src
       - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam test
@@ -338,8 +337,6 @@ jobs:
           otp-version: "29"
           gleam-version: "1.18.1"
           rebar3-version: "3"
-      - if: matrix.example == 'admin'
-        run: make -C ../../auth/vendor/jargon/c_src
       - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - if: matrix.example == 'live'
@@ -354,7 +351,6 @@ jobs:
       fail-fast: false
       matrix:
         backend: [sqlite, postgres]
-        implementation: [ref, opt]
     services:
       postgres:
         image: postgres:17
@@ -390,8 +386,6 @@ jobs:
           gleam-version: "1.18.1"
           rebar3-version: "3"
       - run: node --test test/pages_client_test.mjs
-      - run: vendor/jargon/verify.sh
-      - run: make -C vendor/jargon/c_src ARGON2_IMPL=${{ matrix.implementation }}
       - run: $GITHUB_WORKSPACE/scripts/ci-deps.sh
       - run: gleam test
       - run: gleam format --check src test

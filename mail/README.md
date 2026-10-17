@@ -1,15 +1,13 @@
 # howdy_mail
 
-Email for [howdy](../README.md) apps: messages written with
+Email for [howdy](https://github.com/mikeyjones/howdy/blob/v2/README.md) apps: messages written with
 [smail](https://hexdocs.pm/smail) templates, sent over SMTP or an HTTP
 provider, and kept in a development outbox that the
-[admin area](../admin/README.md) shows. [`howdy_auth`](../auth/README.md)
+[admin area](https://github.com/mikeyjones/howdy/blob/v2/admin/README.md) shows. [`howdy_auth`](https://github.com/mikeyjones/howdy/blob/v2/auth/README.md)
 builds its emails on it.
 
-```toml
-[dependencies]
-howdy_mail = { path = "../howdy-v2/mail" }
-smail = ">= 2.0.1 and < 3.0.0"
+```sh
+gleam add howdy_mail@2 smail@2
 ```
 
 ## Writing a message

@@ -91,7 +91,7 @@ kill_session_owners() ->
 count_verifications(Run) ->
     Parent = self(),
     Tracer = spawn(fun() -> verification_traces(Parent, 0, undefined) end),
-    erlang:trace_pattern({argus, verify, 2}, true, [local]),
+    erlang:trace_pattern({'howdy@auth@password_hasher', verify, 2}, true, [local]),
     erlang:trace(self(), true, [call, {tracer, Tracer}]),
     try
         Result = Run(),
@@ -101,13 +101,13 @@ count_verifications(Run) ->
         after 5000 -> error(trace_timeout) end
     after
         erlang:trace(self(), false, [call]),
-        erlang:trace_pattern({argus, verify, 2}, false, [local]),
+        erlang:trace_pattern({'howdy@auth@password_hasher', verify, 2}, false, [local]),
         exit(Tracer, kill)
     end.
 
 verification_traces(Parent, Count, Ref) ->
     receive
-        {trace, Parent, call, {argus, verify, _}} -> verification_traces(Parent, Count + 1, Ref);
+        {trace, Parent, call, {'howdy@auth@password_hasher', verify, _}} -> verification_traces(Parent, Count + 1, Ref);
         finish -> verification_traces(Parent, Count, erlang:trace_delivered(Parent));
         {trace_delivered, Parent, Ref} -> Parent ! {verification_count, self(), Count}
     end.

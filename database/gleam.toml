@@ -3,6 +3,7 @@ version = "2.0.0"
 gleam = ">= 1.18.0"
 description = "Package-owned migrations and portable transactions over Gloo for Howdy apps"
 licences = ["Apache-2.0"]
+repository = { type = "github", user = "mikeyjones", repo = "howdy", path = "database", tag-prefix = "howdy_database-" }
 target = "erlang"
 
 [erlang]

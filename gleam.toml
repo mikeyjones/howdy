@@ -1,17 +1,10 @@
 name = "howdy"
 version = "2.1.0"
 gleam = ">= 1.18.0"
-
-# Fill out these fields if you intend to generate HTML documentation or publish
-# your project to the Hex package manager.
-#
-# description = ""
-# licences = ["Apache-2.0"]
-# repository = { type = "github", user = "", repo = "" }
-# links = [{ title = "Website", href = "" }]
-#
-# For a full reference of all the available options, you can have a look at
-# https://gleam.run/writing-gleam/gleam-toml/.
+description = "A web framework for Gleam: controllers, middleware, WebSockets, server-sent events and presence, served by ewe"
+licences = ["Apache-2.0"]
+repository = { type = "github", user = "mikeyjones", repo = "howdy" }
+target = "erlang"
 
 [erlang]
 application_start_module = "howdy_app"

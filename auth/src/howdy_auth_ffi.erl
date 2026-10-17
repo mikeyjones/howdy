@@ -1,5 +1,5 @@
 -module(howdy_auth_ffi).
--export([now/0, normalize_password/1, canonical_host/1, constant_time_equal/2,
+-export([now/0, normalize_password/1, pbkdf2_sha256/4, canonical_host/1, constant_time_equal/2,
          cache_new/0, cache_run/4, cache_invalidate/0, cache_transaction/1, cache_changing/1,
          sessions_put/5, sessions_get/2, sessions_list/2, sessions_delete/3, sessions_delete_user/3, sessions_prune/2]).
 
@@ -15,6 +15,11 @@ clock_offset_ms() ->
     end.
 
 normalize_password(Value) -> unicode:characters_to_nfc_binary(Value).
+
+%% OTP runs this on a dirty CPU scheduler, so concurrent hashing is bounded by
+%% the number of those schedulers rather than blocking normal ones.
+pbkdf2_sha256(Password, Salt, Iterations, Length) ->
+    crypto:pbkdf2_hmac(sha256, Password, Salt, Iterations, Length).
 
 %% Equality of two digests in time that depends only on their length.
 %% `crypto:hash_equals/2` raises on unequal lengths, and a length is not a

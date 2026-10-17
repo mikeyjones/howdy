@@ -3,9 +3,8 @@
 Typed calls from one Howdy service to another, over Erlang distribution or
 HTTP.
 
-```toml
-[dependencies]
-howdy_remote = { path = "../howdy-v2/remote" }
+```sh
+gleam add howdy_remote@2
 ```
 
 ## Procedures

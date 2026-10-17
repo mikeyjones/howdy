@@ -2,13 +2,11 @@
 
 Package-owned migrations and portable transactions over
 [Gloo](https://hexdocs.pm/gloo) for Howdy apps, on PostgreSQL and SQLite.
-[`howdy_auth`](../auth/README.md) is built on it, and applications can use it
+[`howdy_auth`](https://github.com/mikeyjones/howdy/blob/v2/auth/README.md) is built on it, and applications can use it
 for their own tables, with or without auth.
 
-```toml
-[dependencies]
-howdy_database = { path = "../howdy-v2/database" }
-gloo = ">= 1.0.2 and < 2.0.0"
+```sh
+gleam add howdy_database@2 gloo@1
 ```
 
 The application opens, configures and closes the Gloo Repo; everything else in

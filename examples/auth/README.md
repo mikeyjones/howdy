@@ -6,7 +6,6 @@ Email delivery prints tokens in the terminal **for this local demonstration
 only**; configure a private email delivery callback for real applications.
 
 ```sh
-make -C ../../auth/vendor/jargon/c_src   # once: the native password hasher
 gleam run -m migrate                     # every example's database
 gleam test                               # every flow below, without a server
 ```

@@ -84,12 +84,13 @@ unweighted plugin count. [Plugin catalog](https://better-auth.com/docs/plugins)
 
 ### 3. Operational controls — high impact before broader deployment
 
-- **Release/dependency readiness is still limited.** Howdy depends on a patched,
-  vendored Jargon and `glasslock 1.0.0-rc1`, including internal parsing APIs.
-  The README still requires stopping old instances before migrations and says
-  the password dependency needs resolution before Hex publication. These are
-  operational constraints, not evidence of a particular vulnerability.
-  [Dependency notes](../auth/vendor/jargon/README.md), [installation](../auth/README.md#install-and-migrate)
+- **Release/dependency readiness is still limited.** Howdy depends on
+  `glasslock 1.0.0-rc1`, including internal parsing APIs, and the README still
+  requires stopping old instances before migrations. Passwords now use PBKDF2
+  from OTP `crypto` rather than a patched, vendored Argon2 binding: no native
+  build, but not memory-hard. These are operational constraints, not evidence
+  of a particular vulnerability.
+  [Installation](../auth/README.md#install-and-migrate)
 - **The local test evidence is not a browser/device compatibility matrix.**
   Signed WebAuthn fixtures and a simulated DOM are valuable, but do not establish
   Safari/iOS/Android, real authenticators, credential-manager behavior or live

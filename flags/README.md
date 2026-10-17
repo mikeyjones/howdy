@@ -1,21 +1,20 @@
 # howdy_flags
 
-Feature flags for [howdy](../README.md) apps, defined in code and switched
+Feature flags for [howdy](https://github.com/mikeyjones/howdy/blob/v2/README.md) apps, defined in code and switched
 while the app runs: turned off for everyone at once, allowed or blocked for
 users, organizations and groups, and rolled out gradually to a share of
 users. Where the settings are kept is up to a store: the app's database,
 one process's memory, or a service that manages them for you.
 
-- In development the [admin area](../admin/README.md) shows them, with their
+- In development the [admin area](https://github.com/mikeyjones/howdy/blob/v2/admin/README.md) shows them, with their
   kill switches, rules, groups and history.
 - On your own servers, a task module gives you [command-line
   management](#the-command-line).
 - Behind a hosting service, a read-only store takes the settings from it,
   and the app only checks them.
 
-```toml
-[dependencies]
-howdy_flags = { path = "../howdy-v2/flags" }
+```sh
+gleam add howdy_flags@2
 ```
 
 ## Defining and checking flags

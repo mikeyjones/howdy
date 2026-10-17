@@ -70,6 +70,32 @@ pub fn since_follows_the_api_across_releases_test() {
   assert json.parse(text, howdy_release.since_decoder()) == Ok(third)
 }
 
+pub fn since_drops_modules_marked_internal_test() {
+  let first =
+    howdy_release.update_since(
+      dict.new(),
+      [
+        #(
+          "howdy_auth",
+          api([
+            #("howdy/auth", [#("new", False)]),
+            #("howdy/auth/internal/token", [#("sign", False)]),
+          ]),
+        ),
+      ],
+      "2.0.0",
+    )
+  // Marked internal, it leaves the interface: forgotten, not removed.
+  let second =
+    howdy_release.update_since(
+      first,
+      [#("howdy_auth", api([#("howdy/auth", [#("new", False)])]))],
+      "2.2.0",
+    )
+  let assert Ok(auth) = dict.get(second, "howdy_auth")
+  assert dict.keys(auth) == ["howdy/auth"]
+}
+
 pub fn pretty_json_keeps_strings_intact_test() {
   assert howdy_release.pretty("{\"a\":[1,2],\"b\":\"x,{y}:\\\"z\"}")
     == "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": \"x,{y}:\\\"z\"\n}"

@@ -41,20 +41,13 @@ howdy_database = { git = "https://github.com/mikeyjones/howdy.git", ref = "v2.1.
 ```
 
 `howdy_database` provides the `howdy/migration` module you run the auth
-migrations with. Then download them, and build the native library that
-hashes passwords:
+migrations with. Then download them:
 
 ```sh
 gleam deps download
-make -C build/packages/jargon/c_src
 ```
 
-The second command needs `make`, a C compiler and the Erlang headers. Run it
-again after `gleam clean`, after deleting `build`, and on each machine you
-build on. Until a corrected release of the `jargon` package is published,
-`howdy_auth` carries a patched copy of it, which is why this step is yours
-to run. `auth.with_passwords` hashes a password as the app starts, so a
-forgotten build shows up at startup and not at the first sign-in.
+Nothing native is built: passwords are hashed with OTP's own `crypto`.
 
 ## Create the tables
 

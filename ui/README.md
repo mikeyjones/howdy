@@ -1,6 +1,6 @@
 # howdy_ui
 
-Pages, themes and live server components for [howdy](../README.md), built
+Pages, themes and live server components for [howdy](https://github.com/mikeyjones/howdy/blob/v2/README.md), built
 on [Lustre](https://hexdocs.pm/lustre) and [Sketch](https://hexdocs.pm/sketch).
 
 ```sh

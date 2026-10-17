@@ -1,34 +1,24 @@
-//// Argon2id password storage; token digests remain SHA-256 elsewhere.
+//// Password storage through the configured `PasswordHasher`; token digests
+//// remain SHA-256 elsewhere.
 
-import argus
-import gleam/bit_array
 import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
 import howdy/auth/internal/token
+import howdy/auth/password_hasher.{type PasswordHasher}
 import howdy/auth/policy
 import howdy/service
 
 pub opaque type Passwords {
-  Passwords(hasher: argus.Hasher, dummy_hash: String)
+  Passwords(hasher: PasswordHasher, dummy_hash: String)
 }
 
-/// Explicit policy, independent of changes to dependency defaults: 19 MiB,
-/// two iterations, one lane, 32-byte hash, fresh random salt for every hash.
-pub fn new() -> service.Result(Passwords) {
-  let hasher =
-    argus.hasher()
-    |> argus.algorithm(argus.Argon2id)
-    |> argus.memory_cost(19_456)
-    |> argus.time_cost(2)
-    |> argus.parallelism(1)
-    |> argus.hash_length(32)
-  use dummy <- result.try(
-    argus.hash(hasher, token.new()) |> result.map_error(failed),
-  )
-  use encoded <- result.try(standard_hash(dummy.encoded_hash))
-  Ok(Passwords(hasher, encoded))
+/// The dummy hash lets a login for a missing account do the same work as one
+/// for a real account, so response time does not reveal which emails exist.
+pub fn new(hasher: PasswordHasher) -> service.Result(Passwords) {
+  use dummy <- result.try(hasher.hash(token.new()) |> result.map_error(failed))
+  Ok(Passwords(hasher, dummy))
 }
 
 @external(erlang, "howdy_auth_ffi", "normalize_password")
@@ -160,101 +150,51 @@ pub fn validate(password: String, min_length: Int) -> service.Result(Nil) {
 }
 
 /// Callers validate the password against their policy first.
-pub fn hash(hasher: Passwords, password: String) -> service.Result(String) {
-  argus.hash(hasher.hasher, normalize(password))
-  |> result.map(fn(output) { output.encoded_hash })
-  |> result.map_error(failed)
-  |> result.try(standard_hash)
-}
-
-fn standard_hash(encoded: String) -> service.Result(String) {
-  case string.starts_with(encoded, "$argon2id$v=19$m=19456,t=2,p=1$") {
-    True -> Ok(encoded)
-    False -> Error(service.Internal("unsupported password hash format"))
-  }
+pub fn hash(passwords: Passwords, password: String) -> service.Result(String) {
+  passwords.hasher.hash(normalize(password)) |> result.map_error(failed)
 }
 
 /// Accept legacy hashes made before normalization; the caller rehashes them
 /// after success, under the same credential lock used for issuing a session.
 /// Only unknown legacy hashes may use the second, exact-input verification.
 pub fn verify(
+  passwords: Passwords,
   encoded: String,
   password: String,
   normalized: Bool,
 ) -> service.Result(#(Bool, Bool)) {
+  let check = passwords.hasher.verify
   use valid <- result.try(
-    argus.verify(encoded, normalize(password)) |> result.map_error(failed),
+    check(encoded, normalize(password)) |> result.map_error(failed),
   )
   case normalized || valid || normalize(password) == password {
     True -> Ok(#(valid, False))
     False ->
-      argus.verify(encoded, password)
+      check(encoded, password)
       |> result.map(fn(valid) { #(valid, valid) })
       |> result.map_error(failed)
   }
 }
 
-type Parameters {
-  Parameters(memory: Int, iterations: Int, lanes: Int, length: Int)
-}
-
-fn parameters(encoded: String) -> Result(Parameters, Nil) {
-  case string.split(encoded, "$") {
-    ["", _, _, costs, _, hash] -> {
-      case string.split(costs, ",") {
-        ["m=" <> memory, "t=" <> iterations, "p=" <> lanes] -> {
-          use memory <- result.try(int.parse(memory))
-          use iterations <- result.try(int.parse(iterations))
-          use lanes <- result.try(int.parse(lanes))
-          use bytes <- result.try(bit_array.base64_decode(hash))
-          Ok(Parameters(memory, iterations, lanes, bit_array.byte_size(bytes)))
-        }
-        _ -> Error(Nil)
-      }
-    }
-    _ -> Error(Nil)
-  }
-}
-
-pub fn needs_rehash(encoded: String) -> Bool {
-  case parameters(encoded) {
-    Ok(p) ->
-      !string.starts_with(encoded, "$argon2id$v=19$")
-      || p.memory < 19_456
-      || p.iterations < 2
-      || p.length < 32
-    Error(_) -> True
-  }
+pub fn needs_rehash(passwords: Passwords, encoded: String) -> Bool {
+  passwords.hasher.needs_rehash(encoded)
 }
 
 /// Upgrade without reducing any existing cost or output length. Keep stronger
 /// stored hashes intact when only the application's minimum has changed.
 pub fn rehash(
-  hasher: Passwords,
+  passwords: Passwords,
   encoded: String,
   password: String,
 ) -> service.Result(String) {
-  use p <- result.try(
-    parameters(encoded)
-    |> result.map_error(fn(_) {
-      service.Internal("unsupported password hash format")
-    }),
-  )
-  let upgraded =
-    hasher.hasher
-    |> argus.memory_cost(int.max(p.memory, 19_456))
-    |> argus.time_cost(int.max(p.iterations, 2))
-    |> argus.parallelism(int.max(p.lanes, 1))
-    |> argus.hash_length(int.max(p.length, 32))
-  argus.hash(upgraded, normalize(password))
-  |> result.map(fn(output) { output.encoded_hash })
+  passwords.hasher.rehash(encoded, normalize(password))
   |> result.map_error(failed)
 }
 
-pub fn dummy(hasher: Passwords) -> String {
-  hasher.dummy_hash
+pub fn dummy(passwords: Passwords) -> String {
+  passwords.dummy_hash
 }
 
-fn failed(_error: argus.HashError) -> service.Error {
+fn failed(_error: Nil) -> service.Error {
   service.Internal("password hashing operation failed")
 }

@@ -41,6 +41,7 @@ import howdy/auth/internal/sso_flow
 import howdy/auth/internal/types
 import howdy/auth/mfa
 import howdy/auth/passkey
+import howdy/auth/password_hasher.{type PasswordHasher}
 import howdy/auth/policy.{type Policy}
 import howdy/auth/provider
 import howdy/auth/session_store.{type SessionStore}
@@ -223,10 +224,21 @@ pub fn bound_group(auth: Auth) -> Option(String) {
   auth.config.group
 }
 
-/// Enable password registration and login. Construct once at startup. Email
+/// Enable password registration and login, hashed with PBKDF2-HMAC-SHA256
+/// (see `howdy/auth/password_hasher`). Construct once at startup. Email
 /// tokens remain available; this is an additional method, not a second factor.
 pub fn with_passwords(auth: Auth) -> service.Result(Auth) {
-  use passwords <- result.try(password_hash.new())
+  with_password_hasher(auth, password_hasher.pbkdf2_sha256())
+}
+
+/// Enable passwords as `with_passwords` does, storing them with another
+/// algorithm. Existing credentials must be readable by `hasher`: Howdy does
+/// not fall back to the built-in one.
+pub fn with_password_hasher(
+  auth: Auth,
+  hasher: PasswordHasher,
+) -> service.Result(Auth) {
+  use passwords <- result.try(password_hash.new(hasher))
   Ok(Auth(Config(..auth.config, passwords: Some(passwords))))
 }
 
